@@ -1,0 +1,51 @@
+{
+  "name": "verbos-computer",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "account_id": "cf3d5b1eddd4c74d217780cdb7e55d07",
+  "workers_dev": true,
+  "containers": [
+    {
+      "class_name": "VerbosWorkspace",
+      "image": "./Dockerfile",
+      "instance_type": "standard-1",
+      "max_instances": 2,
+      "rollout_active_grace_period": 0,
+      "rollout_step_percentage": [100]
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      { "name": "WORKSPACES", "class_name": "VerbosWorkspace" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["VerbosWorkspace"] }
+  ],
+  "r2_buckets": [
+    { "binding": "SITES", "bucket_name": "verbos-sites" }
+  ],
+  "unsafe": {
+    "bindings": [
+      {
+        "name": "EXEC_RATE",
+        "type": "ratelimit",
+        "namespace_id": "1012",
+        "simple": { "limit": 6, "period": 60 }
+      },
+      {
+        "name": "PUBLISH_RATE",
+        "type": "ratelimit",
+        "namespace_id": "1010",
+        "simple": { "limit": 4, "period": 60 }
+      },
+      {
+        "name": "WORKSPACE_WRITE_RATE",
+        "type": "ratelimit",
+        "namespace_id": "1011",
+        "simple": { "limit": 60, "period": 60 }
+      }
+    ]
+  }
+}

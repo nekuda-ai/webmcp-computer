@@ -1,0 +1,128 @@
+.screensaver {
+  position: absolute;
+  z-index: 500;
+  inset: 0;
+  overflow: hidden;
+  color: var(--phosphor);
+  background: radial-gradient(ellipse at 50% 30%, #0d1e33 0%, #081221 62%, #050c14 100%);
+  cursor: pointer;
+}
+
+.screensaver__pixel-grid {
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(rgba(159, 216, 255, 0.09) 1px, transparent 1px);
+  background-size: 28px 28px;
+  pointer-events: none;
+}
+
+.screensaver__grain {
+  opacity: 0.07;
+}
+
+.screensaver__logo {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: flex;
+  align-items: center;
+  width: 220px;
+  height: 76px;
+  padding: 10px;
+  will-change: transform, filter;
+}
+
+.screensaver__logo .wordmark {
+  color: var(--accent);
+  font-size: 44px;
+  text-shadow: 0 0 22px rgba(46, 159, 243, 0.65), 0 0 4px rgba(46, 159, 243, 0.9);
+}
+
+.screensaver__ghost {
+  position: absolute;
+  top: 0;
+  left: 0;
+  color: var(--accent);
+  font-size: 34px;
+  opacity: 0.11;
+  transition: opacity 2s ease;
+}
+
+.screensaver__state,
+.screensaver__mechanics {
+  position: absolute;
+  top: 22px;
+  color: rgba(159, 216, 255, 0.38);
+  font-size: 9px;
+  letter-spacing: 0.18em;
+}
+
+.screensaver__state {
+  left: 24px;
+}
+
+.screensaver__mechanics {
+  right: 24px;
+  color: rgba(159, 216, 255, 0.3);
+  text-align: right;
+}
+
+.screensaver__wake {
+  position: absolute;
+  right: 0;
+  bottom: 44px;
+  left: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: rgba(216, 236, 255, 0.55);
+  font-size: 10px;
+  letter-spacing: 0.2em;
+}
+
+.screensaver__fs-error {
+  position: absolute;
+  top: 46px;
+  left: 24px;
+  max-width: min(680px, calc(100% - 48px));
+  overflow: hidden;
+  color: var(--coral);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.screensaver__wake > span {
+  display: inline-block;
+  width: 8px;
+  height: 14px;
+  background: rgba(159, 216, 255, 0.65);
+  animation: screen-blink 1.1s steps(1) infinite;
+}
+
+.screensaver__scanlines {
+  opacity: 0.08;
+  background: repeating-linear-gradient(to bottom, rgba(159, 216, 255, 0.5) 0 1px, transparent 1px 3px);
+}
+
+.screensaver__vignette {
+  background: radial-gradient(ellipse at center, transparent 55%, rgba(2, 8, 14, 0.58) 100%);
+}
+
+@keyframes screen-blink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+
+@media (max-width: 740px) {
+  .screensaver__mechanics {
+    display: none;
+  }
+
+  .screensaver__wake {
+    padding: 0 20px;
+    text-align: center;
+  }
+}

@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#16283d" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2316283d'/%3E%3Ccircle cx='16' cy='16' r='7' fill='%232e9ff3'/%3E%3C/svg%3E"
+    />
+    <meta
+      name="description"
+      content="VerbOS — one browser machine shared by a human and an agent."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="VerbOS" />
+    <meta
+      property="og:description"
+      content="One browser machine shared by a human and an agent. Every control is a WebMCP verb."
+    />
+    <meta property="og:image" content="https://verbos.nekuda.chatgpt.site/og.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="VerbOS" />
+    <meta
+      name="twitter:description"
+      content="One browser machine shared by a human and an agent. Every control is a WebMCP verb."
+    />
+    <meta name="twitter:image" content="https://verbos.nekuda.chatgpt.site/og.png" />
+    <title>VerbOS</title>
+    <script>
+      // sh-syntax's TinyGo runtime installs a partial `process` shim without
+      // `env`; react-draggable then reads process.env.* and throws in dev,
+      // where module order differs from the production bundle. Guarantee the
+      // shape before any module evaluates.
+      globalThis.process = globalThis.process || {};
+      globalThis.process.env = globalThis.process.env || {};
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

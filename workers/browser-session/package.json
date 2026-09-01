@@ -1,0 +1,15 @@
+{
+  "name": "verbos-browser-session",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "bun test src && tsc --noEmit",
+    "test": "bun test src",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260828.1",
+    "bun-types": "^1.4.0",
+    "typescript": "^7.0.2"
+  }
+}

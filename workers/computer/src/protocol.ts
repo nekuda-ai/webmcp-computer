@@ -1,0 +1,2 @@
+export const MAX_FS_BATCH_OPERATIONS = 128;
+export const PUBLISHED_SITE_RETENTION_DAYS = 30;

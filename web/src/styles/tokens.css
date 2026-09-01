@@ -1,0 +1,121 @@
+:root {
+  --sky-01: #f6fafd;
+  --sky-02: #e4edf7;
+  --accent: #2e9ff3;
+  --navy: #16283d;
+  --phosphor: #9fd8ff;
+  --ok: #7ee0a3;
+  --ink: #17222e;
+  --coral: #ff7a59;
+  --slate: #33455a;
+  --muted: #5d7183;
+  --quiet: #8fa3b8;
+  --chrome-dot: #cfdded;
+
+  --font-ui: "Space Grotesk", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", monospace;
+  --font-wordmark: "Doto", "IBM Plex Mono", monospace;
+  --weight-body: 400;
+  --weight-chrome: 500;
+  --weight-title: 600;
+  --weight-wordmark: 900;
+  --micro-size: 10px;
+  --micro-tracking: 0.16em;
+
+  --chrome-bg: rgba(255, 255, 255, 0.9);
+  --chrome-border: rgba(23, 34, 46, 0.1);
+  --chrome-divider: rgba(23, 34, 46, 0.07);
+  --window-radius: 12px;
+  --window-titlebar-height: 38px;
+  --window-shadow: 0 18px 44px rgba(36, 66, 98, 0.13);
+  --window-shadow-focused: 0 26px 60px rgba(23, 44, 66, 0.24);
+  --window-idle-opacity: 0.96;
+  --scanline-opacity: 0.035;
+  --desktop-top: #f6fafd;
+  --desktop-bottom: #e4edf7;
+  --wallpaper-filter: none;
+  --wallpaper-overlay: linear-gradient(to bottom, rgba(246, 250, 253, 0.98) 0%, rgba(237, 243, 250, 0.5) 46%, rgba(228, 237, 247, 0.03) 78%);
+  --stars-layer: linear-gradient(transparent, transparent);
+  --stars-size: 953px 541px;
+  --menu-bg: rgba(255, 255, 255, 0.62);
+  --panel-bg: rgba(246, 250, 253, 0.82);
+  --control-bg: rgba(255, 255, 255, 0.9);
+  --mist-color: rgba(255, 255, 255, 0.5);
+  --app-bg: rgba(246, 250, 253, 0.74);
+  --toolbar-bg: rgba(255, 255, 255, 0.62);
+  --subpanel-bg: rgba(228, 237, 247, 0.72);
+  --status-bg: rgba(255, 255, 255, 0.56);
+  --editor-bg: rgba(255, 255, 255, 0.7);
+  --sidebar-bg: rgba(228, 237, 247, 0.52);
+  --dock-bg: rgba(255, 255, 255, 0.66);
+  --dock-button-bg: rgba(255, 255, 255, 0.94);
+  --dock-icon: var(--slate);
+  --dock-running-dot: var(--accent);
+  --toast-bg: rgba(255, 255, 255, 0.82);
+  --signature-color: rgba(51, 69, 90, 0.55);
+  --loading-bg: linear-gradient(145deg, rgba(255, 255, 255, 0.9), rgba(228, 237, 247, 0.7));
+  --sticky-bg: rgba(255, 247, 190, 0.94);
+  --sticky-ink: #3f422d;
+  --sticky-rule: rgba(83, 78, 40, 0.14);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --sky-01: #081221;
+  --sky-02: #0d1a2b;
+  --navy: #07111f;
+  --phosphor: #b9dcf5;
+  --ink: #d8ecff;
+  --slate: #b9d2e8;
+  --muted: #8eabc4;
+  --quiet: #66839e;
+  --chrome-dot: #33475e;
+  --chrome-bg: rgba(13, 26, 43, 0.91);
+  --chrome-border: rgba(159, 216, 255, 0.14);
+  --chrome-divider: rgba(159, 216, 255, 0.1);
+  --window-shadow: 0 18px 44px rgba(2, 8, 14, 0.38);
+  --window-shadow-focused: 0 26px 60px rgba(2, 8, 14, 0.58);
+  --desktop-top: #07111f;
+  --desktop-bottom: #0d1a2b;
+  --wallpaper-filter: brightness(0.42) saturate(0.65) hue-rotate(-8deg);
+  --wallpaper-overlay: linear-gradient(to bottom, rgba(7, 17, 31, 0.55), rgba(13, 26, 43, 0.1) 65%);
+  --stars-layer:
+    radial-gradient(circle at 7% 13%, rgba(216, 236, 255, 0.74) 0 0.7px, transparent 1.2px),
+    radial-gradient(circle at 19% 61%, rgba(185, 220, 245, 0.48) 0 1px, transparent 1.6px),
+    radial-gradient(circle at 31% 27%, rgba(216, 236, 255, 0.62) 0 0.6px, transparent 1.1px),
+    radial-gradient(circle at 43% 82%, rgba(159, 216, 255, 0.52) 0 1.3px, transparent 1.9px),
+    radial-gradient(circle at 56% 8%, rgba(216, 236, 255, 0.7) 0 0.8px, transparent 1.3px),
+    radial-gradient(circle at 68% 48%, rgba(185, 220, 245, 0.42) 0 0.65px, transparent 1.15px),
+    radial-gradient(circle at 77% 74%, rgba(216, 236, 255, 0.58) 0 1.1px, transparent 1.7px),
+    radial-gradient(circle at 89% 21%, rgba(159, 216, 255, 0.5) 0 0.75px, transparent 1.25px),
+    radial-gradient(circle at 12% 91%, rgba(216, 236, 255, 0.44) 0 0.55px, transparent 1px),
+    radial-gradient(circle at 37% 44%, rgba(185, 220, 245, 0.66) 0 0.9px, transparent 1.45px),
+    radial-gradient(circle at 63% 94%, rgba(216, 236, 255, 0.54) 0 1.25px, transparent 1.85px),
+    radial-gradient(circle at 94% 56%, rgba(159, 216, 255, 0.46) 0 0.6px, transparent 1.1px);
+  --stars-size:
+    953px 541px, 617px 349px, 953px 541px, 617px 349px,
+    953px 541px, 617px 349px, 953px 541px, 617px 349px,
+    953px 541px, 617px 349px, 953px 541px, 617px 349px;
+  --menu-bg: rgba(8, 18, 33, 0.68);
+  --panel-bg: rgba(13, 26, 43, 0.84);
+  --control-bg: rgba(22, 40, 61, 0.92);
+  --mist-color: rgba(95, 122, 150, 0.18);
+  --window-idle-opacity: 0.98;
+  --chrome-border: rgba(159, 216, 255, 0.28);
+  --app-bg: rgba(8, 18, 33, 0.9);
+  --toolbar-bg: rgba(13, 26, 43, 0.92);
+  --subpanel-bg: rgba(16, 32, 51, 0.92);
+  --status-bg: rgba(8, 18, 33, 0.88);
+  --editor-bg: rgba(10, 23, 39, 0.96);
+  --sidebar-bg: rgba(8, 18, 33, 0.94);
+  --dock-bg: rgba(8, 18, 33, 0.82);
+  --dock-button-bg: rgba(22, 40, 61, 0.96);
+  --dock-icon: var(--phosphor);
+  --dock-running-dot: var(--phosphor);
+  --toast-bg: rgba(13, 26, 43, 0.94);
+  --signature-color: rgba(185, 220, 245, 0.66);
+  --loading-bg: linear-gradient(145deg, rgba(13, 26, 43, 0.96), rgba(8, 18, 33, 0.9));
+  --sticky-bg: rgba(32, 47, 63, 0.96);
+  --sticky-ink: #d8ecff;
+  --sticky-rule: rgba(159, 216, 255, 0.14);
+}

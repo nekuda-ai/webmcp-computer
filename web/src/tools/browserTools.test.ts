@@ -1,0 +1,186 @@
+import { beforeEach, describe, expect, test } from "bun:test";
+import type {
+  AnyWebMCPTool,
+  ModelContextLike,
+  RegisterToolOptions,
+  SpecTool,
+} from "@nekuda/webmcp-sdk";
+import type { CdpEvaluateOperation } from "../apps/browser/cdp";
+import { resetKernelStore, useKernelStore } from "../kernel/store";
+import { registerAppTools } from "./registry";
+import {
+  browserTools,
+  createBrowserOpenTool,
+  createBrowserTools,
+} from "./browserTools";
+
+class FakeTransport {
+  readonly calls: Array<{ method: string; params?: Record<string, unknown> }> = [];
+  readonly evaluateCalls: Array<{ operation: CdpEvaluateOperation; expression: string }> = [];
+  captureData = ["small"];
+  evaluateResult: unknown = { title: "Example", url: "https://example.com/" };
+
+  async send<T>(method: string, params?: Record<string, unknown>): Promise<T> {
+    this.calls.push({ method, ...(params === undefined ? {} : { params }) });
+    if (method === "Page.getLayoutMetrics") {
+      return { cssVisualViewport: { clientWidth: 800, clientHeight: 600 } } as T;
+    }
+    if (method === "Page.captureScreenshot") {
+      return { data: this.captureData.shift() ?? "" } as T;
+    }
+    return {} as T;
+  }
+
+  async evaluate<T>(operation: CdpEvaluateOperation, expression: string): Promise<T> {
+    this.evaluateCalls.push({ operation, expression });
+    return this.evaluateResult as T;
+  }
+
+  async waitForEvent(): Promise<unknown> {
+    return {};
+  }
+}
+
+function toolByName(tools: readonly AnyWebMCPTool[], name: string): AnyWebMCPTool {
+  const tool = tools.find((candidate) => candidate.name === name);
+  if (!tool) throw new Error(`test: missing ${name}`);
+  return tool;
+}
+
+beforeEach(resetKernelStore);
+
+describe("browser tools", () => {
+  test("validates URL, required selectors, and 4 KB text cap", async () => {
+    const transport = new FakeTransport();
+    const tools = createBrowserTools({ getTransport: () => transport });
+    await expect(toolByName(tools, "browser_goto").execute({ url: "file:///tmp/x" }))
+      .rejects.toThrow("verbos: url must use http or https");
+    await expect(toolByName(tools, "browser_click").execute({ selector: "" }))
+      .rejects.toThrow("verbos: selector is required");
+    await expect(toolByName(tools, "browser_read").execute({ selector: "" }))
+      .rejects.toThrow("verbos: selector is required");
+    await expect(toolByName(tools, "browser_type").execute({
+      selector: "input",
+      text: "x".repeat(4 * 1_024 + 1),
+    })).rejects.toThrow("verbos: browser text exceeds 4 KB cap");
+    expect(transport.calls).toEqual([]);
+    expect(transport.evaluateCalls).toEqual([]);
+    expect(useKernelStore.getState().events.find(({ verb }) => verb === "browser_read")).toEqual(expect.objectContaining({
+      source: "agent",
+      verb: "browser_read",
+      ok: false,
+    }));
+  });
+
+  test("browser_open reuses and focuses singleton, navigating only on second URL", async () => {
+    const transport = new FakeTransport();
+    const ensured: Array<string | undefined> = [];
+    const tool = createBrowserOpenTool({
+      async ensureSession(url) {
+        ensured.push(url);
+        return { cdp: transport, keepAliveMs: 300_000 };
+      },
+    });
+
+    const first = await tool.execute({ url: "https://first.test" }) as { pid: number; reused: boolean };
+    const second = await tool.execute({ url: "https://second.test" }) as { pid: number; reused: boolean };
+    expect(second.pid).toBe(first.pid);
+    expect(first.reused).toBe(false);
+    expect(second.reused).toBe(true);
+    expect(ensured).toEqual(["https://first.test/", undefined]);
+    expect(transport.calls.map(({ method }) => method)).toEqual(["Page.enable", "Page.navigate"]);
+    expect(transport.evaluateCalls.map(({ operation }) => operation)).toEqual([
+      "identity",
+      "identity",
+    ]);
+    expect(useKernelStore.getState().processes).toHaveLength(1);
+    expect(useKernelStore.getState().processes[0]?.focused).toBe(true);
+  });
+
+  test("browser_open gives Worker failures the required unavailable error voice", async () => {
+    const tool = createBrowserOpenTool({
+      async ensureSession() {
+        throw new Error("rate limited");
+      },
+    });
+    await expect(tool.execute({})).rejects.toThrow(
+      "verbos: browser session unavailable: rate limited",
+    );
+    expect(useKernelStore.getState().processes).toEqual([]);
+  });
+
+  test("screenshot retries at quality 25 when quality 50 exceeds result cap", async () => {
+    const transport = new FakeTransport();
+    transport.captureData = ["x".repeat(300_000), "small-image"];
+    const tools = createBrowserTools({ getTransport: () => transport });
+    const result = await toolByName(tools, "browser_screenshot").execute({}) as {
+      dataUrl: string;
+      width: number;
+      height: number;
+    };
+    expect(result).toEqual({
+      dataUrl: "data:image/jpeg;base64,small-image",
+      width: 800,
+      height: 600,
+    });
+    expect(
+      transport.calls
+        .filter(({ method }) => method === "Page.captureScreenshot")
+        .map(({ params }) => params?.quality),
+    ).toEqual([50, 25]);
+  });
+
+  test("site-tools reports missing lab WebMCP API honestly", async () => {
+    const transport = new FakeTransport();
+    transport.evaluateResult = { supported: false };
+    const tools = createBrowserTools({ getTransport: () => transport });
+    await expect(toolByName(tools, "browser_site_tools").execute({})).rejects.toThrow(
+      "verbos: this browser session has no WebMCP support",
+    );
+  });
+
+  test("puts supplied selectors and text into generated page expressions", async () => {
+    const transport = new FakeTransport();
+    transport.evaluateResult = true;
+    const tools = createBrowserTools({ getTransport: () => transport });
+    const selector = "#query[data-kind=\"shared\"]";
+    const text = "hello \"shared\" browser";
+
+    await toolByName(tools, "browser_click").execute({ selector });
+    await toolByName(tools, "browser_type").execute({ selector, text, submit: true });
+
+    expect(transport.evaluateCalls).toHaveLength(2);
+    for (const call of transport.evaluateCalls) {
+      expect(call.expression).toContain(JSON.stringify(selector));
+    }
+    expect(transport.evaluateCalls[1]?.expression).toContain(JSON.stringify(text));
+    expect(transport.evaluateCalls[1]?.expression).toContain("if (true)");
+  });
+
+  test("dynamic registration follows Browser process lifecycle", async () => {
+    const process = useKernelStore.getState().spawn("browser");
+    const captured: Array<{ tool: SpecTool; signal?: AbortSignal }> = [];
+    const modelContext: ModelContextLike = {
+      async registerTool(tool: SpecTool, options?: RegisterToolOptions) {
+        captured.push({ tool, ...(options?.signal === undefined ? {} : { signal: options.signal }) });
+      },
+    };
+    const registration = registerAppTools(process.pid, browserTools, {
+      modelContext,
+      telemetry: false,
+    });
+    await registration.ready;
+    expect(captured.map(({ tool }) => tool.name)).toEqual([
+      "browser_goto",
+      "browser_read",
+      "browser_click",
+      "browser_type",
+      "browser_screenshot",
+      "browser_site_tools",
+      "browser_site_call",
+    ]);
+    expect(captured.every(({ signal }) => signal?.aborted === false)).toBe(true);
+    useKernelStore.getState().kill(process.pid);
+    expect(captured.every(({ signal }) => signal?.aborted === true)).toBe(true);
+  });
+});

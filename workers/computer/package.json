@@ -1,0 +1,19 @@
+{
+  "name": "verbos-computer",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "bun test src && tsc --noEmit",
+    "test": "bun test src",
+    "deploy": "wrangler deploy",
+    "smoke": "bun smoke.ts"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260828.1",
+    "bun-types": "^1.4.0",
+    "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "@cloudflare/computer": "0.2.1"
+  }
+}

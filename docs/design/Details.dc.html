@@ -1,0 +1,195 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+  <style>
+    body { margin: 0; font-family: 'Space Grotesk', system-ui, sans-serif; background: #f4f8fc; }
+    a { color: #2e9ff3; } a:hover { color: #1b7fd4; }
+    .mono { font-family: 'IBM Plex Mono', ui-monospace, 'SF Mono', monospace; }
+    .micro { font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 9.5px; letter-spacing: 0.18em; color: #8fa3b8; }
+    .hairline { height: 1px; background: rgba(23,34,46,0.10); }
+    .chip {
+      font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 10.5px;
+      display: inline-flex; align-items: center; gap: 7px; padding: 6px 11px;
+      border-radius: 7px; background: #16283d; color: #9fd8ff;
+      box-shadow: 0 8px 20px rgba(10,26,43,0.28);
+    }
+    .darkimg { filter: brightness(0.42) saturate(0.65) hue-rotate(-8deg); }
+  </style>
+</helmet>
+
+<div style="box-sizing: border-box; width: 1160px; padding: 52px 56px 60px; color: #17222e; display: flex; flex-direction: column; gap: 32px;">
+
+  <div style="display: flex; flex-direction: column; gap: 10px;">
+    <span class="micro">VERBOS —— GENIUS DETAILS // V.01</span>
+    <div style="font-size: 38px; font-weight: 600; letter-spacing: -0.02em;">Every pixel has a verb</div>
+    <div style="font-size: 14px; line-height: 1.55; color: #5d7183; max-width: 680px;">Four small systems that make the human–agent duality visible: hover chips that name the syscall, one search for everything, settings the agent can flip, and a machine that idles like a machine.</div>
+  </div>
+
+  <div class="hairline"></div>
+
+  <!-- 01 Syscall tooltips -->
+  <div style="display: flex; flex-direction: column; gap: 16px;">
+    <span class="micro">01 — SYSCALL TOOLTIPS</span>
+    <div style="display: flex; align-items: flex-start; gap: 40px;">
+      <div style="display: flex; flex-direction: column; gap: 10px;">
+        <div style="display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px; background: color-mix(in srgb, #2e9ff3 10%, transparent); width: 250px;">
+          <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="#2e9ff3" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 2.5h7l3.5 3.5v11.5h-10.5z"></path><path d="M12 2.5v3.5h3.5"></path><path d="M7.5 10.5h5M7.5 13.5h5"></path></svg>
+          <span style="font-size: 13px; font-weight: 500;">brief.md</span>
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="#8fa3b8" style="margin-left: auto;"><path d="M2 1l4 5-4 5z"></path></svg>
+        </div>
+        <span class="chip"><span style="width: 5px; height: 5px; border-radius: 999px; background: #2e9ff3; display: inline-block;"></span>~/desktop/brief.md · fs_read<span style="color: #5f7a96;">⧉</span></span>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 10px;">
+        <span class="chip"><span style="width: 5px; height: 5px; border-radius: 999px; background: #2e9ff3; display: inline-block;"></span>files · app_open<span style="color: #5f7a96;">⧉</span></span>
+        <span class="chip"><span style="width: 5px; height: 5px; border-radius: 999px; background: #ff7a59; display: inline-block;"></span>pid 3 · window_close<span style="color: #5f7a96;">⧉</span></span>
+        <span class="chip"><span style="width: 5px; height: 5px; border-radius: 999px; background: #2e9ff3; display: inline-block;"></span>theme: dark · settings_set<span style="color: #5f7a96;">⧉</span></span>
+      </div>
+      <div style="font-size: 13px; line-height: 1.55; color: #5d7183; max-width: 330px;">Hover any control and a chip names the exact tool call the agent would make for the same action — click copies it. The OS teaches its own API to whoever is driving.</div>
+    </div>
+  </div>
+
+  <div class="hairline"></div>
+
+  <!-- 02 Spotlight -->
+  <div style="display: flex; flex-direction: column; gap: 16px;">
+    <div style="display: flex; align-items: center; gap: 14px;">
+      <span class="micro">02 — SPOTLIGHT</span>
+      <span class="mono" style="font-size: 9px; padding: 3px 7px; border-radius: 5px; border: 1px solid rgba(23,34,46,0.14); color: #5d7183;">⌘K</span>
+    </div>
+    <div style="display: flex; align-items: flex-start; gap: 40px;">
+      <div style="width: 560px; background: rgba(255,255,255,0.94); border: 1px solid rgba(23,34,46,0.10); border-radius: 14px; box-shadow: 0 24px 56px rgba(36,66,98,0.18); overflow: hidden;">
+        <div style="display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-bottom: 1px solid rgba(23,34,46,0.07);">
+          <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="#8fa3b8" stroke-width="1.7" stroke-linecap="round"><circle cx="9" cy="9" r="5.5"></circle><path d="M13.5 13.5l3.5 3.5"></path></svg>
+          <span style="font-size: 16px; color: #17222e;">aurora</span>
+          <span style="width: 2px; height: 18px; background: #2e9ff3; display: inline-block;"></span>
+        </div>
+        <div style="display: flex; flex-direction: column; padding: 8px;">
+          <div style="display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 8px; background: color-mix(in srgb, #2e9ff3 8%, transparent);">
+            <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="#2e9ff3" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 2.5h7l3.5 3.5v11.5h-10.5z"></path><path d="M12 2.5v3.5h3.5"></path></svg>
+            <div style="display: flex; flex-direction: column;">
+              <span style="font-size: 12.5px; font-weight: 500;">brief.md</span>
+              <span style="font-size: 10.5px; color: #8fa3b8;">"…landing page for Aurora Trails — guided night hikes…"</span>
+            </div>
+            <span class="mono" style="font-size: 9px; color: #5f7a96; margin-left: auto; padding: 3px 7px; border-radius: 5px; background: #eef4fa;">fs_read</span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 8px;">
+            <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="#5d7183" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="3.5" width="15" height="13" rx="1.5"></rect><path d="M2.5 7h15"></path></svg>
+            <span style="font-size: 12.5px; color: #33455a;">Preview — site/</span>
+            <span class="mono" style="font-size: 9px; color: #5f7a96; margin-left: auto; padding: 3px 7px; border-radius: 5px; background: #eef4fa;">window_focus</span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 8px;">
+            <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="#5d7183" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 3.5h12v10l-3 3h-9z"></path><path d="M13 16.5v-3h3"></path></svg>
+            <span style="font-size: 12.5px; color: #33455a;">note — "@codex build the landing page…"</span>
+            <span class="mono" style="font-size: 9px; color: #5f7a96; margin-left: auto; padding: 3px 7px; border-radius: 5px; background: #eef4fa;">app_open</span>
+          </div>
+        </div>
+      </div>
+      <div style="font-size: 13px; line-height: 1.55; color: #5d7183; max-width: 330px;">One index over files, file contents, apps, notes and settings. The <span class="mono" style="font-size: 11.5px;">os_search</span> tool returns these same rows to the agent — and every result carries the verb to act on it.</div>
+    </div>
+  </div>
+
+  <div class="hairline"></div>
+
+  <!-- 03 Settings + dark -->
+  <div style="display: flex; flex-direction: column; gap: 16px;">
+    <span class="micro">03 — SETTINGS IS A SYSCALL</span>
+    <div style="display: flex; align-items: flex-start; gap: 40px;">
+      <div style="width: 340px; background: rgba(255,255,255,0.92); border: 1px solid rgba(23,34,46,0.10); border-radius: 12px; box-shadow: 0 18px 44px rgba(36,66,98,0.13); overflow: hidden;">
+        <div style="display: flex; align-items: center; justify-content: space-between; height: 38px; padding: 0 12px; border-bottom: 1px solid rgba(23,34,46,0.07);">
+          <div style="display: flex; align-items: center; gap: 6px;">
+            <span style="width: 9px; height: 9px; border-radius: 999px; background: #cfdded; display: inline-block;"></span>
+            <span style="width: 9px; height: 9px; border-radius: 999px; background: #cfdded; display: inline-block;"></span>
+            <span style="width: 9px; height: 9px; border-radius: 999px; background: #cfdded; display: inline-block;"></span>
+          </div>
+          <span style="font-size: 12.5px; font-weight: 500; color: #33455a;">Settings</span>
+          <span class="mono" style="font-size: 9px; letter-spacing: 0.12em; color: #8fa3b8;">PID 6</span>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 14px; padding: 16px;">
+          <div style="display: flex; align-items: center; justify-content: space-between;">
+            <span style="font-size: 13px; color: #33455a;">Appearance</span>
+            <div style="display: flex; border: 1px solid rgba(23,34,46,0.12); border-radius: 8px; overflow: hidden;">
+              <span style="font-size: 11.5px; padding: 5px 12px; background: #2e9ff3; color: #ffffff; font-weight: 500;">Light</span>
+              <span style="font-size: 11.5px; padding: 5px 12px; color: #5d7183;">Dark</span>
+            </div>
+          </div>
+          <div style="display: flex; align-items: center; justify-content: space-between;">
+            <span style="font-size: 13px; color: #33455a;">Accent</span>
+            <div style="display: flex; gap: 7px;">
+              <span style="width: 16px; height: 16px; border-radius: 999px; background: #2e9ff3; display: inline-block; box-shadow: 0 0 0 2px #ffffff, 0 0 0 3.5px #2e9ff3;"></span>
+              <span style="width: 16px; height: 16px; border-radius: 999px; background: #4f7cf7; display: inline-block;"></span>
+              <span style="width: 16px; height: 16px; border-radius: 999px; background: #00b8a9; display: inline-block;"></span>
+              <span style="width: 16px; height: 16px; border-radius: 999px; background: #ff7a59; display: inline-block;"></span>
+            </div>
+          </div>
+          <div style="display: flex; align-items: center; justify-content: space-between;">
+            <span style="font-size: 13px; color: #33455a;">CRT scanlines</span>
+            <span style="width: 36px; height: 20px; border-radius: 999px; background: #2e9ff3; display: inline-flex; align-items: center; justify-content: flex-end; padding: 0 2px; box-sizing: border-box;"><span style="width: 16px; height: 16px; border-radius: 999px; background: #ffffff; display: inline-block;"></span></span>
+          </div>
+          <div style="display: flex; align-items: center; justify-content: space-between;">
+            <span style="font-size: 13px; color: #33455a;">Hostname</span>
+            <span class="mono" style="font-size: 11.5px; color: #5d7183;">guest@verbos</span>
+          </div>
+        </div>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 10px;">
+        <div style="position: relative; width: 320px; height: 180px; border-radius: 12px; overflow: hidden; border: 1px solid rgba(23,34,46,0.35); background: #0a1626;">
+          <img src="mountains.jpg" alt="" class="darkimg" style="position: absolute; left: 0; bottom: 0; width: 320px; height: 130px; object-fit: cover; object-position: center bottom;">
+          <div style="position: absolute; inset: 0; background: linear-gradient(to bottom, rgba(13,26,43,0.55), rgba(13,26,43,0.1) 65%);"></div>
+          <div style="position: absolute; top: 8px; left: 10px;">
+            <span style="font-size: 11px; font-weight: 600; color: #d8ecff;">verbOS</span>
+          </div>
+          <span style="position: absolute; top: 26px; left: 44px; width: 2px; height: 2px; border-radius: 999px; background: rgba(216,236,255,0.8);"></span>
+          <span style="position: absolute; top: 42px; left: 128px; width: 2px; height: 2px; border-radius: 999px; background: rgba(216,236,255,0.6);"></span>
+          <span style="position: absolute; top: 20px; left: 236px; width: 2px; height: 2px; border-radius: 999px; background: rgba(216,236,255,0.7);"></span>
+          <span style="position: absolute; top: 58px; left: 288px; width: 2px; height: 2px; border-radius: 999px; background: rgba(216,236,255,0.5);"></span>
+        </div>
+        <span class="mono" style="font-size: 9px; letter-spacing: 0.14em; color: #8fa3b8;">DARK = NEKUDA NIGHT SKY, SAME MOUNTAINS</span>
+      </div>
+      <div style="font-size: 13px; line-height: 1.55; color: #5d7183; max-width: 240px;">Minimal on purpose. Backed by <span class="mono" style="font-size: 11.5px;">settings_get / settings_set</span> — "make it dark" is a one-tool demo beat, and the whole desktop answers.</div>
+    </div>
+  </div>
+
+  <div class="hairline"></div>
+
+  <!-- 04 Tool monitor + docs -->
+  <div style="display: flex; flex-direction: column; gap: 16px;">
+    <span class="micro">04 — THE OS DOCUMENTS ITS OWN API</span>
+    <div style="display: flex; align-items: flex-start; gap: 40px;">
+      <div style="width: 300px; background: rgba(255,255,255,0.92); border: 1px solid rgba(23,34,46,0.10); border-radius: 12px; box-shadow: 0 18px 44px rgba(36,66,98,0.13); padding: 14px 16px; display: flex; flex-direction: column; gap: 9px;">
+        <span class="micro">TOOL MONITOR — LIVE</span>
+        <div style="display: flex; align-items: center; justify-content: space-between;">
+          <span class="mono" style="font-size: 11px; color: #33455a;">system</span>
+          <span class="mono" style="font-size: 9px; color: #8fa3b8;">12 TOOLS</span>
+        </div>
+        <div class="mono" style="font-size: 10.5px; line-height: 1.8; color: #5d7183;">fs_read · fs_write · fs_edit · fs_search · term_exec · app_open · os_search · settings_set …</div>
+        <div style="display: flex; align-items: center; justify-content: space-between; border-top: 1px dashed rgba(23,34,46,0.12); padding-top: 9px;">
+          <span class="mono" style="font-size: 11px; color: #33455a;">preview</span>
+          <span class="mono" style="font-size: 9px; padding: 2px 7px; border-radius: 5px; background: color-mix(in srgb, #2e9ff3 12%, transparent); color: #1b7fd4;">+2 JUST REGISTERED</span>
+        </div>
+        <div class="mono" style="font-size: 10.5px; line-height: 1.8; color: #5d7183;">preview_reload · preview_get_console</div>
+      </div>
+      <div class="mono" style="width: 420px; background: #0d1a2b; border-radius: 12px; border: 1px solid rgba(23,34,46,0.35); box-shadow: 0 18px 44px rgba(10,26,43,0.3); padding: 16px 18px; font-size: 11.5px; line-height: 1.8; color: #9fd8ff;">
+        <div><span style="color: #5f7a96;">guest@verbos:~$</span> <span style="color: #d8ecff;">man fs_read</span></div>
+        <div style="color: #d8ecff;">FS_READ(1) — VerbOS syscalls</div>
+        <div style="color: #7d9cbb;">  fs_read {path, offset?, limit?} → content</div>
+        <div style="color: #7d9cbb;">  Reads a file. Same thing double-click does.</div>
+        <div style="margin-top: 6px;"><span style="color: #5f7a96;">guest@verbos:~$</span> <span style="color: #d8ecff;">dmesg</span></div>
+        <div style="color: #7d9cbb;">14:31:02 agent term_exec "cat brief.md"</div>
+        <div style="color: #7d9cbb;">14:31:40 agent fs_write site/index.html</div>
+        <div style="color: #7d9cbb;">14:32:11 agent term_exec "serve site/"</div>
+      </div>
+      <div style="font-size: 13px; line-height: 1.55; color: #5d7183; max-width: 300px;">Man pages render straight from the tool registry; <span class="mono" style="font-size: 11.5px;">dmesg</span> is the agent's tool history. Tool Monitor makes the dynamic registry visible — judges watch tools appear when an app opens.</div>
+    </div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

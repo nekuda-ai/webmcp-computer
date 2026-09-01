@@ -1,0 +1,1156 @@
+import { configureSingle, fs as zenfs, InMemory } from "@zenfs/core";
+import { WebAccess } from "@zenfs/dom";
+import { useKernelStore } from "./store";
+import type { FileSystemBackend } from "./types";
+import { AGENT_SKILL_FILES } from "./manualContent";
+import {
+  cloudKernelPreference,
+  createCloudFileSystem,
+  ensureWorkspaceId,
+  resolveComputerWorkerUrl,
+} from "./cloudFs";
+
+export const AURORA_BRIEF = `# Aurora Trails — landing page brief
+
+You are inside VerbOS. Build me a small landing page for **Aurora Trails**, a guided
+night-hiking company in northern Norway. Put the site in \`~/site/\` and serve it when done
+(\`serve site/\` in the terminal).
+
+What I want:
+
+- One page, \`index.html\`, self-contained CSS (a \`style.css\` next to it is fine). No frameworks.
+- Hero: company name, one-line promise ("See the sky move. On foot."), a CTA button
+  ("Book a night") that scrolls to the booking section.
+- Three trail cards: *Lights Ridge* (easy, 3h), *Frozen Fjord* (moderate, 5h),
+  *Polar Summit* (hard, 8h) — each with a short description and price (89 / 129 / 189 EUR).
+- A booking section with a simple form (name, email, trail select, date) — no backend,
+  just a friendly confirmation message on submit.
+- Dark, aurora-inspired palette: deep navy background, teal-to-violet gradient accents.
+  Readable typography, generous spacing. Subtle only — no animation overload.
+
+When the preview renders clean (check the console!), leave the site served so I can look.
+`;
+
+export const PIZZA_DEMO_BRIEF = `# Slice/01 - pizza demo brief
+
+## Goal
+
+Inside VerbOS, build a polished pizza-ordering page that humans and agents operate
+through one shared cart. This is a local demo: no network, payment, or real order.
+
+## Build
+
+- Create \`~/pizza-demo/index.html\`; use plain HTML, CSS, and JavaScript.
+- Show Slice/01 branding, three menu cards, size selection, cart, total, receipt, and
+  visible agent-activity line.
+- Menu: Margherita (14/19 USD), Pepperoni (17/23), Night Mushroom (18/24), small/large.
+- Human buttons and agent tools must update the same in-page state.
+
+## Dynamic WebMCP tools
+
+Register these from the served page with \`document.modelContext.registerTool(...)\`:
+
+- \`site_menu_get {}\` - return stable IDs, descriptions, sizes, and prices.
+- \`site_pizza_add {pizza_id, size, quantity}\` - add 1-8 pizzas to visible cart.
+- \`site_cart_get {}\` - return line items, item count, USD total, and currency.
+- \`site_order_place {label?}\` - create local demo order ID, status, ETA, and receipt.
+
+Use strict JSON schemas with \`additionalProperties: false\`. Tool descriptions must say
+what changes and that placing an order sends nothing externally. Each executor returns
+structured JSON and visibly updates shared UI. Tools exist only while Preview is open.
+
+## Done
+
+1. Run \`serve pizza-demo/\`.
+2. Preview renders cleanly and console has no errors.
+3. Four \`site_*\` tools appear dynamically.
+4. Agent can read menu, add one large pepperoni, read a 23 USD cart, and place a demo
+   order whose ID and ETA appear in receipt.
+5. Leave Preview served for human handoff.
+`;
+
+const WELCOME_NOTE = `# Welcome to VerbOS
+
+Your notes live here as Markdown files. Human and agent edits share the same filesystem.
+`;
+const SEED_MARKER = "/.verbos-m2-seeded";
+const M5_SEED_MARKER = "/.verbos-m5-seeded";
+const M7_SEED_MARKER = "/.verbos-m7-seeded";
+const M8_SEED_MARKER = "/.verbos-m8-seeded";
+const M9_SEED_MARKER = "/.verbos-m9-seeded";
+const M9_BROWSER_SEED_MARKER = "/.verbos-m9-browser-seeded";
+const M10_CLOUD_SEED_MARKER = "/.verbos-m10-cloud-seeded";
+const NEK_852_SEED_MARKER = "/.verbos-nek-852-seeded";
+const CONTEXT_MENUS_SEED_MARKER = "/.verbos-context-menus-seeded";
+const CONTEXT_MENUS_FIXES_SEED_MARKER = "/.verbos-context-menus-fixes-seeded";
+const CONTEXT_MENUS_FIXES_2_SEED_MARKER = "/.verbos-context-menus-fixes-2-seeded";
+const NEK850_CLOUD_EXEC_SEED_MARKER = "/.verbos-nek-850-cloud-exec-seeded";
+const NEK850_FIXES_SEED_MARKER = "/.verbos-nek-850-fixes-seeded";
+const NEK850_TRANSACT_SEED_MARKER = "/.verbos-nek-850-transact-seeded";
+const EXPANSION_MERGE_SEED_MARKER = "/.verbos-webmcp-expansion-merge-seeded";
+const PIZZA_DEMO_SEED_MARKER = "/.verbos-pizza-demo-seeded";
+export const M7_AGENT_SKILL_SHA256 = {
+  "conventions.md": "a58d9bbaa633bb673c0d5b5d7f15a62550ec3d5d9774f9e458eee62545206981",
+  "terminal.md": "23540bf387b02a3443d58803ce50fe9b9a86943ec1df15a109426f6a9e804526",
+} as const;
+export const M8_AGENT_SKILL_SHA256 = {
+  "terminal.md": "e95623ba3711cc70379bf69f0cbb4eb894c1b0e5c0600894df47d71a3f6ae798",
+} as const;
+export const M9_BROWSER_AGENT_SKILL_SHA256 = {
+  "README.md": "1071643cd3d990922650e56b08609c07fead0c362e3376a236b714e457650763",
+  "windows.md": "b701f8204ffff831f36d74b217022c488bab368e55c8ae4003b55a718dd883bb",
+} as const;
+export const M10_CLOUD_AGENT_SKILL_SHA256 = {
+  "README.md": "4bc26504589cc14b3330ecaa9d1b90ae9ee11a69274c3ad33199ce1af307a30d",
+  "conventions.md": "10f945744725d80df55511a912268c16de86a11e07f0cfef05c47502f48bf90a",
+  "filesystem.md": "7202b7b8bdf3e75376bce40f6408d428fd425ae8c4b32650f40af2802e4951b6",
+} as const;
+export const NEK_852_AGENT_SKILL_SHA256 = {
+  "README.md": "1259e1fd4526eae32db91b0c3affb562cd3d108daf65f253a1fa34c1d921be0b",
+  "windows.md": "912a53344e613a2e4dfa405bef916083342e264d54d8fff0f7d725dd1c6cfe14",
+} as const;
+export const CONTEXT_MENUS_AGENT_SKILL_SHA256 = {
+  "windows.md": "912a53344e613a2e4dfa405bef916083342e264d54d8fff0f7d725dd1c6cfe14",
+} as const;
+export const CONTEXT_MENUS_FIXES_AGENT_SKILL_SHA256 = {
+  "windows.md": "23747daceb02541e1513ec9b7da80c9783b223de3d600043dc66afb1d8fabfb7",
+} as const;
+export const CONTEXT_MENUS_FIXES_2_AGENT_SKILL_SHA256 = {
+  "windows.md": "7ba030736a76531f87e290d826d99bc70152b63b66116c9157b44e5abb46f28b",
+} as const;
+export const NEK850_CLOUD_EXEC_AGENT_SKILL_SHA256 = {
+  "README.md": "1259e1fd4526eae32db91b0c3affb562cd3d108daf65f253a1fa34c1d921be0b",
+  "cloud.md": "146c762df05862b58bd07c88109228a676c3275f443117d75c3bd61740fa92d7",
+} as const;
+export const NEK850_FIXES_AGENT_SKILL_SHA256 = {
+  "cloud.md": "30ddbeaaf6023653f0b6819b808b3ecef7e4b73d7893d76918aa18b291449427",
+  "terminal.md": "ffb37ad856c26cebf506fb26911933f33a90dcc36b53795e357c9e12063c4d67",
+} as const;
+export const NEK850_TRANSACT_AGENT_SKILL_SHA256 = {
+  "conventions.md": "a97add3b56113335c03d69c6b8a07461864dad7613f42dbb1f9eb0fcb56a9939",
+} as const;
+// Reconciliation for dev profiles seeded on one side of the NEK-850/852/853
+// sibling merges: each branch's final manuals rewrite to the merged content.
+export const EXPANSION_MERGE_852_SHA256 = {
+  "README.md": "807500a99d0011503ffd2394d0d9a7bc19548b2aa62d4d6835faf38d637fd95f",
+  "windows.md": "424b03b439db115aa2182718b3dc1e8268f768806f42865e4341edba5d6ede92",
+} as const;
+export const EXPANSION_MERGE_853_SHA256 = {
+  "windows.md": "f61a81f66b7e41285cc652a120c59961325ebceb771c3edc6207bc7c28703ad2",
+} as const;
+export const EXPANSION_MERGE_850_SHA256 = {
+  "README.md": "5f083b9b1018ea3545dc1701f3189151fcfb48fe8c6bfab56338a0818e0728a1",
+} as const;
+
+const AGENT_SKILL_SEED_STAGES = [
+  { marker: M5_SEED_MARKER, label: "M5" },
+  { marker: M7_SEED_MARKER, label: "M7" },
+  { marker: M8_SEED_MARKER, label: "M8", previousHashes: M7_AGENT_SKILL_SHA256 },
+  { marker: M9_SEED_MARKER, label: "M9", previousHashes: M8_AGENT_SKILL_SHA256 },
+  {
+    marker: M9_BROWSER_SEED_MARKER,
+    label: "M9-browser",
+    previousHashes: M9_BROWSER_AGENT_SKILL_SHA256,
+    newFiles: ["browser.md"],
+  },
+  {
+    marker: M10_CLOUD_SEED_MARKER,
+    label: "M10-cloud",
+    previousHashes: M10_CLOUD_AGENT_SKILL_SHA256,
+    newFiles: ["cloud.md"],
+  },
+  {
+    marker: NEK_852_SEED_MARKER,
+    label: "NEK-852",
+    previousHashes: NEK_852_AGENT_SKILL_SHA256,
+  },
+  {
+    marker: CONTEXT_MENUS_SEED_MARKER,
+    label: "context-menus",
+    previousHashes: CONTEXT_MENUS_AGENT_SKILL_SHA256,
+  },
+  {
+    marker: CONTEXT_MENUS_FIXES_SEED_MARKER,
+    label: "context-menus-fixes",
+    previousHashes: CONTEXT_MENUS_FIXES_AGENT_SKILL_SHA256,
+  },
+  {
+    marker: CONTEXT_MENUS_FIXES_2_SEED_MARKER,
+    label: "context-menus-fixes-2",
+    previousHashes: CONTEXT_MENUS_FIXES_2_AGENT_SKILL_SHA256,
+  },
+  {
+    marker: NEK850_CLOUD_EXEC_SEED_MARKER,
+    label: "NEK-850-cloud-exec",
+    previousHashes: NEK850_CLOUD_EXEC_AGENT_SKILL_SHA256,
+  },
+  {
+    marker: NEK850_FIXES_SEED_MARKER,
+    label: "NEK-850-fixes",
+    previousHashes: NEK850_FIXES_AGENT_SKILL_SHA256,
+  },
+  {
+    marker: NEK850_TRANSACT_SEED_MARKER,
+    label: "NEK-850-transact",
+    previousHashes: NEK850_TRANSACT_AGENT_SKILL_SHA256,
+  },
+  {
+    marker: EXPANSION_MERGE_SEED_MARKER,
+    label: "webmcp-expansion-merge",
+    previousHashes: EXPANSION_MERGE_852_SHA256,
+  },
+  {
+    marker: `${EXPANSION_MERGE_SEED_MARKER}-853`,
+    label: "webmcp-expansion-merge-853",
+    previousHashes: EXPANSION_MERGE_853_SHA256,
+  },
+  {
+    marker: `${EXPANSION_MERGE_SEED_MARKER}-850`,
+    label: "webmcp-expansion-merge-850",
+    previousHashes: EXPANSION_MERGE_850_SHA256,
+  },
+] as const;
+
+export type FileKind = "file" | "directory";
+
+export type FileEntry = {
+  name: string;
+  path: string;
+  kind: FileKind;
+  size: number;
+  modifiedAt: number;
+};
+
+export type FileStat = Omit<FileEntry, "name">;
+
+export type FileSystemChange = {
+  operation: "write" | "mkdir" | "delete" | "move";
+  path: string;
+  from?: string;
+  source: "agent" | "human" | "system";
+};
+
+type ChangeListener = (change: FileSystemChange) => void;
+
+const listeners = new Set<ChangeListener>();
+const mutationChains = new Map<string, Promise<void>>();
+let ready: Promise<FileSystemBackend> | undefined;
+let activeBackend: FileSystemBackend | undefined;
+
+export const FILE_SYSTEM_WRITE_LOCK = "verbos-filesystem-write";
+
+type LockRequester = Pick<LockManager, "request">;
+
+type IndexedEntry = {
+  data: number;
+  ino: number;
+  nlink: number;
+};
+
+export type FileSystemCheckReport = {
+  repaired: string[];
+  warnings: string[];
+};
+
+export type FileSystemCheckAdapter = {
+  readdir(path: string): Promise<readonly string[]>;
+  rename(from: string, to: string): Promise<void>;
+  rm(path: string): Promise<void>;
+  stat(path: string): Promise<{ isDirectory(): boolean }>;
+};
+
+function browserLockManager(): LockRequester | undefined {
+  return typeof navigator === "undefined" ? undefined : navigator.locks;
+}
+
+export function assignUniqueFileSystemIds(
+  entries: Iterable<readonly [string, IndexedEntry]>,
+): void {
+  let nextId = 1;
+  for (const [path, inode] of [...entries].sort(([left], [right]) => left.localeCompare(right))) {
+    if (path === "/") continue;
+    inode.ino = nextId;
+    inode.data = nextId + 1;
+    inode.nlink = 1;
+    nextId += 2;
+  }
+}
+
+export async function withFileSystemWriteLock<T>(
+  mutation: () => Promise<T>,
+  locks: LockRequester | undefined = browserLockManager(),
+): Promise<T> {
+  if (!locks) return await mutation();
+  return await locks.request(FILE_SYSTEM_WRITE_LOCK, { mode: "exclusive" }, mutation);
+}
+
+function homePath(path: string): string {
+  return path === "/" ? "~" : `~${path}`;
+}
+
+let fsckTempId = 0;
+
+function fsckTemporaryPath(path: string): string {
+  const slash = path.lastIndexOf("/");
+  const parent = slash <= 0 ? "" : path.slice(0, slash);
+  return `${parent}/.verbos-fsck-${++fsckTempId}`;
+}
+
+function staleTemporaryName(name: string): boolean {
+  return /^\.verbos-(?:write|fsck)-/.test(name);
+}
+
+async function checkNode(
+  path: string,
+  adapter: FileSystemCheckAdapter,
+  report: FileSystemCheckReport,
+): Promise<void> {
+  let nodeStat: { isDirectory(): boolean } | undefined;
+  try {
+    nodeStat = await adapter.stat(path);
+  } catch (error) {
+    report.warnings.push(`${homePath(path)}: stat failed: ${error instanceof Error ? error.message : String(error)}`);
+    return;
+  }
+
+  let names: readonly string[] | undefined;
+  try {
+    names = await adapter.readdir(path);
+  } catch (error) {
+    if (errorCode(error) !== "ENOTDIR") {
+      report.warnings.push(
+        `${homePath(path)}: directory check failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    } else if (nodeStat.isDirectory()) {
+      report.warnings.push(`${homePath(path)}: stat says directory but its children cannot be read`);
+    }
+    return;
+  }
+
+  if (!nodeStat.isDirectory()) {
+    if (path === "/") {
+      report.warnings.push("~: root is readable as a directory but stat reports a file");
+    } else {
+      const temporary = fsckTemporaryPath(path);
+      let moved = false;
+      try {
+        await adapter.rename(path, temporary);
+        moved = true;
+        await adapter.rename(temporary, path);
+        moved = false;
+        const repairedStat = await adapter.stat(path);
+        if (!repairedStat.isDirectory()) {
+          throw new Error("metadata remained file-shaped after rename repair");
+        }
+        report.repaired.push(homePath(path));
+      } catch (error) {
+        if (moved) {
+          try {
+            await adapter.rename(temporary, path);
+          } catch (rollbackError) {
+            report.warnings.push(
+              `${homePath(path)}: repair rollback failed: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`,
+            );
+          }
+        }
+        report.warnings.push(
+          `${homePath(path)}: readable directory reported as a file; repair failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+  }
+
+  for (const name of names) {
+    if (typeof name !== "string" || name === "." || name === "..") continue;
+    const childPath = path === "/" ? `/${name}` : `${path}/${name}`;
+    if (staleTemporaryName(name)) {
+      try {
+        await adapter.rm(childPath);
+        report.repaired.push(homePath(childPath));
+      } catch (error) {
+        report.warnings.push(
+          `${homePath(childPath)}: stale temporary cleanup failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      continue;
+    }
+    await checkNode(childPath, adapter, report);
+  }
+}
+
+function zenfsCheckAdapter(): FileSystemCheckAdapter {
+  return {
+    async readdir(path) {
+      const names = await zenfs.promises.readdir(path);
+      return names.filter((name): name is string => typeof name === "string");
+    },
+    async rename(from, to) {
+      await zenfs.promises.rename(from, to);
+    },
+    async rm(path) {
+      await zenfs.promises.rm(path, { force: true, recursive: true });
+    },
+    async stat(path) {
+      return await zenfs.promises.stat(path);
+    },
+  };
+}
+
+export async function checkFileSystem(
+  adapter: FileSystemCheckAdapter = zenfsCheckAdapter(),
+): Promise<FileSystemCheckReport> {
+  const report: FileSystemCheckReport = { repaired: [], warnings: [] };
+  await withFileSystemWriteLock(async () => await checkNode("/", adapter, report));
+  return report;
+}
+
+function errorCode(error: unknown): string | undefined {
+  if (error === null || typeof error !== "object") return undefined;
+  const code = (error as { code?: unknown }).code;
+  return typeof code === "string" ? code : undefined;
+}
+
+function isMissing(error: unknown): boolean {
+  return errorCode(error) === "ENOENT";
+}
+
+export class FileSystemError extends Error {
+  readonly code: string | undefined;
+
+  constructor(message: string, code?: string) {
+    super(message);
+    this.name = "FileSystemError";
+    this.code = code;
+  }
+}
+
+function fsError(error: unknown, path: string): Error {
+  if (error instanceof FileSystemError) return error;
+  const messages: Record<string, string> = {
+    EACCES: "permission denied",
+    EEXIST: "file exists",
+    EISDIR: "is a directory",
+    ENOENT: "no such file",
+    ENOTDIR: "not a directory",
+    ENOTEMPTY: "directory not empty",
+    EPERM: "operation not permitted",
+  };
+  const code = errorCode(error);
+  const message = code === undefined ? undefined : messages[code];
+  const errorPath = error !== null && typeof error === "object" &&
+    typeof (error as { path?: unknown }).path === "string"
+    ? (error as { path: string }).path
+    : path;
+  const displayedPath = errorPath.startsWith("/") ? `~${errorPath}` : errorPath;
+  if (message) return new FileSystemError(`verbos: ${message}: ${displayedPath}`, code);
+  if (error instanceof Error) {
+    const detail = error.message.startsWith("verbos:")
+      ? error.message
+      : `verbos: filesystem error: ${error.message}`;
+    return new FileSystemError(detail, code);
+  }
+  return new FileSystemError(`verbos: filesystem error: ${String(error)}`, code);
+}
+
+async function serializeMutation<T>(
+  paths: readonly string[],
+  mutation: () => Promise<T>,
+): Promise<T> {
+  const keys = [...new Set(paths)].sort();
+  const previous = Promise.all(keys.map((path) => mutationChains.get(path)));
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const queued = previous.then(() => gate);
+  for (const key of keys) mutationChains.set(key, queued);
+
+  await previous;
+  try {
+    return await withFileSystemWriteLock(mutation);
+  } finally {
+    release();
+    for (const key of keys) {
+      if (mutationChains.get(key) === queued) mutationChains.delete(key);
+    }
+  }
+}
+
+function realPath(path: string): string {
+  return path === "~" ? "/" : path.slice(1);
+}
+
+function emitChange(change: FileSystemChange): void {
+  useKernelStore.getState().osEvent("system", "fs_change", { ...change });
+  for (const listener of listeners) {
+    try {
+      listener(change);
+    } catch (error) {
+      console.error("VerbOS filesystem watcher failed", error);
+    }
+  }
+}
+
+export function notifyFileSystemChange(
+  path: string,
+  source: FileSystemChange["source"],
+): void {
+  emitChange({ operation: "write", path: normalizePath(path), source });
+}
+
+async function seedFileSystemUnlocked(): Promise<void> {
+  let m2Seeded = false;
+  try {
+    await zenfs.promises.stat(SEED_MARKER);
+    m2Seeded = true;
+  } catch (error) {
+    if (!isMissing(error)) throw error;
+  }
+
+  if (!m2Seeded) {
+    await zenfs.promises.mkdir("/desktop", { recursive: true });
+    await zenfs.promises.mkdir("/site", { recursive: true });
+    await zenfs.promises.mkdir("/notes", { recursive: true });
+    await writeSeedFileIfAbsent("/desktop/brief.md", AURORA_BRIEF);
+    await writeSeedFileIfAbsent("/notes/welcome.md", WELCOME_NOTE);
+    await zenfs.promises.writeFile(SEED_MARKER, "M2\n", "utf8");
+  }
+
+  try {
+    await zenfs.promises.stat(PIZZA_DEMO_SEED_MARKER);
+  } catch (error) {
+    if (!isMissing(error)) throw error;
+    await zenfs.promises.mkdir("/desktop", { recursive: true });
+    await writeSeedFileIfAbsent("/desktop/pizza-demo.md", PIZZA_DEMO_BRIEF);
+    await zenfs.promises.writeFile(PIZZA_DEMO_SEED_MARKER, "pizza-demo\n", "utf8");
+  }
+
+  for (const stage of AGENT_SKILL_SEED_STAGES) {
+    try {
+      await zenfs.promises.stat(stage.marker);
+      continue;
+    } catch (error) {
+      if (!isMissing(error)) throw error;
+    }
+
+    await zenfs.promises.mkdir("/skills", { recursive: true });
+    if ("previousHashes" in stage) {
+      for (const name of Object.keys(stage.previousHashes) as Array<keyof typeof stage.previousHashes>) {
+        await migrateSeedFileIfUnchanged(
+          `/skills/${name}`,
+          stage.previousHashes[name],
+          AGENT_SKILL_FILES[name],
+        );
+      }
+      if ("newFiles" in stage) {
+        for (const name of stage.newFiles) {
+          await writeSeedFileIfAbsent(`/skills/${name}`, AGENT_SKILL_FILES[name]);
+        }
+      }
+    } else {
+      for (const [name, content] of Object.entries(AGENT_SKILL_FILES)) {
+        await writeSeedFileIfAbsent(`/skills/${name}`, content);
+      }
+    }
+    await zenfs.promises.writeFile(stage.marker, `${stage.label}\n`, "utf8");
+  }
+}
+
+export async function seedFileSystem(): Promise<void> {
+  await withFileSystemWriteLock(seedFileSystemUnlocked);
+}
+
+async function writeSeedFileIfAbsent(path: string, content: string): Promise<void> {
+  try {
+    await zenfs.promises.stat(path);
+  } catch (error) {
+    if (!isMissing(error)) throw error;
+    await zenfs.promises.writeFile(path, content, "utf8");
+  }
+}
+
+async function sha256(content: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(content));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function migrateSeedFileIfUnchanged(
+  path: string,
+  previousHash: string,
+  content: string,
+): Promise<void> {
+  let current: string;
+  try {
+    current = await zenfs.promises.readFile(path, "utf8");
+  } catch (error) {
+    if (!isMissing(error)) throw error;
+    await zenfs.promises.writeFile(path, content, "utf8");
+    return;
+  }
+  if (await sha256(current) === previousHash) {
+    await zenfs.promises.writeFile(path, content, "utf8");
+  }
+}
+
+async function configureMemory(): Promise<void> {
+  await configureSingle({ backend: InMemory, label: "verbos-memory" });
+}
+
+export const CLOUD_MOUNT_TIMEOUT_MS = 8_000;
+
+async function withDeadline<T>(task: () => Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(`verbos: cloud filesystem mount timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([task(), timeout]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+export async function selectFileSystemBackend(
+  mountOpfs: () => Promise<void>,
+  mountMemory: () => Promise<void>,
+  mountCloud?: () => Promise<void>,
+  onCloudUnavailable?: (error: unknown) => void,
+  cloudMountTimeoutMs = CLOUD_MOUNT_TIMEOUT_MS,
+): Promise<FileSystemBackend> {
+  if (mountCloud) {
+    try {
+      await withDeadline(mountCloud, cloudMountTimeoutMs);
+      return "cloud";
+    } catch (error) {
+      console.warn("VerbOS cloud backend unavailable; using local filesystem", error);
+      onCloudUnavailable?.(error);
+    }
+  }
+  try {
+    await mountOpfs();
+    return "opfs";
+  } catch (error) {
+    console.warn("VerbOS OPFS unavailable; using in-memory filesystem", error);
+    await mountMemory();
+    return "memory";
+  }
+}
+
+async function configurePreferredBackend(): Promise<FileSystemBackend> {
+  const mountWarnings: string[] = [];
+  let prefersCloud = false;
+  try {
+    prefersCloud = cloudKernelPreference();
+  } catch {
+    prefersCloud = false;
+  }
+  const backend = await selectFileSystemBackend(
+    async () => {
+      const storage = typeof navigator === "undefined" ? undefined : navigator.storage;
+      if (!storage || typeof storage.getDirectory !== "function") {
+        throw new Error("OPFS unavailable");
+      }
+      const handle = await storage.getDirectory();
+      const webAccess = await WebAccess.create({ handle, disableHandleCache: true });
+      // @zenfs/dom 2.6.5 reconstructs every discovered OPFS inode with ID 0. ZenFS's
+      // vnode cache keys by inode ID, so existing files alias each other after reload.
+      assignUniqueFileSystemIds(webAccess.index.entries());
+      await configureSingle(webAccess);
+    },
+    configureMemory,
+    prefersCloud
+      ? async () => {
+          const cloud = await createCloudFileSystem({
+            fetch: globalThis.fetch.bind(globalThis),
+            workerBaseUrl: resolveComputerWorkerUrl(),
+            workspaceId: ensureWorkspaceId(),
+          });
+          await configureSingle(cloud);
+        }
+      : undefined,
+    (error) => {
+      const reason = error instanceof Error ? error.message : String(error);
+      mountWarnings.push(`cloud backend unavailable; using local filesystem: ${reason}`);
+    },
+  );
+  activeBackend = backend;
+  await seedFileSystem();
+  const check = await checkFileSystem();
+  useKernelStore.getState().setFileSystemCheck({
+    repaired: check.repaired,
+    warnings: [...mountWarnings, ...check.warnings],
+  });
+  if (check.repaired.length > 0) {
+    console.warn(`VerbOS filesystem repaired: ${check.repaired.join(", ")}`);
+  }
+  for (const warning of check.warnings) console.error(`VerbOS filesystem check: ${warning}`);
+  return backend;
+}
+
+function trackBoot(task: () => Promise<FileSystemBackend>): Promise<FileSystemBackend> {
+  useKernelStore.getState().setFileSystemState("mounting");
+  const tracked = task()
+    .then((backend) => {
+      activeBackend = backend;
+      useKernelStore.getState().setFileSystemState("ready", backend);
+      return backend;
+    })
+    .catch((error: unknown) => {
+      activeBackend = undefined;
+      const message = error instanceof Error ? error.message : String(error);
+      useKernelStore.getState().setFileSystemState("failed", undefined, message);
+      throw error;
+    });
+  ready = tracked;
+  return tracked;
+}
+
+function ensureReady(): void {
+  if (
+    activeBackend === undefined ||
+    useKernelStore.getState().fileSystemStatus !== "ready"
+  ) {
+    throw new Error("verbos: filesystem not ready");
+  }
+}
+
+export function bootFileSystem(): Promise<FileSystemBackend> {
+  const init = (
+    globalThis as typeof globalThis & {
+      __VERBOS_INIT__?: { bootFileSystem?: () => Promise<FileSystemBackend> };
+    }
+  ).__VERBOS_INIT__;
+  return ready ?? trackBoot(init?.bootFileSystem ?? configurePreferredBackend);
+}
+
+export function initializeMemoryFileSystem(): Promise<FileSystemBackend> {
+  mutationChains.clear();
+  activeBackend = undefined;
+  return trackBoot(async () => {
+    await configureMemory();
+    activeBackend = "memory";
+    await seedFileSystem();
+    const check = await checkFileSystem();
+    useKernelStore.getState().setFileSystemCheck(check);
+    return "memory";
+  });
+}
+
+export function fileSystemBackend(): FileSystemBackend | undefined {
+  return activeBackend;
+}
+
+export function normalizePath(path: string): string {
+  if (typeof path !== "string" || (path !== "~" && !path.startsWith("~/"))) {
+    throw new Error(`verbos: path must start with ~/: ${String(path)}`);
+  }
+  if (path.includes("\0")) throw new Error(`verbos: invalid path: ${path}`);
+
+  const normalized: string[] = [];
+  for (const segment of path.slice(path === "~" ? 1 : 2).split("/")) {
+    if (segment === "" || segment === ".") continue;
+    if (segment === "..") {
+      if (normalized.length === 0) throw new Error(`verbos: path escapes home: ${path}`);
+      normalized.pop();
+      continue;
+    }
+    normalized.push(segment);
+  }
+  return normalized.length === 0 ? "~" : `~/${normalized.join("/")}`;
+}
+
+export function joinPath(directory: string, name: string): string {
+  const parent = normalizePath(directory);
+  if (name === "" || name === "." || name === ".." || name.includes("/") || name.includes("\0")) {
+    throw new Error(`verbos: invalid file name: ${name}`);
+  }
+  return normalizePath(`${parent}/${name}`);
+}
+
+export function parentPath(path: string): string {
+  const normalized = normalizePath(path);
+  if (normalized === "~") return "~";
+  const slash = normalized.lastIndexOf("/");
+  return slash <= 1 ? "~" : normalized.slice(0, slash);
+}
+
+export function isTextFile(path: string): boolean {
+  return /\.(?:css|csv|html?|js|json|jsx|log|md|mjs|sh|svg|text|toml|ts|tsx|txt|xml|yaml|yml)$/i.test(path);
+}
+
+export async function readFile(path: string): Promise<string> {
+  ensureReady();
+  const normalized = normalizePath(path);
+  try {
+    const result = await zenfs.promises.stat(realPath(normalized));
+    if (result.isDirectory()) throw new Error(`verbos: is a directory: ${normalized}`);
+    return await zenfs.promises.readFile(realPath(normalized), "utf8");
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("verbos:")) throw error;
+    throw fsError(error, normalized);
+  }
+}
+
+export async function readFilePrefix(path: string, maxBytes: number): Promise<string> {
+  ensureReady();
+  const normalized = normalizePath(path);
+  if (!Number.isInteger(maxBytes) || maxBytes < 1) {
+    throw new Error("verbos: maxBytes must be a positive integer");
+  }
+  try {
+    const result = await zenfs.promises.stat(realPath(normalized));
+    if (result.isDirectory()) throw new Error(`verbos: is a directory: ${normalized}`);
+    const length = Math.min(result.size, maxBytes);
+    const buffer = new Uint8Array(length);
+    const handle = await zenfs.promises.open(realPath(normalized), "r");
+    try {
+      const { bytesRead } = await handle.read(buffer, 0, length, 0);
+      return new TextDecoder().decode(buffer.subarray(0, bytesRead));
+    } finally {
+      await handle.close();
+    }
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("verbos:")) throw error;
+    throw fsError(error, normalized);
+  }
+}
+
+export async function readFileBytes(path: string): Promise<Uint8Array> {
+  ensureReady();
+  const normalized = normalizePath(path);
+  try {
+    const result = await zenfs.promises.stat(realPath(normalized));
+    if (result.isDirectory()) throw new Error(`verbos: is a directory: ${normalized}`);
+    return Uint8Array.from(await zenfs.promises.readFile(realPath(normalized)));
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("verbos:")) throw error;
+    throw fsError(error, normalized);
+  }
+}
+
+async function assertWritableFileTarget(path: string): Promise<void> {
+  try {
+    const target = await zenfs.promises.stat(realPath(path));
+    if (target.isDirectory()) throw new Error(`verbos: is a directory: ${path}`);
+    return;
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("verbos:")) throw error;
+    if (!isMissing(error)) throw fsError(error, path);
+  }
+
+  await assertDirectoryParent(path);
+}
+
+function temporaryWritePath(path: string): string {
+  const parent = realPath(parentPath(path));
+  const token = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `${Date.now()}-${++fsckTempId}`;
+  return `${parent === "/" ? "" : parent}/.verbos-write-${token}`;
+}
+
+async function replaceFileAtomically(
+  normalized: string,
+  content: string | Uint8Array,
+): Promise<void> {
+  await assertWritableFileTarget(normalized);
+  const target = realPath(normalized);
+  const temporary = temporaryWritePath(normalized);
+  try {
+    const empty = typeof content === "string" ? content.length === 0 : content.byteLength === 0;
+    if (empty) {
+      // @zenfs/dom does not create an OPFS handle for a zero-byte write. Materialize
+      // the temp file first, then truncate it before the atomic replacement.
+      await zenfs.promises.writeFile(temporary, Uint8Array.of(0));
+      await zenfs.promises.truncate(temporary, 0);
+    } else {
+      await zenfs.promises.writeFile(temporary, content, typeof content === "string" ? "utf8" : undefined);
+    }
+    await zenfs.promises.rename(temporary, target);
+  } catch (error) {
+    try {
+      await zenfs.promises.rm(temporary, { force: true });
+    } catch {
+      // Best-effort cleanup; original failure remains authoritative.
+    }
+    throw error;
+  }
+}
+
+async function assertDirectoryParent(path: string): Promise<void> {
+  const parent = parentPath(path);
+  try {
+    const targetParent = await zenfs.promises.stat(realPath(parent));
+    if (!targetParent.isDirectory()) throw new Error(`verbos: not a directory: ${parent}`);
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("verbos:")) throw error;
+    if (isMissing(error)) throw new Error(`verbos: no such directory: ${parent}`);
+    throw fsError(error, parent);
+  }
+}
+
+async function writeFileUnlocked(
+  normalized: string,
+  content: string,
+  source: FileSystemChange["source"],
+): Promise<void> {
+  try {
+    await replaceFileAtomically(normalized, content);
+    emitChange({ operation: "write", path: normalized, source });
+  } catch (error) {
+    throw fsError(error, normalized);
+  }
+}
+
+export async function writeFile(
+  path: string,
+  content: string,
+  source: FileSystemChange["source"],
+): Promise<void> {
+  ensureReady();
+  const normalized = normalizePath(path);
+  await serializeMutation([normalized], () => writeFileUnlocked(normalized, content, source));
+}
+
+export async function createFile(
+  path: string,
+  content: string,
+  source: FileSystemChange["source"],
+): Promise<void> {
+  ensureReady();
+  const normalized = normalizePath(path);
+  await serializeMutation([normalized], async () => {
+    try {
+      await zenfs.promises.stat(realPath(normalized));
+    } catch (error) {
+      if (!isMissing(error)) throw fsError(error, normalized);
+      await writeFileUnlocked(normalized, content, source);
+      return;
+    }
+    throw new FileSystemError(`verbos: file exists: ${normalized}`, "EEXIST");
+  });
+}
+
+export async function writeFileBytes(
+  path: string,
+  content: Uint8Array,
+  source: FileSystemChange["source"],
+): Promise<void> {
+  ensureReady();
+  const normalized = normalizePath(path);
+  await serializeMutation([normalized], async () => {
+    try {
+      await replaceFileAtomically(normalized, content);
+      emitChange({ operation: "write", path: normalized, source });
+    } catch (error) {
+      throw fsError(error, normalized);
+    }
+  });
+}
+
+export async function touchFile(
+  path: string,
+  source: FileSystemChange["source"],
+  modifiedAt = new Date(),
+): Promise<void> {
+  ensureReady();
+  const normalized = normalizePath(path);
+  await serializeMutation([normalized], async () => {
+    let target;
+    try {
+      target = await zenfs.promises.stat(realPath(normalized));
+    } catch (error) {
+      if (!isMissing(error)) throw fsError(error, normalized);
+      await writeFileUnlocked(normalized, "", source);
+      return;
+    }
+    if (target.isDirectory()) throw new Error(`verbos: is a directory: ${normalized}`);
+    try {
+      await zenfs.promises.utimes(realPath(normalized), modifiedAt, modifiedAt);
+      emitChange({ operation: "write", path: normalized, source });
+    } catch (error) {
+      throw fsError(error, normalized);
+    }
+  });
+}
+
+export async function updateFile(
+  path: string,
+  update: (current: string) => string | Promise<string>,
+  source: FileSystemChange["source"],
+  createIfMissing = false,
+): Promise<string> {
+  ensureReady();
+  const normalized = normalizePath(path);
+  return serializeMutation([normalized], async () => {
+    let current: string;
+    try {
+      current = await readFile(normalized);
+    } catch (error) {
+      if (!createIfMissing || !isMissing(error)) throw error;
+      current = "";
+    }
+    const next = await update(current);
+    await writeFileUnlocked(normalized, next, source);
+    return next;
+  });
+}
+
+export async function whenPathIdle(path: string): Promise<void> {
+  const normalized = normalizePath(path);
+  while (true) {
+    const current = mutationChains.get(normalized);
+    if (!current) return;
+    await current;
+    if (mutationChains.get(normalized) === current) return;
+  }
+}
+
+export async function ls(path: string): Promise<FileEntry[]> {
+  ensureReady();
+  const normalized = normalizePath(path);
+  try {
+    const names = await zenfs.promises.readdir(realPath(normalized));
+    const entries = await Promise.all(
+      names
+        .filter((name): name is string => typeof name === "string" && !name.startsWith(".verbos-"))
+        .map(async (name) => {
+          const childPath = joinPath(normalized, name);
+          const childStat = await zenfs.promises.stat(realPath(childPath));
+          return {
+            name,
+            path: childPath,
+            kind: childStat.isDirectory() ? "directory" : "file",
+            size: childStat.size,
+            modifiedAt: childStat.mtimeMs,
+          } satisfies FileEntry;
+        }),
+    );
+    return entries.sort((left, right) => {
+      if (left.kind !== right.kind) return left.kind === "directory" ? -1 : 1;
+      return left.name.localeCompare(right.name);
+    });
+  } catch (error) {
+    if (isMissing(error)) {
+      throw new FileSystemError(`verbos: no such directory: ${normalized}`, "ENOENT");
+    }
+    throw fsError(error, normalized);
+  }
+}
+
+export async function mkdir(
+  path: string,
+  source: FileSystemChange["source"],
+): Promise<void> {
+  ensureReady();
+  const normalized = normalizePath(path);
+  await serializeMutation([normalized], async () => {
+    try {
+      const target = await zenfs.promises.stat(realPath(normalized));
+      if (!target.isDirectory()) throw new Error(`verbos: is a file: ${normalized}`);
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith("verbos:")) throw error;
+      if (!isMissing(error)) throw fsError(error, normalized);
+      await assertDirectoryParent(normalized);
+      try {
+        await zenfs.promises.mkdir(realPath(normalized));
+        emitChange({ operation: "mkdir", path: normalized, source });
+        return;
+      } catch (mkdirError) {
+        throw fsError(mkdirError, normalized);
+      }
+    }
+    throw new Error(`verbos: file exists: ${normalized}`);
+  });
+}
+
+export async function rm(
+  path: string,
+  source: FileSystemChange["source"],
+): Promise<void> {
+  ensureReady();
+  const normalized = normalizePath(path);
+  if (normalized === "~") throw new Error("verbos: cannot delete home directory: ~");
+  await serializeMutation([normalized], async () => {
+    try {
+      await zenfs.promises.rm(realPath(normalized), { recursive: true });
+      emitChange({ operation: "delete", path: normalized, source });
+    } catch (error) {
+      throw fsError(error, normalized);
+    }
+  });
+}
+
+export async function mv(
+  from: string,
+  to: string,
+  source: FileSystemChange["source"],
+  overwrite = false,
+): Promise<void> {
+  ensureReady();
+  const normalizedFrom = normalizePath(from);
+  const normalizedTo = normalizePath(to);
+  if (normalizedFrom === "~") throw new Error("verbos: cannot move home directory: ~");
+  if (normalizedTo === normalizedFrom || normalizedTo.startsWith(`${normalizedFrom}/`)) {
+    throw new Error(`verbos: cannot move ${normalizedFrom} into itself: ${normalizedTo}`);
+  }
+  await serializeMutation([normalizedFrom, normalizedTo], async () => {
+    try {
+      await zenfs.promises.stat(realPath(normalizedFrom));
+    } catch (error) {
+      throw fsError(error, normalizedFrom);
+    }
+    let destinationExists = false;
+    try {
+      await zenfs.promises.stat(realPath(normalizedTo));
+      destinationExists = true;
+    } catch (error) {
+      if (!isMissing(error)) throw fsError(error, normalizedTo);
+    }
+    if (destinationExists && !overwrite) {
+      throw new Error(`verbos: destination exists: ${normalizedTo}`);
+    }
+    await assertDirectoryParent(normalizedTo);
+    try {
+      await zenfs.promises.rename(realPath(normalizedFrom), realPath(normalizedTo));
+      emitChange({ operation: "move", path: normalizedTo, from: normalizedFrom, source });
+    } catch (error) {
+      throw fsError(error, normalizedTo);
+    }
+  });
+}
+
+export async function stat(path: string): Promise<FileStat> {
+  ensureReady();
+  const normalized = normalizePath(path);
+  try {
+    const result = await zenfs.promises.stat(realPath(normalized));
+    return {
+      path: normalized,
+      kind: result.isDirectory() ? "directory" : "file",
+      size: result.size,
+      modifiedAt: result.mtimeMs,
+    };
+  } catch (error) {
+    throw fsError(error, normalized);
+  }
+}
+
+export async function exists(path: string): Promise<boolean> {
+  ensureReady();
+  const normalized = normalizePath(path);
+  try {
+    await zenfs.promises.stat(realPath(normalized));
+    return true;
+  } catch (error) {
+    if (isMissing(error)) return false;
+    throw fsError(error, normalized);
+  }
+}
+
+export function watch(listener: ChangeListener): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}

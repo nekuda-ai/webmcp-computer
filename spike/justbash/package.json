@@ -1,0 +1,12 @@
+{
+  "name": "spike-justbash",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "fflate": "^0.8.3",
+    "just-bash": "3.4.2"
+  },
+  "devDependencies": {
+    "vite": "^6.0.0"
+  }
+}

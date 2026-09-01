@@ -1,0 +1,141 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+  <style>
+    body { margin: 0; font-family: 'Space Grotesk', system-ui, sans-serif; background: #f4f8fc; }
+    a { color: #2e9ff3; } a:hover { color: #1b7fd4; }
+    .mono { font-family: 'IBM Plex Mono', ui-monospace, 'SF Mono', monospace; }
+    .micro { font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 9.5px; letter-spacing: 0.18em; color: #8fa3b8; }
+    .hairline { height: 1px; background: rgba(23,34,46,0.10); }
+  </style>
+</helmet>
+
+<div style="box-sizing: border-box; width: 1160px; padding: 52px 56px 60px; color: #17222e; display: flex; flex-direction: column; gap: 34px;">
+
+  <div style="display: flex; flex-direction: column; gap: 10px;">
+    <span class="micro">VERBOS —— DESIGN COMPONENTS // V.01</span>
+    <div style="font-size: 38px; font-weight: 600; letter-spacing: -0.02em;">Quiet CRT, nekuda sky</div>
+    <div style="font-size: 14px; line-height: 1.55; color: #5d7183; max-width: 640px;">Light mist base from the nekuda palette, one blue accent, monospace microlabels for the retro-future voice. The dot is the motif everywhere — nekuda means dot.</div>
+  </div>
+
+  <div class="hairline"></div>
+
+  <!-- Type -->
+  <div style="display: flex; flex-direction: column; gap: 16px;">
+    <span class="micro">01 — TYPE</span>
+    <div style="display: flex; align-items: baseline; gap: 40px;">
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <div style="font-size: 32px; font-weight: 600; letter-spacing: -0.02em;">Space Grotesk</div>
+        <div style="font-size: 13px; color: #5d7183;">Display + UI — 600 for titles, 500 for window chrome, 400 body.</div>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <div class="mono" style="font-size: 22px; color: #33455a;">IBM Plex Mono</div>
+        <div style="font-size: 13px; color: #5d7183;">Terminal, PID chips, MICROLABELS at 9–11px with 0.12–0.2em tracking.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="hairline"></div>
+
+  <!-- Color -->
+  <div style="display: flex; flex-direction: column; gap: 16px;">
+    <span class="micro">02 — COLOR</span>
+    <div style="display: flex; gap: 14px;">
+      <div style="display: flex; flex-direction: column; gap: 6px; align-items: center;">
+        <span style="width: 92px; height: 56px; border-radius: 10px; background: #f6fafd; border: 1px solid rgba(23,34,46,0.08); display: inline-block;"></span>
+        <span class="mono" style="font-size: 9px; color: #8fa3b8;">SKY 01 F6FAFD</span>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 6px; align-items: center;">
+        <span style="width: 92px; height: 56px; border-radius: 10px; background: #e4edf7; border: 1px solid rgba(23,34,46,0.08); display: inline-block;"></span>
+        <span class="mono" style="font-size: 9px; color: #8fa3b8;">SKY 02 E4EDF7</span>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 6px; align-items: center;">
+        <span style="width: 92px; height: 56px; border-radius: 10px; background: #2e9ff3; display: inline-block;"></span>
+        <span class="mono" style="font-size: 9px; color: #8fa3b8;">ACCENT 2E9FF3</span>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 6px; align-items: center;">
+        <span style="width: 92px; height: 56px; border-radius: 10px; background: #16283d; display: inline-block;"></span>
+        <span class="mono" style="font-size: 9px; color: #8fa3b8;">NAVY 16283D</span>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 6px; align-items: center;">
+        <span style="width: 92px; height: 56px; border-radius: 10px; background: #9fd8ff; display: inline-block;"></span>
+        <span class="mono" style="font-size: 9px; color: #8fa3b8;">PHOSPHOR 9FD8FF</span>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 6px; align-items: center;">
+        <span style="width: 92px; height: 56px; border-radius: 10px; background: #7ee0a3; display: inline-block;"></span>
+        <span class="mono" style="font-size: 9px; color: #8fa3b8;">OK 7EE0A3</span>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 6px; align-items: center;">
+        <span style="width: 92px; height: 56px; border-radius: 10px; background: #17222e; display: inline-block;"></span>
+        <span class="mono" style="font-size: 9px; color: #8fa3b8;">INK 17222E</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="hairline"></div>
+
+  <!-- Window anatomy -->
+  <div style="display: flex; flex-direction: column; gap: 16px;">
+    <span class="micro">03 — WINDOW CHROME</span>
+    <div style="display: flex; gap: 44px; align-items: flex-start;">
+      <div style="width: 420px; background: rgba(255,255,255,0.9); border: 1px solid rgba(23,34,46,0.10); border-radius: 12px; box-shadow: 0 18px 44px rgba(36,66,98,0.13); overflow: hidden;">
+        <div style="display: flex; align-items: center; justify-content: space-between; height: 38px; padding: 0 12px; border-bottom: 1px solid rgba(23,34,46,0.07);">
+          <div style="display: flex; align-items: center; gap: 6px;">
+            <span style="width: 9px; height: 9px; border-radius: 999px; background: #cfdded; display: inline-block;"></span>
+            <span style="width: 9px; height: 9px; border-radius: 999px; background: #cfdded; display: inline-block;"></span>
+            <span style="width: 9px; height: 9px; border-radius: 999px; background: #cfdded; display: inline-block;"></span>
+          </div>
+          <span style="font-size: 12.5px; font-weight: 500; color: #33455a;">Window title</span>
+          <span class="mono" style="font-size: 9px; letter-spacing: 0.12em; color: #8fa3b8;">PID 4</span>
+        </div>
+        <div style="padding: 18px; font-size: 13px; color: #5d7183; line-height: 1.5;">Frosted white on mist, 12px radius, one soft shadow. Focused window gets the deeper shadow and full opacity; idle windows drop to 88%.</div>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 12px; padding-top: 4px;">
+        <div style="display: flex; align-items: center; gap: 10px;"><span style="width: 22px; height: 1px; background: #8fa3b8; display: inline-block;"></span><span class="mono" style="font-size: 10px; letter-spacing: 0.14em; color: #5d7183;">DOT CONTROLS — QUIET UNTIL HOVER</span></div>
+        <div style="display: flex; align-items: center; gap: 10px;"><span style="width: 22px; height: 1px; background: #8fa3b8; display: inline-block;"></span><span class="mono" style="font-size: 10px; letter-spacing: 0.14em; color: #5d7183;">TITLE — SPACE GROTESK 500</span></div>
+        <div style="display: flex; align-items: center; gap: 10px;"><span style="width: 22px; height: 1px; background: #8fa3b8; display: inline-block;"></span><span class="mono" style="font-size: 10px; letter-spacing: 0.14em; color: #5d7183;">PID CHIP — WINDOWS ARE PROCESSES</span></div>
+        <div style="display: flex; align-items: center; gap: 8px; margin-top: 6px;">
+          <span style="width: 9px; height: 9px; border-radius: 999px; background: #cfdded; display: inline-block;"></span>
+          <span class="mono" style="font-size: 9px; color: #8fa3b8;">IDLE</span>
+          <span style="width: 9px; height: 9px; border-radius: 999px; background: #8fa3b8; display: inline-block; margin-left: 10px;"></span>
+          <span class="mono" style="font-size: 9px; color: #8fa3b8;">HOVER</span>
+          <span style="width: 9px; height: 9px; border-radius: 999px; background: #ff7a59; display: inline-block; margin-left: 10px;"></span>
+          <span class="mono" style="font-size: 9px; color: #8fa3b8;">CLOSE</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="hairline"></div>
+
+  <!-- Agent presence -->
+  <div style="display: flex; flex-direction: column; gap: 16px;">
+    <span class="micro">04 — AGENT PRESENCE</span>
+    <div style="display: flex; gap: 28px; align-items: center;">
+      <div style="display: flex; align-items: center; gap: 7px;">
+        <span style="width: 13px; height: 13px; border-radius: 999px; background: #2e9ff3; display: inline-block; box-shadow: 0 0 0 4px rgba(46,159,243,0.22), 0 0 18px rgba(46,159,243,0.55);"></span>
+        <span class="mono" style="font-size: 9.5px; letter-spacing: 0.14em; padding: 3px 8px; border-radius: 999px; background: #2e9ff3; color: #ffffff;">CODEX</span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 9px; padding: 9px 14px; border-radius: 10px; background: rgba(255,255,255,0.85); border: 1px solid rgba(23,34,46,0.09); box-shadow: 0 10px 26px rgba(36,66,98,0.12);">
+        <span style="width: 7px; height: 7px; border-radius: 999px; background: #2e9ff3; display: inline-block;"></span>
+        <span class="mono" style="font-size: 10px; letter-spacing: 0.12em; color: #33455a;">AGENT RAN: serve site/</span>
+      </div>
+      <div class="mono" style="display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 6px; background: rgba(46,159,243,0.16); font-size: 12px; color: #16283d;">
+        <span style="width: 6px; height: 6px; border-radius: 999px; background: #2e9ff3; display: inline-block;"></span>
+        agent-typed terminal input — accent-tinted row
+      </div>
+    </div>
+    <div style="font-size: 13px; color: #5d7183; max-width: 700px; line-height: 1.5;">Cursor dot + tag, activity toast, tinted rows: three volumes of the same voice. Everything the agent does is visible; nothing shouts.</div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

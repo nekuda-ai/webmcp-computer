@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "verbos-dev",
+      "runtimeExecutable": "zsh",
+      "runtimeArgs": ["-c", "cd web && bunx vite --port 5177 --strictPort"],
+      "port": 5177,
+      "autoPort": false
+    }
+  ]
+}

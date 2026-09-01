@@ -1,0 +1,34 @@
+{
+  "name": "verbos-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "test": "bun test src",
+    "test:e2e": "bun test e2e --timeout 90000"
+  },
+  "dependencies": {
+    "@nekuda/webmcp-sdk": "file:../vendor/webmcp-sdk",
+    "@xterm/xterm": "^6.0.0",
+    "@zenfs/core": "^2.6.5",
+    "@zenfs/dom": "^1.2.11",
+    "fflate": "^0.8.3",
+    "just-bash": "3.4.2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-rnd": "^10.5.2",
+    "zustand": "^5.0.8"
+  },
+  "devDependencies": {
+    "@openai/sites-vite-plugin": "0.2.0",
+    "@types/bun": "^1.2.0",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "puppeteer-core": "^25.8.0",
+    "typescript": "^5.7.2",
+    "vite": "^5.4.14"
+  }
+}
