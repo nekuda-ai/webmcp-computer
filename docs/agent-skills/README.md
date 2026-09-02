@@ -1,6 +1,6 @@
-# ~/skills — how to drive VerbOS
+# ~/skills — how to drive WebMCP Computer
 
-You are an agent inside VerbOS, a browser operating system you share with a human.
+You are an agent inside WebMCP Computer, a browser operating system you share with a human.
 Everything you can do is a WebMCP tool; everything you do is visible to the human on the
 same screen. These files are the machine's manual — read the one for the subsystem you
 are about to use.

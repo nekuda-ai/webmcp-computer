@@ -99,7 +99,7 @@ export function createSiteModelContextFacade(
     registration.signal?.removeEventListener("abort", registration.abort as EventListener);
     send({ kind: "site-tool-unregister", name });
     if (!registration.registered) {
-      registration.reject(reason ?? new Error(`verbos: site tool registration aborted: ${name}`));
+      registration.reject(reason ?? new Error(`webmcp-computer: site tool registration aborted: ${name}`));
     }
   };
 
@@ -115,7 +115,7 @@ export function createSiteModelContextFacade(
       } else {
         registrations.delete(name);
         registration.signal?.removeEventListener("abort", registration.abort as EventListener);
-        registration.reject(new Error(message.error ?? `verbos: site tool registration failed: ${name}`));
+        registration.reject(new Error(message.error ?? `webmcp-computer: site tool registration failed: ${name}`));
       }
       return;
     }
@@ -126,7 +126,7 @@ export function createSiteModelContextFacade(
         kind: "site-tool-result",
         callId: message.callId,
         ok: false,
-        error: `verbos: site tool is not registered: ${message.name}`,
+        error: `webmcp-computer: site tool is not registered: ${message.name}`,
       });
       return;
     }
@@ -138,7 +138,7 @@ export function createSiteModelContextFacade(
             kind: "site-tool-result",
             callId: message.callId,
             ok: false,
-            error: `verbos: site tool result too large: ${message.name}`,
+            error: `webmcp-computer: site tool result too large: ${message.name}`,
           });
           return;
         }
@@ -162,19 +162,19 @@ export function createSiteModelContextFacade(
     registerTool(tool, options = {}) {
       return new Promise<void>((resolve, reject) => {
         if (typeof tool !== "object" || tool === null || typeof tool.execute !== "function") {
-          reject(new TypeError("verbos: site tool must provide an execute function"));
+          reject(new TypeError("webmcp-computer: site tool must provide an execute function"));
           return;
         }
         if (typeof tool.name !== "string" || typeof tool.description !== "string") {
-          reject(new TypeError("verbos: site tool requires name and description strings"));
+          reject(new TypeError("webmcp-computer: site tool requires name and description strings"));
           return;
         }
         if (registrations.has(tool.name)) {
-          reject(new Error(`verbos: site tool already registered: ${tool.name}`));
+          reject(new Error(`webmcp-computer: site tool already registered: ${tool.name}`));
           return;
         }
         if (options.signal?.aborted) {
-          reject(options.signal.reason ?? new Error(`verbos: site tool registration aborted: ${tool.name}`));
+          reject(options.signal.reason ?? new Error(`webmcp-computer: site tool registration aborted: ${tool.name}`));
           return;
         }
 
@@ -250,7 +250,7 @@ export function createSiteToolProxy(
   const pending = new Map<string, PendingSiteToolCall>();
   let nextCallId = 1;
 
-  const reset = (reason = new Error("verbos: site tool bridge closed")) => {
+  const reset = (reason = new Error("webmcp-computer: site tool bridge closed")) => {
     for (const call of pending.values()) {
       call.signal?.removeEventListener("abort", call.abort as EventListener);
       call.reject(reason);
@@ -261,7 +261,7 @@ export function createSiteToolProxy(
   return {
     execute(name, input, signal) {
       if (signal?.aborted) {
-        return Promise.reject(signal.reason ?? new Error(`verbos: site tool call aborted: ${name}`));
+        return Promise.reject(signal.reason ?? new Error(`webmcp-computer: site tool call aborted: ${name}`));
       }
       const callId = `site-call-${nextCallId++}`;
       return new Promise((resolve, reject) => {
@@ -272,7 +272,7 @@ export function createSiteToolProxy(
         };
         const abort = () => {
           if (pending.delete(callId)) {
-            reject(signal?.reason ?? new Error(`verbos: site tool call aborted: ${name}`));
+            reject(signal?.reason ?? new Error(`webmcp-computer: site tool call aborted: ${name}`));
           }
         };
         call.abort = abort;
@@ -294,7 +294,7 @@ export function createSiteToolProxy(
       pending.delete(message.callId);
       call.signal?.removeEventListener("abort", call.abort as EventListener);
       if (message.ok) call.resolve(message.result);
-      else call.reject(new Error(message.error ?? "verbos: site tool failed"));
+      else call.reject(new Error(message.error ?? "webmcp-computer: site tool failed"));
     },
 
     reset,

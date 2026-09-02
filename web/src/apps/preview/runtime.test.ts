@@ -59,13 +59,13 @@ describe("Preview console runtime", () => {
   test("surfaces document rewrite warnings in the frame console", async () => {
     const unmount = mountPreviewRuntime(44, "~/apps/map.html", async () => {}, () => {});
     try {
-      recordPreviewWarnings(44, ["verbos: missing local asset: map.png"]);
+      recordPreviewWarnings(44, ["webmcp-computer: missing local asset: map.png"]);
       await Promise.resolve();
 
       expect(getPreviewRuntime(44).lines).toEqual([
         expect.objectContaining({
           level: "warn",
-          message: "verbos: missing local asset: map.png",
+          message: "webmcp-computer: missing local asset: map.png",
         }),
       ]);
     } finally {

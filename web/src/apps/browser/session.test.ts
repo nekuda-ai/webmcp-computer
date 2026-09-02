@@ -46,10 +46,10 @@ class FakeSocket extends EventTarget implements BrowserWebSocket {
 function descriptor() {
   return {
     sessionId: SESSION_ID,
-    liveViewUrl: "https://live.test/rest-five-minute-view",
+    liveViewUrl: "https://live.test/rest-fifteen-minute-view",
     tabWsUrl: "ws://browser.test/cdp",
     targetId: "target-1",
-    keepAliveMs: 300_000,
+    keepAliveMs: 900_000,
   };
 }
 
@@ -87,6 +87,18 @@ afterEach(async () => {
 });
 
 describe("browser session", () => {
+  test("opens webmcp.com for a fresh session unless an explicit URL is supplied", async () => {
+    const homepage = setup([Response.json(descriptor()), Response.json({ status: "closed" })]);
+    const homepageSession = await createBrowserSession(homepage.dependencies);
+    expect(homepage.calls[0]?.init?.body).toBe(JSON.stringify({ url: "https://webmcp.com/" }));
+    await homepageSession.close();
+
+    const explicit = setup([Response.json(descriptor()), Response.json({ status: "closed" })]);
+    const explicitSession = await createBrowserSession(explicit.dependencies, "https://example.com/path");
+    expect(explicit.calls[0]?.init?.body).toBe(JSON.stringify({ url: "https://example.com/path" }));
+    await explicitSession.close();
+  });
+
   test("uses Cloudflare.getLiveView URL instead of short REST URL", async () => {
     const fake = setup([Response.json(descriptor()), Response.json({ status: "closed" })]);
     const session = await createBrowserSession(fake.dependencies, "https://example.com");
@@ -95,7 +107,7 @@ describe("browser session", () => {
       liveViewUrl: "https://live.test/fresh-hour-view",
       sessionId: SESSION_ID,
       targetId: "target-1",
-      keepAliveMs: 300_000,
+      keepAliveMs: 900_000,
     });
     expect(fake.sockets[0]?.sent[0]).toEqual({
       id: 1,
@@ -110,7 +122,7 @@ describe("browser session", () => {
       Response.json({ ...descriptor(), liveViewUrl: "data:text/html,<script>alert(1)</script>" }),
     ]);
     await expect(createBrowserSession(badWorker.dependencies)).rejects.toThrow(
-      "verbos: browser Worker returned an invalid live view URL",
+      "webmcp-computer: browser Worker returned an invalid live view URL",
     );
     expect(badWorker.sockets).toEqual([]);
 
@@ -119,7 +131,7 @@ describe("browser session", () => {
       Response.json({ status: "closed" }),
     ], "javascript:alert(1)");
     await expect(createBrowserSession(badCdp.dependencies)).rejects.toThrow(
-      "verbos: browser service returned an invalid live view",
+      "webmcp-computer: browser service returned an invalid live view",
     );
     expect(badCdp.calls.at(-1)?.init?.method).toBe("DELETE");
   });
@@ -369,4 +381,12 @@ describe("viewportForContainer", () => {
     expect(viewportForContainer(1200, 56)).toBeUndefined();
     expect(viewportForContainer(1200, 20)).toBeUndefined();
   });
+});
+
+test("fails loudly when no Worker URL is configured", () => {
+  expect(() => resolveBrowserWorkerUrl({
+    search: "",
+    storage: { getItem: () => null },
+    envUrl: "",
+  })).toThrow("webmcp-computer: no browser Worker URL is configured");
 });

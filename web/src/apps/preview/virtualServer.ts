@@ -8,11 +8,6 @@ export type PreviewVirtualFile = {
   body: Uint8Array;
 };
 
-export type BlobVirtualSite = {
-  entryUrl: string;
-  revoke: () => void;
-};
-
 export type SelfContainedDocument = {
   html: string;
   warnings: string[];
@@ -53,7 +48,7 @@ export function injectPreviewBridge(
   token: string,
   warnings: readonly string[] = [],
 ): string {
-  const bridge = `<script>(()=>{const marker=${scriptJson(token)};const post=(message)=>parent.postMessage({__verbosPreview:true,pid:${pid},token:marker,...message},'*');const listeners=[];const createFacade=(${createSiteModelContextFacade.toString()});const installConsole=(${installFrameConsoleCapture.toString()});const facade=createFacade(post,(listener)=>listeners.push(listener));Object.defineProperty(document,'modelContext',{configurable:true,value:facade});window.addEventListener('message',(event)=>{const message=event.data;if(event.source!==parent||message?.__verbosPreview!==true||message.pid!==${pid}||message.token!==marker)return;if(message.kind==='site-tool-registration'||message.kind==='site-tool-call')for(const listener of listeners)listener(message)});installConsole((level,message)=>post({level,message}));for(const warning of ${scriptJson(warnings)})console.warn(warning);document.addEventListener('click',(event)=>{const target=event.target;if(!(target instanceof Element))return;const anchor=target.closest('a[href]');const href=anchor?.getAttribute('href');if(!href||href.startsWith('#')||href.startsWith('//')||/^[a-z][a-z0-9+.-]*:/i.test(href))return;event.preventDefault();console.warn('verbos-preview: internal navigation unavailable: '+href)})})();</script>`;
+  const bridge = `<script>(()=>{const marker=${scriptJson(token)};const post=(message)=>parent.postMessage({__webmcpComputerPreview:true,pid:${pid},token:marker,...message},'*');const listeners=[];const createFacade=(${createSiteModelContextFacade.toString()});const installConsole=(${installFrameConsoleCapture.toString()});const facade=createFacade(post,(listener)=>listeners.push(listener));Object.defineProperty(document,'modelContext',{configurable:true,value:facade});window.addEventListener('message',(event)=>{const message=event.data;if(event.source!==parent||message?.__webmcpComputerPreview!==true||message.pid!==${pid}||message.token!==marker)return;if(message.kind==='site-tool-registration'||message.kind==='site-tool-call')for(const listener of listeners)listener(message)});installConsole((level,message)=>post({level,message}));for(const warning of ${scriptJson(warnings)})console.warn(warning);document.addEventListener('click',(event)=>{const target=event.target;if(!(target instanceof Element))return;const anchor=target.closest('a[href]');const href=anchor?.getAttribute('href');if(!href||href.startsWith('#')||href.startsWith('//')||/^[a-z][a-z0-9+.-]*:/i.test(href))return;event.preventDefault();console.warn('webmcp-computer-preview: internal navigation unavailable: '+href)})})();</script>`;
   const head = /<head(?:\s[^>]*)?>/i;
   return head.test(html) ? html.replace(head, (match) => `${match}${bridge}`) : `${bridge}${html}`;
 }
@@ -81,7 +76,7 @@ export async function collectPreviewFiles(root: string): Promise<PreviewVirtualF
   const files: PreviewVirtualFile[] = [];
   await collectDirectory(root, root, files);
   if (!files.some(({ path }) => path === "index.html")) {
-    throw new Error(`verbos: preview root has no index.html: ${root}`);
+    throw new Error(`webmcp-computer: preview root has no index.html: ${root}`);
   }
   return files;
 }
@@ -190,16 +185,16 @@ function cachedAssetUri(context: RewriteContext, file: PreviewVirtualFile): stri
 }
 
 function warnMissing(warnings: Set<string>, reference: string): void {
-  warnings.add(`verbos-preview: missing asset: ${reference}`);
+  warnings.add(`webmcp-computer-preview: missing asset: ${reference}`);
 }
 
 function warnOutside(warnings: Set<string>, reference: string): void {
-  warnings.add(`verbos-preview: outside the served root: ${reference}`);
+  warnings.add(`webmcp-computer-preview: outside the served root: ${reference}`);
 }
 
 function warnBudget(context: RewriteContext, path: string): void {
   context.budgetDroppedAssets.add(path);
-  context.warnings.add(`verbos-preview: asset dropped (budget): ${path}`);
+  context.warnings.add(`webmcp-computer-preview: asset dropped (budget): ${path}`);
 }
 
 function inlineAssetReference(
@@ -247,7 +242,7 @@ function rewriteCss(
       return original;
     }
     if (context.visitingCssImports.has(resolved.path)) {
-      context.warnings.add(`verbos-preview: cyclic stylesheet import: ${reference}`);
+      context.warnings.add(`webmcp-computer-preview: cyclic stylesheet import: ${reference}`);
       return original;
     }
     if (context.includedCssImports.has(resolved.path)) return "";
@@ -287,7 +282,7 @@ function rewriteCss(
 }
 
 function moduleSpecifier(path: string, suffix: string): string {
-  return `verbos-module:${encodeURIComponent(path)}${suffix}`;
+  return `webmcp-computer-module:${encodeURIComponent(path)}${suffix}`;
 }
 
 function registerModule(path: string, suffix: string, context: RewriteContext): string {
@@ -442,13 +437,13 @@ function warnUnhandledReferences(path: string, html: string, context: RewriteCon
           return _attribute;
         }
         if (tag === "a" && name === "href") {
-          context.warnings.add(`verbos-preview: internal navigation unavailable: ${reference}`);
+          context.warnings.add(`webmcp-computer-preview: internal navigation unavailable: ${reference}`);
         } else if (context.budgetDroppedAssets.has(resolved.path)) {
           return _attribute;
         } else if (!context.files.has(resolved.path)) {
           warnMissing(context.warnings, reference);
         } else {
-          context.warnings.add(`verbos-preview: unhandled local reference: ${tag} ${name}: ${reference}`);
+          context.warnings.add(`webmcp-computer-preview: unhandled local reference: ${tag} ${name}: ${reference}`);
         }
         return _attribute;
       });
@@ -485,7 +480,7 @@ function rewriteHtml(
     ).replace(/<\/style/gi, "<\\/style");
     context.visitingCssImports.delete(resolved.path);
     const media = attributeValue(attributes, "media");
-    return `<style data-verbos-inlined=""${media === undefined ? "" : ` media="${escapeAttribute(media)}"`}>${css}</style>`;
+    return `<style data-webmcp-computer-inlined=""${media === undefined ? "" : ` media="${escapeAttribute(media)}"`}>${css}</style>`;
   });
 
   rewritten = rewritten.replace(
@@ -518,7 +513,7 @@ function rewriteHtml(
         }
         nextAttributes = removeAttribute(attributes, "src");
         if (!isModule && /\bdefer\b/i.test(attributes)) {
-          context.warnings.add(`verbos-preview: defer script delayed until DOMContentLoaded: ${reference}`);
+          context.warnings.add(`webmcp-computer-preview: defer script delayed until DOMContentLoaded: ${reference}`);
           nextAttributes = nextAttributes.replace(/\s+defer\b/i, "");
           code = `document.readyState==="loading"?document.addEventListener("DOMContentLoaded",()=>{${code}\n},{once:true}):(()=>{${code}\n})();`;
         }
@@ -532,7 +527,7 @@ function rewriteHtml(
   rewritten = rewritten.replace(
     /(<style(?:\s[^>]*)?>)([\s\S]*?)(<\/style>)/gi,
     (original, open: string, css: string, close: string) =>
-      /\bdata-verbos-inlined\b/i.test(open)
+      /\bdata-webmcp-computer-inlined\b/i.test(open)
         ? original
         : `${open}${rewriteCss(path, css, context)}${close}`,
   );
@@ -593,7 +588,7 @@ export function buildSelfContainedDocument(
 ): SelfContainedDocument {
   const byPath = new Map(files.map((file) => [file.path, file]));
   const entry = byPath.get(entryPath);
-  if (!entry) throw new Error(`verbos: Preview could not create ${entryPath}`);
+  if (!entry) throw new Error(`webmcp-computer: Preview could not create ${entryPath}`);
   const warnings = new Set<string>();
   const remainingAssetBytes = Math.max(
     0,
@@ -611,20 +606,5 @@ export function buildSelfContainedDocument(
   return {
     html,
     warnings: [...warnings],
-  };
-}
-
-export function createBlobVirtualSite(
-  files: readonly PreviewVirtualFile[],
-  pid: number,
-  token: string,
-): BlobVirtualSite {
-  // Future work: real-origin multi-page routing may use a Service Worker only after a separate
-  // security design; serving agent-authored content on VerbOS's origin is forbidden today.
-  const document = buildSelfContainedDocument(files, pid, token);
-  const entryUrl = URL.createObjectURL(new Blob([document.html], { type: "text/html; charset=utf-8" }));
-  return {
-    entryUrl,
-    revoke: () => URL.revokeObjectURL(entryUrl),
   };
 }

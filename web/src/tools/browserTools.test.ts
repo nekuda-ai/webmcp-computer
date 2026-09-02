@@ -41,6 +41,25 @@ class FakeTransport {
   }
 }
 
+class EvaluatingTransport extends FakeTransport {
+  constructor(
+    private readonly pageDocument: { modelContext?: unknown },
+    private readonly pageNavigator: Record<string, unknown> = {},
+  ) {
+    super();
+  }
+
+  override async evaluate<T>(operation: CdpEvaluateOperation, expression: string): Promise<T> {
+    this.evaluateCalls.push({ operation, expression });
+    const evaluateInPage = new Function(
+      "document",
+      "navigator",
+      `return (${expression});`,
+    ) as (document: { modelContext?: unknown }, navigator: Record<string, unknown>) => T | Promise<T>;
+    return await evaluateInPage(this.pageDocument, this.pageNavigator);
+  }
+}
+
 function toolByName(tools: readonly AnyWebMCPTool[], name: string): AnyWebMCPTool {
   const tool = tools.find((candidate) => candidate.name === name);
   if (!tool) throw new Error(`test: missing ${name}`);
@@ -54,15 +73,15 @@ describe("browser tools", () => {
     const transport = new FakeTransport();
     const tools = createBrowserTools({ getTransport: () => transport });
     await expect(toolByName(tools, "browser_goto").execute({ url: "file:///tmp/x" }))
-      .rejects.toThrow("verbos: url must use http or https");
+      .rejects.toThrow("webmcp-computer: url must use http or https");
     await expect(toolByName(tools, "browser_click").execute({ selector: "" }))
-      .rejects.toThrow("verbos: selector is required");
+      .rejects.toThrow("webmcp-computer: selector is required");
     await expect(toolByName(tools, "browser_read").execute({ selector: "" }))
-      .rejects.toThrow("verbos: selector is required");
+      .rejects.toThrow("webmcp-computer: selector is required");
     await expect(toolByName(tools, "browser_type").execute({
       selector: "input",
       text: "x".repeat(4 * 1_024 + 1),
-    })).rejects.toThrow("verbos: browser text exceeds 4 KB cap");
+    })).rejects.toThrow("webmcp-computer: browser text exceeds 4 KB cap");
     expect(transport.calls).toEqual([]);
     expect(transport.evaluateCalls).toEqual([]);
     expect(useKernelStore.getState().events.find(({ verb }) => verb === "browser_read")).toEqual(expect.objectContaining({
@@ -78,7 +97,7 @@ describe("browser tools", () => {
     const tool = createBrowserOpenTool({
       async ensureSession(url) {
         ensured.push(url);
-        return { cdp: transport, keepAliveMs: 300_000 };
+        return { cdp: transport, keepAliveMs: 900_000 };
       },
     });
 
@@ -104,7 +123,7 @@ describe("browser tools", () => {
       },
     });
     await expect(tool.execute({})).rejects.toThrow(
-      "verbos: browser session unavailable: rate limited",
+      "webmcp-computer: browser session unavailable: rate limited",
     );
     expect(useKernelStore.getState().processes).toEqual([]);
   });
@@ -135,8 +154,88 @@ describe("browser tools", () => {
     transport.evaluateResult = { supported: false };
     const tools = createBrowserTools({ getTransport: () => transport });
     await expect(toolByName(tools, "browser_site_tools").execute({})).rejects.toThrow(
-      "verbos: this browser session has no WebMCP support",
+      "webmcp-computer: this browser session has no WebMCP support",
     );
+  });
+
+  test("site-tools uses document.modelContext and normalizes serialized schemas", async () => {
+    const schema = {
+      type: "object",
+      properties: { message: { type: "string" } },
+      required: ["message"],
+      additionalProperties: false,
+    };
+    const transport = new EvaluatingTransport({
+      modelContext: {
+        async getTools() {
+          return [{
+            name: "site_echo",
+            description: "Echo one message.",
+            inputSchema: JSON.stringify(schema),
+          }];
+        },
+      },
+    });
+    const tools = createBrowserTools({ getTransport: () => transport });
+
+    await expect(toolByName(tools, "browser_site_tools").execute({})).resolves.toEqual([{
+      name: "site_echo",
+      description: "Echo one message.",
+      inputSchema: schema,
+    }]);
+    expect(transport.evaluateCalls[0]?.expression).toContain("document.modelContext");
+    expect(transport.evaluateCalls[0]?.expression).not.toContain("navigator.modelContextTesting");
+  });
+
+  test("site-call resolves the document tool descriptor and normalizes its serialized result", async () => {
+    const descriptor = {
+      name: "site_echo",
+      description: "Echo one message.",
+      inputSchema: JSON.stringify({ type: "object" }),
+    };
+    let invocation: { descriptorMatches: boolean; input: unknown } | undefined;
+    const transport = new EvaluatingTransport({
+      modelContext: {
+        async getTools() {
+          return [descriptor];
+        },
+        async executeTool(tool: unknown, input: unknown) {
+          invocation = { descriptorMatches: tool === descriptor, input };
+          return JSON.stringify({ echoed: "hello" });
+        },
+      },
+    });
+    const tools = createBrowserTools({ getTransport: () => transport });
+
+    await expect(toolByName(tools, "browser_site_call").execute({
+      name: "site_echo",
+      input: { message: "hello" },
+    })).resolves.toEqual({ echoed: "hello" });
+    expect(invocation).toEqual({
+      descriptorMatches: true,
+      input: JSON.stringify({ message: "hello" }),
+    });
+    expect(transport.evaluateCalls[0]?.expression).toContain("document.modelContext");
+    expect(transport.evaluateCalls[0]?.expression).not.toContain("navigator.modelContextTesting");
+  });
+
+  test("site-call reports when the requested document tool is no longer registered", async () => {
+    const transport = new EvaluatingTransport({
+      modelContext: {
+        async getTools() {
+          return [];
+        },
+        async executeTool() {
+          throw new Error("test: must not execute a missing tool");
+        },
+      },
+    });
+    const tools = createBrowserTools({ getTransport: () => transport });
+
+    await expect(toolByName(tools, "browser_site_call").execute({
+      name: "site_echo",
+      input: {},
+    })).rejects.toThrow("webmcp-computer: browser page tool not found: site_echo");
   });
 
   test("puts supplied selectors and text into generated page expressions", async () => {

@@ -1,15 +1,15 @@
 {
-  "name": "verbos-computer",
+  "name": "webmcp-computer-cloud",
   "private": true,
   "type": "module",
   "scripts": {
     "check": "bun test src && tsc --noEmit",
     "test": "bun test src",
-    "deploy": "wrangler deploy",
+    "deploy": "bunx wrangler@4.128.0 deploy",
     "smoke": "bun smoke.ts"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^5.20260828.1",
+    "@cloudflare/workers-types": "^5.20260901.1",
     "bun-types": "^1.4.0",
     "typescript": "^7.0.2"
   },

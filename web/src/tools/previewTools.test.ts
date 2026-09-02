@@ -30,7 +30,7 @@ describe("Preview tools", () => {
 
       expect(result).toEqual({
         pid: process.pid,
-        url: "verbos://site/",
+        url: "webmcp-computer://site/",
         lines: expect.any(Array),
         truncated: true,
         dropped: 8,

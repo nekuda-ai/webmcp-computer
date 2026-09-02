@@ -74,13 +74,13 @@ async function openTarget(
   const appId = APP_IDS.find((candidate) => candidate === target);
   let process;
   if (appId) {
-    if (appId === "ui") throw new Error("verbos: agent-made App windows open through ui_open");
+    if (appId === "ui") throw new Error("webmcp-computer: agent-made App windows open through ui_open");
     process = state.spawn(appId);
   } else {
     const path = resolveShellPath(cwd, target);
     const targetStat = await stat(path);
     if (targetStat.kind === "file") {
-      if (!isTextFile(path)) throw new Error(`verbos: not a text file: ${path} (${targetStat.size} bytes)`);
+      if (!isTextFile(path)) throw new Error(`webmcp-computer: not a text file: ${path} (${targetStat.size} bytes)`);
       process = state.spawn("editor", { path });
     } else {
       process = state.spawn("files", { path });
@@ -101,13 +101,13 @@ async function serveTarget(
 ) {
   const root = resolveShellPath(cwd, target);
   const targetStat = await stat(root);
-  if (targetStat.kind !== "directory") throw new Error(`verbos: not a directory: ${root}`);
+  if (targetStat.kind !== "directory") throw new Error(`webmcp-computer: not a directory: ${root}`);
   try {
     const entry = await stat(joinPath(root, "index.html"));
-    if (entry.kind !== "file") throw new Error(`verbos: preview root has no index.html: ${root}`);
+    if (entry.kind !== "file") throw new Error(`webmcp-computer: preview root has no index.html: ${root}`);
   } catch (error) {
     if (error instanceof FileSystemError && error.code === "ENOENT") {
-      throw new Error(`verbos: preview root has no index.html: ${root}`);
+      throw new Error(`webmcp-computer: preview root has no index.html: ${root}`);
     }
     throw error;
   }

@@ -8,6 +8,7 @@ import { loadSettings } from "./kernel/settings";
 import { startMachineOwnership } from "./kernel/machineLock";
 import { restoreSessionFromStorage, startSessionPersistence } from "./kernel/sessionPersistence";
 import { contextMenuMachine } from "./desktop/ContextMenu";
+import { initializeHostedSession } from "./kernel/hostedSession";
 
 function SystemEffects() {
   const settings = useKernelStore((state) => state.settings);
@@ -41,12 +42,13 @@ export function App() {
     startMachineOwnership();
     let active = true;
     let stopSessionPersistence: (() => void) | undefined;
-    void bootFileSystem()
+    void initializeHostedSession()
+      .then(() => bootFileSystem())
       .then(async () => {
         await loadSettings();
       })
       .catch((error: unknown) => {
-        console.error("VerbOS filesystem failed to boot", error);
+        console.error("WebMCP Computer filesystem failed to boot", error);
       })
       .finally(() => {
         if (!active) return;

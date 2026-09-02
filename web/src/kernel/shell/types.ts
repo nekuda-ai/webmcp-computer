@@ -100,9 +100,9 @@ export function createShellSession(cwd = "~"): ShellSession {
     cwd,
     env: {
       HOME: "~",
-      HOSTNAME: "verbos",
+      HOSTNAME: "webmcp-computer",
       PATH: "/usr/bin:/bin",
-      SHELL: "/bin/verbos",
+      SHELL: "/bin/webmcp-computer",
       USER: "guest",
     },
     history: [],

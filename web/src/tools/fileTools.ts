@@ -40,27 +40,27 @@ type SearchResult = { path: string; line: number; text: string };
 const MAX_READ_BYTES = 256 * 1_024;
 
 function requireString(value: unknown, name: string): string {
-  if (typeof value !== "string") throw new Error(`verbos: ${name} must be a string`);
+  if (typeof value !== "string") throw new Error(`webmcp-computer: ${name} must be a string`);
   return value;
 }
 
 function requireEncoding(value: unknown): FileEncoding {
   if (value === undefined || value === "utf8") return "utf8";
   if (value === "base64") return "base64";
-  throw new Error('verbos: encoding must be "utf8" or "base64"');
+  throw new Error('webmcp-computer: encoding must be "utf8" or "base64"');
 }
 
 function decodeBase64(content: string): Uint8Array {
   if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(content)) {
-    throw new Error("verbos: invalid base64 content");
+    throw new Error("webmcp-computer: invalid base64 content");
   }
   try {
     const binary = atob(content);
     const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
-    if (encodeBase64(bytes) !== content) throw new Error("verbos: invalid base64 content");
+    if (encodeBase64(bytes) !== content) throw new Error("webmcp-computer: invalid base64 content");
     return bytes;
   } catch {
-    throw new Error("verbos: invalid base64 content");
+    throw new Error("webmcp-computer: invalid base64 content");
   }
 }
 
@@ -74,8 +74,8 @@ function encodeBase64(bytes: Uint8Array): string {
 }
 
 function requireTextFile(path: string, kind: "file" | "directory", size: number): void {
-  if (kind === "directory") throw new Error(`verbos: is a directory: ${path}`);
-  if (!isTextFile(path)) throw new Error(`verbos: not a text file: ${path} (${size} bytes)`);
+  if (kind === "directory") throw new Error(`webmcp-computer: is a directory: ${path}`);
+  if (!isTextFile(path)) throw new Error(`webmcp-computer: not a text file: ${path} (${size} bytes)`);
 }
 
 function notePath(note: string): string {
@@ -84,7 +84,7 @@ function notePath(note: string): string {
     ? normalizePath(value)
     : joinPath("~/notes", value.endsWith(".md") ? value : `${value}.md`);
   if (!path.startsWith("~/notes/")) {
-    throw new Error(`verbos: note must be inside ~/notes/: ${value}`);
+    throw new Error(`webmcp-computer: note must be inside ~/notes/: ${value}`);
   }
   return path;
 }
@@ -95,33 +95,33 @@ async function resolveNotePath(titleOrIndex: string | number): Promise<string> {
   );
   if (typeof titleOrIndex === "number") {
     if (!Number.isInteger(titleOrIndex) || titleOrIndex < 1 || titleOrIndex > notes.length) {
-      throw new Error(`verbos: note index must be an integer from 1 to ${notes.length}`);
+      throw new Error(`webmcp-computer: note index must be an integer from 1 to ${notes.length}`);
     }
     return notes[titleOrIndex - 1]?.path ?? "";
   }
   const title = requireString(titleOrIndex, "title_or_index").trim();
-  if (title === "") throw new Error("verbos: title_or_index must not be empty");
+  if (title === "") throw new Error("webmcp-computer: title_or_index must not be empty");
   if (title.startsWith("~")) {
     const path = normalizePath(title);
     if (parentPath(path) !== "~/notes" || !path.endsWith(".md")) {
-      throw new Error(`verbos: note must be a Markdown file inside ~/notes/: ${path}`);
+      throw new Error(`webmcp-computer: note must be a Markdown file inside ~/notes/: ${path}`);
     }
     const target = await stat(path);
-    if (target.kind !== "file") throw new Error(`verbos: is a directory: ${path}`);
+    if (target.kind !== "file") throw new Error(`webmcp-computer: is a directory: ${path}`);
     return path;
   }
   const needle = title.toLowerCase().replace(/\.md$/i, "");
   const match = notes.find((entry) => entry.name.replace(/\.md$/i, "").toLowerCase() === needle);
-  if (!match) throw new Error(`verbos: note not found: ${title}`);
+  if (!match) throw new Error(`webmcp-computer: note not found: ${title}`);
   return match.path;
 }
 
 export const fsReadTool = defineTool<ReadInput>({
-  stableKey: "verbos.fs_read",
+  stableKey: "webmcp_computer.fs_read",
   name: "fs_read",
   title: "Read file",
   description:
-    "Read one UTF-8 text file from the shared VerbOS filesystem by ~-rooted path. Text files only; content over 256 KB is truncated and `truncated: true` is set. Pass encoding=\"base64\" to read any file as base64; oversized base64 output fails instead of being truncated.",
+    "Read one UTF-8 text file from the shared WebMCP Computer filesystem by ~-rooted path. Text files only; content over 256 KB is truncated and `truncated: true` is set. Pass encoding=\"base64\" to read any file as base64; oversized base64 output fails instead of being truncated.",
   inputSchema: {
     type: "object",
     properties: {
@@ -143,11 +143,11 @@ export const fsReadTool = defineTool<ReadInput>({
       const encoding = requireEncoding(rawEncoding);
       const file = await stat(path);
       if (encoding === "base64") {
-        if (file.kind === "directory") throw new Error(`verbos: is a directory: ${path}`);
+        if (file.kind === "directory") throw new Error(`webmcp-computer: is a directory: ${path}`);
         const encodedSize = 4 * Math.ceil(file.size / 3);
         if (encodedSize > MAX_READ_BYTES) {
           throw new Error(
-            `verbos: base64 content exceeds 256 KB result limit: ${path} (${file.size} bytes)`,
+            `webmcp-computer: base64 content exceeds 256 KB result limit: ${path} (${file.size} bytes)`,
           );
         }
         return { path, content: encodeBase64(await readFileBytes(path)) };
@@ -167,11 +167,11 @@ export const fsReadTool = defineTool<ReadInput>({
 });
 
 export const fsWriteTool = defineTool<WriteInput>({
-  stableKey: "verbos.fs_write",
+  stableKey: "webmcp_computer.fs_write",
   name: "fs_write",
   title: "Write file",
   description:
-    "Create or replace one UTF-8 text file in the shared VerbOS filesystem. Empty content truncates the file to zero bytes. Parent directory must exist; visible Files and Editor windows update live. Pass encoding=\"base64\" to decode content and atomically write binary bytes.",
+    "Create or replace one UTF-8 text file in the shared WebMCP Computer filesystem. Empty content truncates the file to zero bytes. Parent directory must exist; visible Files and Editor windows update live. Pass encoding=\"base64\" to decode content and atomically write binary bytes.",
   inputSchema: {
     type: "object",
     properties: {
@@ -205,7 +205,7 @@ export const fsWriteTool = defineTool<WriteInput>({
 });
 
 export const fsEditTool = defineTool<EditInput>({
-  stableKey: "verbos.fs_edit",
+  stableKey: "webmcp_computer.fs_edit",
   name: "fs_edit",
   title: "Edit file",
   description:
@@ -235,9 +235,9 @@ export const fsEditTool = defineTool<EditInput>({
       const path = normalizePath(requireString(rawPath, "path"));
       const oldString = requireString(rawOldString, "old_string");
       const newString = requireString(rawNewString, "new_string");
-      if (oldString.length === 0) throw new Error("verbos: old_string must not be empty");
+      if (oldString.length === 0) throw new Error("webmcp-computer: old_string must not be empty");
       if (replace_all !== undefined && typeof replace_all !== "boolean") {
-        throw new Error("verbos: replace_all must be a boolean");
+        throw new Error("webmcp-computer: replace_all must be a boolean");
       }
       const file = await stat(path);
       requireTextFile(path, file.kind, file.size);
@@ -245,11 +245,11 @@ export const fsEditTool = defineTool<EditInput>({
       await updateFile(path, (current) => {
         replacements = current.split(oldString).length - 1;
         if (replacements === 0) {
-          throw new Error(`verbos: old_string not found in ${path}`);
+          throw new Error(`webmcp-computer: old_string not found in ${path}`);
         }
         if (!replace_all && replacements !== 1) {
           throw new Error(
-            `verbos: old_string matches ${replacements} times in ${path}; pass replace_all or a longer anchor`,
+            `webmcp-computer: old_string matches ${replacements} times in ${path}; pass replace_all or a longer anchor`,
           );
         }
         return replace_all
@@ -300,7 +300,7 @@ async function searchTextFiles(
 }
 
 export const fsSearchTool = defineTool<SearchInput>({
-  stableKey: "verbos.fs_search",
+  stableKey: "webmcp_computer.fs_search",
   name: "fs_search",
   title: "Search files",
   description:
@@ -325,11 +325,11 @@ export const fsSearchTool = defineTool<SearchInput>({
   execute({ query: rawQuery, path: rawPath, max_results: rawMaxResults }) {
     return runAgentAction("fs_search", { query: rawQuery, path: rawPath ?? "~" }, async () => {
       const query = requireString(rawQuery, "query");
-      if (query.length === 0) throw new Error("verbos: query must not be empty");
+      if (query.length === 0) throw new Error("webmcp-computer: query must not be empty");
       const path = normalizePath(rawPath === undefined ? "~" : requireString(rawPath, "path"));
       const maxResults = rawMaxResults ?? 50;
       if (!Number.isInteger(maxResults) || maxResults < 1 || maxResults > 200) {
-        throw new Error("verbos: max_results must be an integer from 1 to 200");
+        throw new Error("webmcp-computer: max_results must be an integer from 1 to 200");
       }
       return searchTextFiles(path, query, maxResults);
     });
@@ -337,11 +337,11 @@ export const fsSearchTool = defineTool<SearchInput>({
 });
 
 export const fsListTool = defineTool<PathInput>({
-  stableKey: "verbos.fs_list",
+  stableKey: "webmcp_computer.fs_list",
   name: "fs_list",
   title: "List directory",
   description:
-    "List direct children of one ~-rooted VerbOS directory. Returns sorted directories first, then files, with type, size, and modification time.",
+    "List direct children of one ~-rooted WebMCP Computer directory. Returns sorted directories first, then files, with type, size, and modification time.",
   inputSchema: {
     type: "object",
     properties: { path: { type: "string", description: "~-rooted directory path to list." } },
@@ -359,7 +359,7 @@ export const fsListTool = defineTool<PathInput>({
 });
 
 export const fsMkdirTool = defineTool<PathInput>({
-  stableKey: "verbos.fs_mkdir",
+  stableKey: "webmcp_computer.fs_mkdir",
   name: "fs_mkdir",
   title: "Create directory",
   description: "Create one directory at a ~-rooted path. Parent directory must already exist.",
@@ -381,11 +381,11 @@ export const fsMkdirTool = defineTool<PathInput>({
 });
 
 export const fsDeleteTool = defineTool<PathInput>({
-  stableKey: "verbos.fs_delete",
+  stableKey: "webmcp_computer.fs_delete",
   name: "fs_delete",
   title: "Delete path",
   description:
-    "Delete one file or directory tree from the shared VerbOS filesystem. The home root itself cannot be deleted.",
+    "Delete one file or directory tree from the shared WebMCP Computer filesystem. The home root itself cannot be deleted.",
   inputSchema: {
     type: "object",
     properties: { path: { type: "string", description: "~-rooted file or directory to delete." } },
@@ -404,7 +404,7 @@ export const fsDeleteTool = defineTool<PathInput>({
 });
 
 export const fsMoveTool = defineTool<MoveInput>({
-  stableKey: "verbos.fs_move",
+  stableKey: "webmcp_computer.fs_move",
   name: "fs_move",
   title: "Move path",
   description:
@@ -433,7 +433,7 @@ export const fsMoveTool = defineTool<MoveInput>({
       const from = normalizePath(requireString(rawFrom, "from"));
       const to = normalizePath(requireString(rawTo, "to"));
       if (overwrite !== undefined && typeof overwrite !== "boolean") {
-        throw new Error("verbos: overwrite must be a boolean");
+        throw new Error("webmcp-computer: overwrite must be a boolean");
       }
       await mv(from, to, "agent", overwrite ?? false);
       return { moved: true, from, to };
@@ -442,7 +442,7 @@ export const fsMoveTool = defineTool<MoveInput>({
 });
 
 export const editorOpenFileTool = defineTool<AppPathInput>({
-  stableKey: "verbos.editor_open_file",
+  stableKey: "webmcp_computer.editor_open_file",
   name: "editor_open_file",
   title: "Open file in Editor",
   description:
@@ -475,7 +475,7 @@ export const editorOpenFileTool = defineTool<AppPathInput>({
 });
 
 export const notesAppendTool = defineTool<NoteInput>({
-  stableKey: "verbos.notes_append",
+  stableKey: "webmcp_computer.notes_append",
   name: "notes_append",
   title: "Append to note",
   description:
@@ -517,7 +517,7 @@ export const notesAppendTool = defineTool<NoteInput>({
 });
 
 export const notesPreviewTool = defineTool<NotesPreviewInput>({
-  stableKey: "verbos.notes_preview",
+  stableKey: "webmcp_computer.notes_preview",
   name: "notes_preview",
   title: "Toggle notes preview",
   description:
@@ -539,7 +539,7 @@ export const notesPreviewTool = defineTool<NotesPreviewInput>({
       appId: "notes",
       ...(rawPid === undefined ? {} : { pid: rawPid }),
     }, () => {
-      if (typeof enabled !== "boolean") throw new Error("verbos: enabled must be a boolean");
+      if (typeof enabled !== "boolean") throw new Error("webmcp-computer: enabled must be a boolean");
       const process = focusAppTarget("notes", rawPid);
       useKernelStore.getState().setNotesPreviewEnabled(process.pid, enabled);
       return { enabled, pid: process.pid };
@@ -548,7 +548,7 @@ export const notesPreviewTool = defineTool<NotesPreviewInput>({
 });
 
 export const notesStickTool = defineTool<NotesStickInput>({
-  stableKey: "verbos.notes_stick",
+  stableKey: "webmcp_computer.notes_stick",
   name: "notes_stick",
   title: "Stick note to desktop",
   description:
@@ -572,9 +572,9 @@ export const notesStickTool = defineTool<NotesStickInput>({
   intent: "act",
   execute({ title_or_index: titleOrIndex, sticky }) {
     return runAgentAction("notes_stick", { title_or_index: titleOrIndex, sticky, appId: "notes" }, async () => {
-      if (typeof sticky !== "boolean") throw new Error("verbos: sticky must be a boolean");
+      if (typeof sticky !== "boolean") throw new Error("webmcp-computer: sticky must be a boolean");
       if (typeof titleOrIndex !== "string" && typeof titleOrIndex !== "number") {
-        throw new Error("verbos: title_or_index must be a string or integer");
+        throw new Error("webmcp-computer: title_or_index must be a string or integer");
       }
       const path = await resolveNotePath(titleOrIndex);
       const process = focusAppTarget("notes");
@@ -591,7 +591,7 @@ export const notesStickTool = defineTool<NotesStickInput>({
 });
 
 export const filesRevealTool = defineTool<AppPathInput>({
-  stableKey: "verbos.files_reveal",
+  stableKey: "webmcp_computer.files_reveal",
   name: "files_reveal",
   title: "Reveal in Files",
   description:

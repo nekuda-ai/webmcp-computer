@@ -29,7 +29,7 @@ function indented(value: string): string {
 export function renderToolManPage(tool: AnyWebMCPTool): string {
   const schema = JSON.stringify(tool.inputSchema ?? { type: "object", properties: {} }, null, 2);
   return [
-    `${tool.name.toUpperCase()}(1) — VerbOS syscalls`,
+    `${tool.name.toUpperCase()}(1) — WebMCP Computer syscalls`,
     "",
     "NAME",
     `  ${tool.name} - ${tool.title ?? tool.name}`,

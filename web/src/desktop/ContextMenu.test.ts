@@ -156,7 +156,7 @@ describe("native context-menu targets", () => {
     expect(keepsNativeContextMenu(new TestElement("div", true) as unknown as EventTarget)).toBe(true);
   });
 
-  test("uses the VerbOS menu for a plain div", () => {
+  test("uses the WebMCP Computer menu for a plain div", () => {
     expect(keepsNativeContextMenu(new TestElement("div") as unknown as EventTarget)).toBe(false);
   });
 });

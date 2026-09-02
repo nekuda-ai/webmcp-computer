@@ -1,23 +1,25 @@
 {
-  "name": "verbos-browser-session",
+  "name": "webmcp-computer-browser-session",
   "main": "src/index.ts",
-  "compatibility_date": "2026-08-01",
-  "account_id": "cf3d5b1eddd4c74d217780cdb7e55d07",
+  "compatibility_date": "2026-09-01",
   "workers_dev": true,
-  "unsafe": {
-    "bindings": [
-      {
-        "name": "SESSION_RATE",
-        "type": "ratelimit",
-        "namespace_id": "1001",
-        "simple": { "limit": 4, "period": 60 }
-      },
-      {
-        "name": "SESSION_ACTION_RATE",
-        "type": "ratelimit",
-        "namespace_id": "1002",
-        "simple": { "limit": 30, "period": 60 }
-      }
-    ]
+  "secrets": {
+    "required": ["CF_ACCOUNT_ID", "GATEWAY_SIGNING_SECRET"]
+  },
+  "ratelimits": [
+    {
+      "name": "SESSION_RATE",
+      "namespace_id": "1001",
+      "simple": { "limit": 4, "period": 60 }
+    },
+    {
+      "name": "SESSION_ACTION_RATE",
+      "namespace_id": "1002",
+      "simple": { "limit": 30, "period": 60 }
+    }
+  ],
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
   }
 }

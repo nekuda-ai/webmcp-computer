@@ -151,4 +151,59 @@ describe("session restore entry", () => {
     );
     stop();
   });
+
+  test("uses durable local storage by default so the desktop survives a browser restart", async () => {
+    const local = memoryStorage({});
+    const perTab = memoryStorage({});
+    const originalWindow = globalThis.window;
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: { localStorage: local, sessionStorage: perTab },
+    });
+    try {
+      const stop = startSessionPersistence();
+      useKernelStore.getState().spawn("terminal");
+      await Bun.sleep(150);
+
+      expect(local.getItem(SESSION_STORAGE_KEY)).not.toBeNull();
+      expect(perTab.getItem(SESSION_STORAGE_KEY)).toBeNull();
+      stop();
+    } finally {
+      if (originalWindow === undefined) delete (globalThis as { window?: Window }).window;
+      else Object.defineProperty(globalThis, "window", { configurable: true, value: originalWindow });
+    }
+  });
+
+  test("migrates the previous per-tab desktop snapshot into durable local storage", () => {
+    const snapshot: SessionSnapshot = {
+      version: 1,
+      processes: [{
+        pid: 2,
+        appId: "files",
+        windowRect: { x: 120, y: 100, width: 420, height: 300 },
+        zIndex: 0,
+        focused: true,
+      }],
+      minimizedPids: [],
+      nextPid: 3,
+      nextSpawnCount: 1,
+      lastSpawnOrigin: { x: 120, y: 100 },
+      stickyNotes: [],
+    };
+    const local = memoryStorage({});
+    const perTab = memoryStorage({ [SESSION_STORAGE_KEY]: serializeSession(snapshot) });
+    const originalWindow = globalThis.window;
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: { localStorage: local, sessionStorage: perTab },
+    });
+    try {
+      expect(restoreSessionFromStorage()).toBe(true);
+      expect(local.getItem(SESSION_STORAGE_KEY)).toBe(serializeSession(snapshot));
+      expect(useKernelStore.getState().processes).toEqual(snapshot.processes);
+    } finally {
+      if (originalWindow === undefined) delete (globalThis as { window?: Window }).window;
+      else Object.defineProperty(globalThis, "window", { configurable: true, value: originalWindow });
+    }
+  });
 });

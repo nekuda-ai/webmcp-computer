@@ -39,7 +39,7 @@ export async function bootResilienceScenario(page: Page): Promise<void> {
   });
   expect(fsResult.status).toBe("Completed");
   expect(fsResult.output).toEqual({
-    content: [{ type: "text", text: "verbos: filesystem not ready" }],
+    content: [{ type: "text", text: "webmcp-computer: filesystem not ready" }],
     isError: true,
   });
 
@@ -56,7 +56,7 @@ export async function bootFailurePreservesSessionScenario(page: Page): Promise<v
   await waitForWindow(page, "Files", files.pid);
 
   await page.waitForFunction(() => {
-    const serialized = window.sessionStorage.getItem("verbos.session.v1");
+    const serialized = window.localStorage.getItem("webmcp_computer.session.v1");
     if (!serialized) return false;
     const saved = JSON.parse(serialized) as { processes?: Array<{ pid: number; appId: string }> };
     return saved.processes?.some(({ pid, appId }) => pid === 2 && appId === "editor") === true &&

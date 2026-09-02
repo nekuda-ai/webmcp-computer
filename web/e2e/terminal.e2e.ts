@@ -30,7 +30,7 @@ export async function terminalScenario(page: Page): Promise<void> {
   await page.waitForSelector(".terminal-agent-row", { visible: true });
   await waitForText(page, ".terminal-agent-row", "CODEX");
   await waitForText(page, ".terminal-agent-command", "echo sh");
-  expect(await textContent(page, ".terminal-agent-row")).toContain("codex@verbos:~$");
+  expect(await textContent(page, ".terminal-agent-row")).toContain("codex@webmcp-computer:~$");
 
   expect(await executing).toEqual({
     stdout: "shalom\n",
@@ -45,7 +45,7 @@ export async function terminalScenario(page: Page): Promise<void> {
 
   const initialPs = await executeWebMcpTool<{ processes: Process[] }>(page, "ps");
   const terminal = initialPs.processes.find((process) => process.appId === "terminal");
-  if (!terminal) throw new Error("VerbOS e2e terminal process not found");
+  if (!terminal) throw new Error("WebMCP Computer e2e terminal process not found");
   await waitForWindow(page, "Terminal", terminal.pid);
 
   await executeWebMcpTool(page, "window_resize", {
@@ -94,7 +94,7 @@ export async function terminalScenario(page: Page): Promise<void> {
       term_pid: terminal.pid,
     }),
   ).toEqual({
-    stdout: "VerbOS 1.0 wasm32 (browser)\n",
+    stdout: "WebMCP Computer 1.0 wasm32 (browser)\n",
     stderr: "",
     exit_code: 0,
     truncated: false,

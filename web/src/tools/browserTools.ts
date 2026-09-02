@@ -40,33 +40,33 @@ type PageIdentity = { title: string; url: string };
 
 function errorText(error: unknown): string {
   const text = error instanceof Error ? error.message : String(error);
-  return text.replace(/^verbos:\s*/, "");
+  return text.replace(/^webmcp-computer:\s*/, "");
 }
 
 export function requireBrowserUrl(value: unknown): string {
-  if (typeof value !== "string") throw new Error("verbos: url must be a string");
+  if (typeof value !== "string") throw new Error("webmcp-computer: url must be a string");
   let parsed: URL;
   try {
     parsed = new URL(value);
   } catch {
-    throw new Error("verbos: url must use http or https");
+    throw new Error("webmcp-computer: url must use http or https");
   }
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new Error("verbos: url must use http or https");
+    throw new Error("webmcp-computer: url must use http or https");
   }
   return parsed.href;
 }
 
 function requireSelector(value: unknown): string {
   if (typeof value !== "string" || value.trim() === "") {
-    throw new Error("verbos: selector is required");
+    throw new Error("webmcp-computer: selector is required");
   }
   return value;
 }
 
 function requireSiteToolName(value: unknown): string {
   if (typeof value !== "string" || value.trim() === "") {
-    throw new Error("verbos: site tool name is required");
+    throw new Error("webmcp-computer: site tool name is required");
   }
   return value;
 }
@@ -88,7 +88,7 @@ async function gotoPage(transport: BrowserTransport, url: string): Promise<PageI
   void loaded.catch(() => undefined);
   const navigation = await transport.send<{ errorText?: string }>("Page.navigate", { url });
   if (navigation.errorText) {
-    throw new Error(`verbos: browser navigation failed: ${navigation.errorText}`);
+    throw new Error(`webmcp-computer: browser navigation failed: ${navigation.errorText}`);
   }
   await loaded;
   return await readPageIdentity(transport);
@@ -106,11 +106,11 @@ export function createBrowserOpenTool(
   dependencies: BrowserOpenDependencies = defaultOpenDependencies,
 ) {
   return defineTool<BrowserOpenInput>({
-    stableKey: "verbos.browser_open",
+    stableKey: "webmcp_computer.browser_open",
     name: "browser_open",
     title: "Open shared browser",
     description:
-      "Open the singleton Browser window and start one visible shared Cloudflare Chrome session. Optionally navigate to an http/https URL and set x, y, width, height, and focus like app_open. Reopening focuses the existing window and navigates it when url is supplied. Returns PID, current URL, five-minute idle lifetime, and whether the window was reused. Session or rate-limit failures use 'verbos: browser session unavailable: …'.",
+      "Open the singleton Browser window and start one visible shared Cloudflare Chrome session. Optionally navigate to an http/https URL and set x, y, width, height, and focus like app_open. Reopening focuses the existing window and navigates it when url is supplied. Returns PID, current URL, fifteen-minute idle lifetime, and whether the window was reused. Session or rate-limit failures use 'webmcp-computer: browser session unavailable: …'.",
     inputSchema: {
       type: "object",
       properties: {
@@ -139,7 +139,7 @@ export function createBrowserOpenTool(
       }, async () => {
         const url = rawUrl === undefined ? undefined : requireBrowserUrl(rawUrl);
         if (rawFocus !== undefined && typeof rawFocus !== "boolean") {
-          throw new Error("verbos: focus must be a boolean");
+          throw new Error("webmcp-computer: focus must be a boolean");
         }
         const placement: Partial<WindowRect> = {};
         if (input?.x !== undefined) placement.x = requireFinite(input.x, "x");
@@ -152,7 +152,7 @@ export function createBrowserOpenTool(
         try {
           session = await dependencies.ensureSession(existing ? undefined : url);
         } catch (error) {
-          throw new Error(`verbos: browser session unavailable: ${errorText(error)}`);
+          throw new Error(`webmcp-computer: browser session unavailable: ${errorText(error)}`);
         }
         const identity = existing && url
           ? await gotoPage(session.cdp, url)
@@ -179,7 +179,7 @@ export function createBrowserTools(
   dependencies: BrowserToolDependencies = defaultToolDependencies,
 ) {
   const browserGotoTool = defineTool<{ url: string }>({
-    stableKey: "verbos.browser_goto",
+    stableKey: "webmcp_computer.browser_goto",
     name: "browser_goto",
     title: "Navigate shared browser",
     description:
@@ -201,7 +201,7 @@ export function createBrowserTools(
   });
 
   const browserReadTool = defineTool<BrowserReadInput>({
-    stableKey: "verbos.browser_read",
+    stableKey: "webmcp_computer.browser_read",
     name: "browser_read",
     title: "Read shared browser",
     description:
@@ -252,7 +252,7 @@ export function createBrowserTools(
             truncated,
           };
         })()`);
-        if (!output.found) throw new Error(`verbos: browser selector not found: ${selector}`);
+        if (!output.found) throw new Error(`webmcp-computer: browser selector not found: ${selector}`);
         const { found: _found, ...result } = output;
         return result;
       });
@@ -260,7 +260,7 @@ export function createBrowserTools(
   });
 
   const browserClickTool = defineTool<BrowserSelectorInput>({
-    stableKey: "verbos.browser_click",
+    stableKey: "webmcp_computer.browser_click",
     name: "browser_click",
     title: "Click shared browser",
     description:
@@ -282,14 +282,14 @@ export function createBrowserTools(
           element.click();
           return true;
         })()`);
-        if (!clicked) throw new Error(`verbos: browser selector not found: ${selector}`);
+        if (!clicked) throw new Error(`webmcp-computer: browser selector not found: ${selector}`);
         return { selector, clicked: true };
       });
     },
   });
 
   const browserTypeTool = defineTool<BrowserTypeInput>({
-    stableKey: "verbos.browser_type",
+    stableKey: "webmcp_computer.browser_type",
     name: "browser_type",
     title: "Type in shared browser",
     description:
@@ -313,11 +313,11 @@ export function createBrowserTools(
     execute({ selector: rawSelector, text, submit = false }) {
       return runAgentAction("browser_type", { appId: "browser", selector: rawSelector, submit }, async () => {
         const selector = requireSelector(rawSelector);
-        if (typeof text !== "string") throw new Error("verbos: text must be a string");
+        if (typeof text !== "string") throw new Error("webmcp-computer: text must be a string");
         if (new TextEncoder().encode(text).byteLength > MAX_TYPE_TEXT_BYTES) {
-          throw new Error("verbos: browser text exceeds 4 KB cap");
+          throw new Error("webmcp-computer: browser text exceeds 4 KB cap");
         }
-        if (typeof submit !== "boolean") throw new Error("verbos: submit must be a boolean");
+        if (typeof submit !== "boolean") throw new Error("webmcp-computer: submit must be a boolean");
         const typed = await dependencies.getTransport().evaluate<boolean>("type", `(() => {
           const element = document.querySelector(${JSON.stringify(selector)});
           if (!element || !("value" in element)) return false;
@@ -333,14 +333,14 @@ export function createBrowserTools(
           }
           return true;
         })()`);
-        if (!typed) throw new Error(`verbos: browser selector not found or not typeable: ${selector}`);
+        if (!typed) throw new Error(`webmcp-computer: browser selector not found or not typeable: ${selector}`);
         return { selector, characters: text.length, submit };
       });
     },
   });
 
   const browserScreenshotTool = defineTool<Record<string, never>>({
-    stableKey: "verbos.browser_screenshot",
+    stableKey: "webmcp_computer.browser_screenshot",
     name: "browser_screenshot",
     title: "Capture shared browser",
     description:
@@ -374,18 +374,18 @@ export function createBrowserTools(
             quality,
           });
           if (typeof capture.data !== "string") {
-            throw new Error("verbos: browser screenshot returned no image data");
+            throw new Error("webmcp-computer: browser screenshot returned no image data");
           }
           const result = { dataUrl: `data:image/jpeg;base64,${capture.data}`, width, height };
           if (byteLength(result) <= MAX_BROWSER_RESULT_BYTES) return result;
         }
-        throw new Error("verbos: browser screenshot exceeds 256 KB result cap");
+        throw new Error("webmcp-computer: browser screenshot exceeds 256 KB result cap");
       });
     },
   });
 
   const browserSiteToolsTool = defineTool<Record<string, never>>({
-    stableKey: "verbos.browser_site_tools",
+    stableKey: "webmcp_computer.browser_site_tools",
     name: "browser_site_tools",
     title: "List page WebMCP tools",
     description:
@@ -398,16 +398,31 @@ export function createBrowserTools(
         const result = await dependencies.getTransport().evaluate<{
           supported: boolean;
           tools?: Array<{ name: string; description?: string; inputSchema?: Record<string, unknown> }>;
-        }>("site_tools", `(() => {
-          const api = navigator.modelContextTesting;
-          if (!api?.listTools) return { supported: false };
-          return Promise.resolve(api.listTools()).then((tools) => ({
+        }>("site_tools", `(async () => {
+          const api = document.modelContext;
+          if (!api?.getTools) return { supported: false };
+          const normalizeSchema = (value) => {
+            if (value && typeof value === "object" && !Array.isArray(value)) return value;
+            if (typeof value !== "string") return {};
+            try {
+              const parsed = JSON.parse(value);
+              return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+            } catch {
+              return {};
+            }
+          };
+          const tools = await api.getTools();
+          return {
             supported: true,
-            tools: tools.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })),
-          }));
+            tools: tools.map(({ name, description, inputSchema }) => ({
+              name,
+              description,
+              inputSchema: normalizeSchema(inputSchema),
+            })),
+          };
         })()`);
         if (!result.supported) {
-          throw new Error("verbos: this browser session has no WebMCP support");
+          throw new Error("webmcp-computer: this browser session has no WebMCP support");
         }
         return result.tools ?? [];
       });
@@ -415,11 +430,11 @@ export function createBrowserTools(
   });
 
   const browserSiteCallTool = defineTool<BrowserSiteCallInput>({
-    stableKey: "verbos.browser_site_call",
+    stableKey: "webmcp_computer.browser_site_call",
     name: "browser_site_call",
     title: "Call page WebMCP tool",
     description:
-      "Call one WebMCP tool exposed by the page inside the shared browser and pass its result through, capped at 256 KB. Inner-site tools carry their own consequences; VerbOS cannot classify or make those consequences safe. Use browser_site_tools first.",
+      "Call one WebMCP tool exposed by the page inside the shared browser and pass its result through, capped at 256 KB. Inner-site tools carry their own consequences; WebMCP Computer cannot classify or make those consequences safe. Use browser_site_tools first.",
     inputSchema: {
       type: "object",
       properties: {
@@ -435,22 +450,38 @@ export function createBrowserTools(
       return runAgentAction("browser_site_call", { appId: "browser", name: rawName }, async () => {
         const name = requireSiteToolName(rawName);
         if (input === null || typeof input !== "object" || Array.isArray(input)) {
-          throw new Error("verbos: site tool input must be an object");
+          throw new Error("webmcp-computer: site tool input must be an object");
         }
-        const result = await dependencies.getTransport().evaluate<unknown>("site_call", `(() => {
-          const api = navigator.modelContextTesting;
-          if (!api?.executeTool) return { __verbosUnsupported: true };
-          return api.executeTool(${JSON.stringify(name)}, ${JSON.stringify(JSON.stringify(input))});
+        const result = await dependencies.getTransport().evaluate<unknown>("site_call", `(async () => {
+          const api = document.modelContext;
+          if (!api?.getTools || !api?.executeTool) return { __webmcpComputerUnsupported: true };
+          const tools = await api.getTools();
+          const tool = tools.find(({ name }) => name === ${JSON.stringify(name)});
+          if (!tool) return { __webmcpComputerToolMissing: true };
+          const value = await api.executeTool(tool, ${JSON.stringify(JSON.stringify(input))});
+          if (typeof value !== "string") return value;
+          try {
+            return JSON.parse(value);
+          } catch {
+            return value;
+          }
         })()`);
         if (
           result !== null &&
           typeof result === "object" &&
-          (result as { __verbosUnsupported?: unknown }).__verbosUnsupported === true
+          (result as { __webmcpComputerUnsupported?: unknown }).__webmcpComputerUnsupported === true
         ) {
-          throw new Error("verbos: this browser session has no WebMCP support");
+          throw new Error("webmcp-computer: this browser session has no WebMCP support");
+        }
+        if (
+          result !== null &&
+          typeof result === "object" &&
+          (result as { __webmcpComputerToolMissing?: unknown }).__webmcpComputerToolMissing === true
+        ) {
+          throw new Error(`webmcp-computer: browser page tool not found: ${name}`);
         }
         if (byteLength(result) > MAX_BROWSER_RESULT_BYTES) {
-          throw new Error(`verbos: browser site tool result too large: ${name}`);
+          throw new Error(`webmcp-computer: browser site tool result too large: ${name}`);
         }
         return result;
       });

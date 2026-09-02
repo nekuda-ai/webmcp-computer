@@ -26,9 +26,8 @@ import {
   type SiteToolResultMessage,
 } from "./siteToolBridge";
 import {
+  buildSelfContainedDocument,
   collectPreviewFiles,
-  createBlobVirtualSite,
-  type BlobVirtualSite,
 } from "./virtualServer";
 import {
   createPreviewFrameCommitGate,
@@ -46,7 +45,7 @@ function touchesRoot(change: FileSystemChange, root: string): boolean {
 }
 
 type PreviewMessage = {
-  __verbosPreview?: boolean;
+  __webmcpComputerPreview?: boolean;
   pid?: number;
   token?: string;
   level?: PreviewConsoleLevel;
@@ -61,6 +60,11 @@ type PreviewMessage = {
   error?: string;
 };
 
+type PreviewFrameDocument = {
+  key: string;
+  html: string;
+};
+
 export function PreviewApp({ process }: AppComponentProps) {
   const root = process.path ?? "~/site";
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -69,37 +73,28 @@ export function PreviewApp({ process }: AppComponentProps) {
   const syncSiteRef = useRef<() => Promise<void>>(async () => {});
   const reloadScheduler = useRef<PreviewReloadScheduler>();
   const frameCommitGate = useRef<PreviewFrameCommitGate>();
-  const virtualSite = useRef<BlobVirtualSite>();
   const siteToolScope = useRef<SiteToolRegistryScope>();
   const siteToolProxy = useRef<SiteToolProxy>();
-  const [frameSrc, setFrameSrc] = useState<string>();
+  const [frameDocument, setFrameDocument] = useState<PreviewFrameDocument>();
   const [status, setStatus] = useState("Starting virtual server…");
   const [consoleLines, setConsoleLines] = useState<readonly PreviewConsoleLine[]>([]);
   const fileSystemStatus = useKernelStore((state) => state.fileSystemStatus);
 
   const syncSite = useCallback(async () => {
     const target = await stat(root);
-    if (target.kind !== "directory") throw new Error(`verbos: not a directory: ${root}`);
+    if (target.kind !== "directory") throw new Error(`webmcp-computer: not a directory: ${root}`);
     const files = await collectPreviewFiles(root);
     const nextToken = crypto.randomUUID();
-    const nextSite = createBlobVirtualSite(files, process.pid, nextToken);
-    if (!active.current) {
-      nextSite.revoke();
-      return;
-    }
+    const nextDocument = buildSelfContainedDocument(files, process.pid, nextToken);
+    if (!active.current) return;
     frameCommitGate.current?.request(() => {
-      if (!active.current) {
-        nextSite.revoke();
-        return;
-      }
+      if (!active.current) return;
       siteToolScope.current?.clear();
-      siteToolProxy.current?.reset(new Error("verbos: site tool bridge reloaded"));
+      siteToolProxy.current?.reset(new Error("webmcp-computer: site tool bridge reloaded"));
       token.current = nextToken;
-      virtualSite.current?.revoke();
-      virtualSite.current = nextSite;
-      setFrameSrc(nextSite.entryUrl);
+      setFrameDocument({ key: nextToken, html: nextDocument.html });
       setStatus(`Serving ${files.length} file${files.length === 1 ? "" : "s"}`);
-    }, nextSite.revoke);
+    });
   }, [process.pid, root]);
   syncSiteRef.current = syncSite;
 
@@ -123,7 +118,6 @@ export function PreviewApp({ process }: AppComponentProps) {
       frameCommitGate.current?.dispose();
       reloadScheduler.current = undefined;
       frameCommitGate.current = undefined;
-      virtualSite.current?.revoke();
     };
   }, [process.pid]);
 
@@ -142,7 +136,7 @@ export function PreviewApp({ process }: AppComponentProps) {
     const scope = createSiteToolRegistryScope(process.pid, previewUrl(root));
     const proxy = createSiteToolProxy((message) => {
       iframeRef.current?.contentWindow?.postMessage({
-        __verbosPreview: true,
+        __webmcpComputerPreview: true,
         pid: process.pid,
         token: token.current,
         ...message,
@@ -173,7 +167,7 @@ export function PreviewApp({ process }: AppComponentProps) {
       const message = event.data;
       if (
         event.source !== iframeRef.current?.contentWindow ||
-        message?.__verbosPreview !== true ||
+        message?.__webmcpComputerPreview !== true ||
         message.pid !== process.pid ||
         message.token !== token.current
       ) {
@@ -195,7 +189,7 @@ export function PreviewApp({ process }: AppComponentProps) {
       if (message.kind === "site-tool-register" && typeof message.requestId === "string") {
         const source = event.source as Window;
         const reply = (ok: boolean, error?: string) => source.postMessage({
-          __verbosPreview: true,
+          __webmcpComputerPreview: true,
           pid: process.pid,
           token: message.token,
           kind: "site-tool-registration",
@@ -204,14 +198,14 @@ export function PreviewApp({ process }: AppComponentProps) {
           ...(error === undefined ? {} : { error }),
         }, "*");
         if (!isSiteToolDescriptor(message.tool)) {
-          reply(false, "verbos: invalid site tool registration");
+          reply(false, "webmcp-computer: invalid site tool registration");
           return;
         }
         const descriptor = message.tool;
         const scope = siteToolScope.current;
         const proxy = siteToolProxy.current;
         if (!scope || !proxy) {
-          reply(false, "verbos: site tool scope is not ready");
+          reply(false, "webmcp-computer: site tool scope is not ready");
           return;
         }
         void scope.register(
@@ -263,14 +257,14 @@ export function PreviewApp({ process }: AppComponentProps) {
         </VerbHint>
       </header>
       <div className="preview-viewport">
-        {frameSrc === undefined ? (
+        {frameDocument === undefined ? (
           <div className="preview-loading mono">{status}</div>
         ) : (
           <iframe
             ref={iframeRef}
-            key={frameSrc}
+            key={frameDocument.key}
             title={`Preview ${previewUrl(root)}`}
-            src={frameSrc}
+            srcDoc={frameDocument.html}
             sandbox="allow-scripts"
             referrerPolicy="no-referrer"
           />
@@ -285,7 +279,7 @@ export function PreviewApp({ process }: AppComponentProps) {
           </span>
         ))}
       </div>
-      <footer className={`app-status mono${status.startsWith("verbos:") ? " is-error" : ""}`}>
+      <footer className={`app-status mono${status.startsWith("webmcp-computer:") ? " is-error" : ""}`}>
         <span>{status}</span>
         <span>{consoleLines.length} CONSOLE</span>
       </footer>

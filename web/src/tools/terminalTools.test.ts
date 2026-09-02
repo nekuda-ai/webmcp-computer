@@ -96,7 +96,7 @@ describe("M3 terminal tools", () => {
 
     await expect(
       controller.run("echo never", "agent", { typeDelayMs: 0, timeoutMs: 0 }),
-    ).rejects.toThrow("verbos: command timed out after 0s");
+    ).rejects.toThrow("webmcp-computer: command timed out after 0s");
     expect(useKernelStore.getState().commandProcesses).toEqual([]);
     expect(events.some((event) => event.type === "output" &&
       event.text === "bash: execution aborted\n")).toBe(false);
@@ -186,11 +186,11 @@ describe("M3 terminal tools", () => {
 
   test("kill reports PID 1 as screensaver across tool and shell", async () => {
     await expect(invoke("kill", { pid: 1 })).rejects.toThrow(
-      "verbos: pid 1 is the screensaver; window pids start at 2",
+      "webmcp-computer: pid 1 is the screensaver; window pids start at 2",
     );
     expect(await invoke("term_exec", { command: "kill 1" })).toEqual({
       stdout: "",
-      stderr: "verbos: pid 1 is the screensaver; window pids start at 2\n",
+      stderr: "webmcp-computer: pid 1 is the screensaver; window pids start at 2\n",
       exit_code: 1,
       truncated: false,
     });

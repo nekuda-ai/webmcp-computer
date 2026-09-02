@@ -60,7 +60,7 @@ system event for each drop.
 ## Human context menus
 
 Right-click the desktop background, desktop icons, Files rows or background, window
-titlebars, or Dock icons for VerbOS-native menus. Each tool-backed item shows its
+titlebars, or Dock icons for OS-native menus. Each tool-backed item shows its
 registered syscall; Minimize and Copy path stay human-only because no registered agent
 tool matches them.
 Minimize CSS-hides the mounted window, keeping its process, buffers, and dynamic tools

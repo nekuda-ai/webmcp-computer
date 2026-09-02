@@ -40,7 +40,7 @@ export function renderCommandHelp(command: ShellCommand): string {
 
 export function renderManPage(command: ShellCommand): string {
   return [
-    `${command.name.toUpperCase()}(1) — VerbOS commands`,
+    `${command.name.toUpperCase()}(1) — WebMCP Computer commands`,
     "",
     "NAME",
     `  ${command.name} - ${command.summary.replace(/\.$/, "")}`,
@@ -67,7 +67,7 @@ const commands: ShellCommand[] = [...createSystemCommands(), {
   async run(context, args) {
     if (useKernelStore.getState().fileSystemBackend !== "cloud") {
       return {
-        stderr: "verbos: cloud requires the cloud kernel (enable it in Settings, the machine reboots)\n",
+        stderr: "webmcp-computer: cloud requires the cloud kernel (enable it in Settings, the machine reboots)\n",
         exitCode: 2,
       };
     }
@@ -98,7 +98,7 @@ const findCommand = (name: string): ShellCommand | undefined =>
 
 commands.push({
   name: "man",
-  summary: "Display a VerbOS command, tool, or topic manual page.",
+  summary: "Display a WebMCP Computer command, tool, or topic manual page.",
   usage: "man COMMAND|TOOL|TOPIC",
   flags: [],
   async run(_context, args) {
@@ -111,7 +111,7 @@ commands.push({
     }
     const tool = getActiveToolDefinition(name);
     if (tool) return { stdout: renderToolManPage(tool) };
-    return { stderr: `verbos: no manual entry for ${name}\n`, exitCode: 1 };
+    return { stderr: `webmcp-computer: no manual entry for ${name}\n`, exitCode: 1 };
   },
 });
 

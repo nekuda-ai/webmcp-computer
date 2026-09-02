@@ -10,7 +10,7 @@ import {
   ACCENT_COLORS,
   DEFAULT_SETTINGS,
   THEMES,
-  type VerbOSSettings,
+  type WebMCPComputerSettings,
 } from "./types";
 import {
   CLOUD_KERNEL_STORAGE_KEY,
@@ -35,7 +35,7 @@ let writeQueue: Promise<void> = Promise.resolve();
 
 type ParsedSettings = {
   repairs: string[];
-  settings: VerbOSSettings;
+  settings: WebMCPComputerSettings;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -47,42 +47,42 @@ function validateHostname(value: unknown): string {
     typeof value !== "string" ||
     !/^[a-z0-9][a-z0-9._-]{0,31}@[a-z0-9][a-z0-9._-]{0,31}$/i.test(value)
   ) {
-    throw new Error("verbos: hostname must look like user@host using 1-32 characters per side");
+    throw new Error("webmcp-computer: hostname must look like user@host using 1-32 characters per side");
   }
   return value;
 }
 
-export function validateSetting(key: unknown, value: unknown): [SettingKey, VerbOSSettings[SettingKey]] {
+export function validateSetting(key: unknown, value: unknown): [SettingKey, WebMCPComputerSettings[SettingKey]] {
   if (typeof key !== "string" || !SETTING_KEYS.includes(key as SettingKey)) {
-    throw new Error(`verbos: unknown setting '${String(key)}'; expected ${SETTING_KEYS.join(", ")}`);
+    throw new Error(`webmcp-computer: unknown setting '${String(key)}'; expected ${SETTING_KEYS.join(", ")}`);
   }
   const settingKey = key as SettingKey;
   switch (settingKey) {
     case "theme":
-      if (typeof value !== "string" || !THEMES.includes(value as VerbOSSettings["theme"])) {
-        throw new Error(`verbos: theme must be one of ${THEMES.join(", ")}`);
+      if (typeof value !== "string" || !THEMES.includes(value as WebMCPComputerSettings["theme"])) {
+        throw new Error(`webmcp-computer: theme must be one of ${THEMES.join(", ")}`);
       }
-      return [settingKey, value as VerbOSSettings["theme"]];
+      return [settingKey, value as WebMCPComputerSettings["theme"]];
     case "accent":
-      if (typeof value !== "string" || !ACCENT_COLORS.includes(value as VerbOSSettings["accent"])) {
-        throw new Error(`verbos: accent must be one of ${ACCENT_COLORS.join(", ")}`);
+      if (typeof value !== "string" || !ACCENT_COLORS.includes(value as WebMCPComputerSettings["accent"])) {
+        throw new Error(`webmcp-computer: accent must be one of ${ACCENT_COLORS.join(", ")}`);
       }
-      return [settingKey, value as VerbOSSettings["accent"]];
+      return [settingKey, value as WebMCPComputerSettings["accent"]];
     case "crt":
-      if (typeof value !== "boolean") throw new Error("verbos: crt must be a boolean");
+      if (typeof value !== "boolean") throw new Error("webmcp-computer: crt must be a boolean");
       return [settingKey, value];
     case "verb_hints":
-      if (typeof value !== "boolean") throw new Error("verbos: verb_hints must be a boolean");
+      if (typeof value !== "boolean") throw new Error("webmcp-computer: verb_hints must be a boolean");
       return [settingKey, value];
     case "hostname":
       return [settingKey, validateHostname(value)];
     case "screensaver_minutes":
       if (!Number.isInteger(value) || (value as number) < 0 || (value as number) > 120) {
-        throw new Error("verbos: screensaver_minutes must be an integer from 0 to 120");
+        throw new Error("webmcp-computer: screensaver_minutes must be an integer from 0 to 120");
       }
       return [settingKey, value as number];
     case "cloud_kernel":
-      if (typeof value !== "boolean") throw new Error("verbos: cloud_kernel must be a boolean");
+      if (typeof value !== "boolean") throw new Error("webmcp-computer: cloud_kernel must be a boolean");
       return [settingKey, value];
   }
 }
@@ -103,14 +103,14 @@ export function parseSettings(value: unknown): ParsedSettings {
       Object.assign(settings, { [key]: validated });
     } catch (error) {
       repairs.push(
-        `reset ${key}: ${error instanceof Error ? error.message.replace(/^verbos:\s*/, "") : String(error)}`,
+        `reset ${key}: ${error instanceof Error ? error.message.replace(/^webmcp-computer:\s*/, "") : String(error)}`,
       );
     }
   }
   return { settings, repairs };
 }
 
-function serialized(settings: VerbOSSettings): string {
+function serialized(settings: WebMCPComputerSettings): string {
   return `${JSON.stringify(settings, null, 2)}\n`;
 }
 
@@ -134,9 +134,9 @@ function storedCloudPreference(storage: SettingsStorage | null | undefined): str
 
 async function ensureSettingsFile(
   storage: SettingsStorage | null | undefined = browserStorage(),
-): Promise<VerbOSSettings> {
+): Promise<WebMCPComputerSettings> {
   let repairs: string[] = [];
-  let settings: VerbOSSettings | undefined;
+  let settings: WebMCPComputerSettings | undefined;
   try {
     const content = await readFile(SETTINGS_PATH);
     try {
@@ -170,7 +170,7 @@ async function ensureSettingsFile(
   }
   if (repairs.length > 0) {
     const detail = repairs.join("; ");
-    console.warn(`VerbOS repaired settings: ${detail}`);
+    console.warn(`WebMCP Computer repaired settings: ${detail}`);
     useKernelStore.getState().osEvent("system", "settings_repaired", { repairs: [...repairs] });
   }
   return settings;
@@ -184,7 +184,7 @@ function enqueueSettings<T>(operation: () => Promise<T>): Promise<T> {
 
 export async function loadSettings(
   storage: SettingsStorage | null | undefined = browserStorage(),
-): Promise<VerbOSSettings> {
+): Promise<WebMCPComputerSettings> {
   return await enqueueSettings(async () => {
     const settings = await ensureSettingsFile(storage);
     useKernelStore.getState().setSettings(settings);
@@ -197,21 +197,21 @@ export async function setSetting(
   value: unknown,
   source: "agent" | "human",
   storage: SettingsStorage | null | undefined = browserStorage(),
-): Promise<VerbOSSettings & { note?: string }> {
+): Promise<WebMCPComputerSettings & { note?: string }> {
   const [settingKey, validated] = validateSetting(key, value);
   return await enqueueSettings(async () => {
     const current = await ensureSettingsFile(storage);
-    const next = { ...current, [settingKey]: validated } as VerbOSSettings;
+    const next = { ...current, [settingKey]: validated } as WebMCPComputerSettings;
     if (settingKey === "cloud_kernel") {
       if (!storage) {
-        throw new Error("verbos: cloud_kernel boot mirror is unavailable");
+        throw new Error("webmcp-computer: cloud_kernel boot mirror is unavailable");
       }
       try {
         if (validated) ensureWorkspaceId(storage);
         setCloudKernelPreference(validated as boolean, storage);
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
-        throw new Error(`verbos: could not persist cloud_kernel boot mirror: ${detail}`);
+        throw new Error(`webmcp-computer: could not persist cloud_kernel boot mirror: ${detail}`);
       }
     }
     await writeFile(SETTINGS_PATH, serialized(next), source);

@@ -1,9 +1,9 @@
-# Agent-made apps — `ui_open` + UI host bridge (M7, NEK-834)
+# Agent-made apps — `ui_open` + UI host bridge
 
 ## Goal
 
 The agent can create a real, windowed app at runtime from HTML it writes itself. The app
-lives in the VerbOS filesystem, renders in a sandboxed OS window, and — when explicitly
+lives in the WebMCP Computer filesystem, renders in a sandboxed OS window, and — when explicitly
 granted — can call OS verbs back through a host bridge (MCP-Apps-style `tools/call`
 direction). Human and agent share the same app: the agent builds it, the human clicks it,
 either one edits the file and the window live-reloads. Everything is traced, sandboxed,
@@ -61,12 +61,12 @@ Mirrors `siteToolBridge.ts` structure: a dependency-free injectable frame-side f
 plus a host-side proxy, both unit-testable with a fake postMessage pair.
 
 Frame side (injected):
-- `window.verbos = Object.freeze({ listTools(), callTool(name, input) })`.
+- `window.webmcpComputer = Object.freeze({ listTools(), callTool(name, input) })`.
 - `listTools()` resolves the granted tool descriptors (name, title, description,
   inputSchema) delivered by the host at init.
 - `callTool(name, input)` posts `{kind:"ui-call", callId, name, input}` and resolves with
   the tool result or rejects with the host's error string.
-- Message envelope identical in spirit to Preview: `__verbosUi: true`, `pid`, `token`
+- Message envelope identical in spirit to Preview: `__webmcpComputerUi: true`, `pid`, `token`
   checked on every message, both directions.
 
 Host side (in UiApp's message handler):
@@ -91,7 +91,7 @@ Hard guardrails (all enforced host-side, none trusted to the frame):
 
 ### Tool: `ui_open` (`src/tools/uiTools.ts`, registered in bootTools)
 
-- Intent `act`, `ACT_ANNOTATIONS`. `stableKey: "verbos.ui_open"`.
+- Intent `act`, `ACT_ANNOTATIONS`. `stableKey: "webmcp_computer.ui_open"`.
 - Input: `name` (required, 1–40 chars, `[a-z0-9][a-z0-9-_]*` case-insensitive),
   `html` (string ≤ 256KB) XOR `path` (`~`-rooted existing `.html` text file),
   `allowTools` (string[], ≤ 16), `x`/`y`/`width`/`height` (numbers, clamped like
@@ -102,12 +102,12 @@ Hard guardrails (all enforced host-side, none trusted to the frame):
 - Description must follow the house style: explains what happens visibly, names the
   sandbox, states the transact exclusion and the empty-grant default, tells the agent
   the human can edit the file live.
-- Errors follow existing voice: `verbos: ...` with the offending thing named.
+- Errors follow existing voice: `webmcp-computer: ...` with the offending thing named.
 
 ### Manual + docs
 
 - Add manual topic `apps` (`osManualTool` enum + `manual.ts` + `manualContent.ts`):
-  what `ui_open` does, the bridge API (`window.verbos.callTool`), grants and their
+  what `ui_open` does, the bridge API (`window.webmcpComputer.callTool`), grants and their
   restore behavior, the sandbox, the trace story.
 - Update README tool table if it enumerates tools.
 
@@ -126,7 +126,7 @@ Unit (`bun test src`):
 
 E2E (dense single scenario in the existing suite structure, budget-conscious):
 1. `ui_open` over the real WebMCP surface with html containing a button whose onclick
-   `verbos.callTool("fs_write", …)` writes a file and renders the result into the DOM;
+   `webmcp_computer.callTool("fs_write", …)` writes a file and renders the result into the DOM;
    `allowTools: ["fs_write", "fs_read"]`.
 2. Window visible with the standard aria-label; iframe `sandbox` attribute is exactly
    `allow-scripts`.
@@ -136,7 +136,7 @@ E2E (dense single scenario in the existing suite structure, budget-conscious):
    error.
 5. Live edit: `fs_write` the app's HTML over WebMCP → frame content updates (debounced
    reload).
-6. Restore: reload VerbOS → the window comes back; the same button now fails (empty
+6. Restore: reload WebMCP Computer → the window comes back; the same button now fails (empty
    grant after restore).
 
 `bun test src`, `bun run test:e2e`, and `bun run build` (tsc) must all pass.
@@ -145,5 +145,5 @@ E2E (dense single scenario in the existing suite structure, budget-conscious):
 
 - Site-tool registration from ui frames (outward direction).
 - Full MCP Apps JSON-RPC (`ui/initialize` et al.) wire compatibility; our envelope is
-  MCP-Apps-shaped but VerbOS-native. Revisit if we host real third-party widgets.
+  MCP-Apps-shaped but OS-native. Revisit if we host real third-party widgets.
 - Desktop icons for `~/apps` entries.

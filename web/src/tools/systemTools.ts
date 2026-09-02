@@ -41,19 +41,19 @@ const OPENABLE_APP_IDS = APP_IDS.filter((appId) => appId !== "ui" && appId !== "
 function requireAppId(value: string): AppId {
   const appId = OPENABLE_APP_IDS.find((candidate) => candidate === value);
   if (!appId) {
-    throw new Error(`verbos: unknown app '${value}'; expected ${OPENABLE_APP_IDS.join(", ")}`);
+    throw new Error(`webmcp-computer: unknown app '${value}'; expected ${OPENABLE_APP_IDS.join(", ")}`);
   }
   return appId;
 }
 
 function requirePid(value: number): number {
   if (!Number.isInteger(value)) {
-    throw new Error("verbos: pid must be an integer");
+    throw new Error("webmcp-computer: pid must be an integer");
   }
   if (value === 1) {
-    throw new Error("verbos: pid 1 is the screensaver; window pids start at 2");
+    throw new Error("webmcp-computer: pid 1 is the screensaver; window pids start at 2");
   }
-  if (value < 2) throw new Error("verbos: pid must be an integer PID starting at 2");
+  if (value < 2) throw new Error("webmcp-computer: pid must be an integer PID starting at 2");
   return value;
 }
 
@@ -64,7 +64,7 @@ function requireEmptyInput(input: EmptyInput | null | undefined): void {
     Array.isArray(input) ||
     Object.keys(input).length > 0
   ) {
-    throw new Error("verbos: input must be an empty object");
+    throw new Error("webmcp-computer: input must be an empty object");
   }
 }
 
@@ -76,23 +76,23 @@ function workareaSize(): { width: number; height: number } {
 
 function requireProcess(pid: number) {
   const process = useKernelStore.getState().processes.find((entry) => entry.pid === pid);
-  if (!process) throw new Error(`verbos: process PID ${pid} not found`);
+  if (!process) throw new Error(`webmcp-computer: process PID ${pid} not found`);
   return process;
 }
 
 export const appOpenTool = defineTool<AppInput>({
-  stableKey: "verbos.app_open",
+  stableKey: "webmcp_computer.app_open",
   name: "app_open",
   title: "Open app",
   description:
-    "Open a built-in VerbOS app in a visible window. Optionally set x, y, width, height, and focus (default true); focus=false preserves current focus and places a new window below the focused window. Geometry uses the same work-area clamping as window_move and window_resize. Settings, Notes, and Preview are singletons: reopening one applies supplied placement to its existing window and returns reused: true. Files, Terminal, and Editor create new windows. For editor, path may select a ~-rooted text file. Agent-made App windows open through ui_open. Returns PID, app ID, optional path, applied rect, and reused.",
+    "Open a built-in WebMCP Computer app in a visible window. Optionally set x, y, width, height, and focus (default true); focus=false preserves current focus and places a new window below the focused window. Geometry uses the same work-area clamping as window_move and window_resize. Settings, Notes, and Preview are singletons: reopening one applies supplied placement to its existing window and returns reused: true. Files, Terminal, and Editor create new windows. For editor, path may select a ~-rooted text file. Agent-made App windows open through ui_open. Returns PID, app ID, optional path, applied rect, and reused.",
   inputSchema: {
     type: "object",
     properties: {
       appId: {
         type: "string",
         enum: OPENABLE_APP_IDS,
-        description: "VerbOS app identifier to open.",
+        description: "WebMCP Computer app identifier to open.",
       },
       path: {
         type: "string",
@@ -135,21 +135,21 @@ export const appOpenTool = defineTool<AppInput>({
       async () => {
         const appId = requireAppId(rawAppId);
         if (appId === "ui") {
-          throw new Error("verbos: agent-made App windows open through ui_open");
+          throw new Error("webmcp-computer: agent-made App windows open through ui_open");
         }
         if (rawPath !== undefined && appId !== "editor") {
-          throw new Error("verbos: path is only valid when opening editor");
+          throw new Error("webmcp-computer: path is only valid when opening editor");
         }
         const path = rawPath === undefined ? undefined : normalizePath(rawPath);
         if (path !== undefined) {
           const file = await stat(path);
-          if (file.kind !== "file") throw new Error(`verbos: is a directory: ${path}`);
+          if (file.kind !== "file") throw new Error(`webmcp-computer: is a directory: ${path}`);
           if (!isTextFile(path)) {
-            throw new Error(`verbos: not a text file: ${path} (${file.size} bytes)`);
+            throw new Error(`webmcp-computer: not a text file: ${path} (${file.size} bytes)`);
           }
         }
         if (rawFocus !== undefined && typeof rawFocus !== "boolean") {
-          throw new Error("verbos: focus must be a boolean");
+          throw new Error("webmcp-computer: focus must be a boolean");
         }
         const placement: Partial<WindowRect> = {};
         if (rawX !== undefined) placement.x = requireFinite(rawX, "x");
@@ -178,11 +178,11 @@ export const appOpenTool = defineTool<AppInput>({
 });
 
 export const appCloseTool = defineTool<PidInput>({
-  stableKey: "verbos.app_close",
+  stableKey: "webmcp_computer.app_close",
   name: "app_close",
   title: "Close app",
   description:
-    "Close one visible VerbOS app window by process PID. Use a PID returned by app_open or app_list. Returns the closed PID and app ID; throws if that process does not exist.",
+    "Close one visible WebMCP Computer app window by process PID. Use a PID returned by app_open or app_list. Returns the closed PID and app ID; throws if that process does not exist.",
   inputSchema: {
     type: "object",
     properties: {
@@ -209,7 +209,7 @@ export const appCloseTool = defineTool<PidInput>({
         const pid = requirePid(rawPid);
         const process = requireProcess(pid);
         const closed = useKernelStore.getState().kill(pid);
-        if (!closed) throw new Error(`verbos: process PID ${pid} not found`);
+        if (!closed) throw new Error(`webmcp-computer: process PID ${pid} not found`);
         return { closed: true, pid: closed.pid, appId: process.appId };
       },
     );
@@ -217,11 +217,11 @@ export const appCloseTool = defineTool<PidInput>({
 });
 
 export const appListTool = defineTool<EmptyInput>({
-  stableKey: "verbos.app_list",
+  stableKey: "webmcp_computer.app_list",
   name: "app_list",
   title: "List open apps",
   description:
-    "List every running VerbOS app window and its PID, rectangle, z-index, focus state, and minimized state. Use before targeting a window by PID. Returns an explicit note when no apps are open.",
+    "List every running WebMCP Computer app window and its PID, rectangle, z-index, focus state, and minimized state. Use before targeting a window by PID. Returns an explicit note when no apps are open.",
   inputSchema: { type: "object", properties: {}, additionalProperties: false },
   annotations: ASK_ANNOTATIONS,
   intent: "answer",
@@ -243,11 +243,11 @@ export const appListTool = defineTool<EmptyInput>({
 });
 
 export const windowFocusTool = defineTool<PidInput>({
-  stableKey: "verbos.window_focus",
+  stableKey: "webmcp_computer.window_focus",
   name: "window_focus",
   title: "Focus window",
   description:
-    "Bring a running VerbOS window to the front and give it focus by PID. Use app_list to discover PIDs. Returns the focused process record with its new z-index.",
+    "Bring a running WebMCP Computer window to the front and give it focus by PID. Use app_list to discover PIDs. Returns the focused process record with its new z-index.",
   inputSchema: {
     type: "object",
     properties: {
@@ -263,18 +263,18 @@ export const windowFocusTool = defineTool<PidInput>({
       const pid = requirePid(rawPid);
       requireProcess(pid);
       const process = useKernelStore.getState().focus(pid);
-      if (!process) throw new Error(`verbos: process PID ${pid} not found`);
+      if (!process) throw new Error(`webmcp-computer: process PID ${pid} not found`);
       return process;
     });
   },
 });
 
 export const windowMoveTool = defineTool<MoveInput>({
-  stableKey: "verbos.window_move",
+  stableKey: "webmcp_computer.window_move",
   name: "window_move",
   title: "Move window",
   description:
-    "Move a visible VerbOS window by PID to coordinates relative to the desktop work area, whose origin sits just below the 38px menu bar. Targets are clamped to keep the left-side close control and at least 60px of the titlebar reachable. Use app_list to inspect current rectangles. Returns the updated process record and visibly repositions the window.",
+    "Move a visible WebMCP Computer window by PID to coordinates relative to the desktop work area, whose origin sits just below the 38px menu bar. Targets are clamped to keep the left-side close control and at least 60px of the titlebar reachable. Use app_list to inspect current rectangles. Returns the updated process record and visibly repositions the window.",
   inputSchema: {
     type: "object",
     properties: {
@@ -300,18 +300,18 @@ export const windowMoveTool = defineTool<MoveInput>({
         { width: viewportWidth, height: viewportHeight },
       );
       const process = useKernelStore.getState().move(pid, rect.x, rect.y);
-      if (!process) throw new Error(`verbos: process PID ${pid} not found`);
+      if (!process) throw new Error(`webmcp-computer: process PID ${pid} not found`);
       return process;
     });
   },
 });
 
 export const windowResizeTool = defineTool<ResizeInput>({
-  stableKey: "verbos.window_resize",
+  stableKey: "webmcp_computer.window_resize",
   name: "window_resize",
   title: "Resize window",
   description:
-    "Resize a visible VerbOS window by PID in CSS pixels. Width and height are clamped between the 300 by 210 minimum and the desktop work-area size. Returns the updated process record and visibly resizes the window.",
+    "Resize a visible WebMCP Computer window by PID in CSS pixels. Width and height are clamped between the 300 by 210 minimum and the desktop work-area size. Returns the updated process record and visibly resizes the window.",
   inputSchema: {
     type: "object",
     properties: {
@@ -337,7 +337,7 @@ export const windowResizeTool = defineTool<ResizeInput>({
         const height = Math.min(workarea.height, Math.max(MIN_WINDOW_HEIGHT, targetHeight));
         requireProcess(pid);
         const process = useKernelStore.getState().resize(pid, width, height);
-        if (!process) throw new Error(`verbos: process PID ${pid} not found`);
+        if (!process) throw new Error(`webmcp-computer: process PID ${pid} not found`);
         return process;
       },
     );
@@ -345,11 +345,11 @@ export const windowResizeTool = defineTool<ResizeInput>({
 });
 
 export const sysStatusTool = defineTool<EmptyInput>({
-  stableKey: "verbos.sys_status",
+  stableKey: "webmcp_computer.sys_status",
   name: "sys_status",
   title: "System status",
   description:
-    "Read current VerbOS hostname, uptime in seconds, running process count, active filesystem backend and status, and the ~/skills manual path. Use for a concise health check.",
+    "Read current WebMCP Computer hostname, uptime in seconds, running process count, active filesystem backend and status, and the ~/skills manual path. Use for a concise health check.",
   inputSchema: { type: "object", properties: {}, additionalProperties: false },
   annotations: ASK_ANNOTATIONS,
   intent: "answer",
@@ -373,11 +373,11 @@ export const sysStatusTool = defineTool<EmptyInput>({
 });
 
 export const osManualTool = defineTool<ManualInput>({
-  stableKey: "verbos.os_manual",
+  stableKey: "webmcp_computer.os_manual",
   name: "os_manual",
-  title: "Read VerbOS manual",
+  title: "Read WebMCP Computer manual",
   description:
-    "Start here when operating VerbOS. Read its agent manual verbatim from ~/skills. Omit topic for the README and topic list, or request filesystem, terminal, windows, apps, preview, browser, cloud, or conventions.",
+    "Start here when operating WebMCP Computer. Read its agent manual verbatim from ~/skills. Omit topic for the README and topic list, or request filesystem, terminal, windows, apps, preview, browser, cloud, or conventions.",
   inputSchema: {
     type: "object",
     properties: {
@@ -401,9 +401,9 @@ export const osManualTool = defineTool<ManualInput>({
 });
 
 export const osSearchTool = defineTool<OSSearchInput>({
-  stableKey: "verbos.os_search",
+  stableKey: "webmcp_computer.os_search",
   name: "os_search",
-  title: "Search VerbOS",
+  title: "Search WebMCP Computer",
   description:
     "Search files by name and the first 256 KB of content plus apps, settings, running processes, and shell commands. Returns ranked rows ordered exact name, name prefix, then content, each with its acting verb and arguments. By default show=true displays those rows in Spotlight for about 3 seconds without taking focus; any human keypress or click dismisses it. Pass show=false for silent data-only search. Unreadable subtrees are skipped and reported in warnings.",
   inputSchema: {
@@ -428,7 +428,7 @@ export const osSearchTool = defineTool<OSSearchInput>({
       ...(rawShow === undefined ? {} : { show: rawShow }),
     }, async () => {
       if (rawShow !== undefined && typeof rawShow !== "boolean") {
-        throw new Error("verbos: show must be a boolean");
+        throw new Error("webmcp-computer: show must be a boolean");
       }
       const output = await searchOSDetailed(query, limit);
       if (rawShow !== false) presentSpotlight({ query, ...output });
@@ -438,11 +438,11 @@ export const osSearchTool = defineTool<OSSearchInput>({
 });
 
 export const settingsGetTool = defineTool<EmptyInput>({
-  stableKey: "verbos.settings_get",
+  stableKey: "webmcp_computer.settings_get",
   name: "settings_get",
   title: "Read settings",
   description:
-    "Read all persisted VerbOS settings from ~/.config/settings.json: theme, accent, CRT scanlines, verb hints, hostname, idle screensaver minutes, and cloud-kernel reboot preference.",
+    "Read all persisted WebMCP Computer settings from ~/.config/settings.json: theme, accent, CRT scanlines, verb hints, hostname, idle screensaver minutes, and cloud-kernel reboot preference.",
   inputSchema: { type: "object", properties: {}, additionalProperties: false },
   annotations: ASK_ANNOTATIONS,
   intent: "answer",
@@ -455,11 +455,11 @@ export const settingsGetTool = defineTool<EmptyInput>({
 });
 
 export const settingsSetTool = defineTool<SettingsSetInput>({
-  stableKey: "verbos.settings_set",
+  stableKey: "webmcp_computer.settings_set",
   name: "settings_set",
   title: "Change setting",
   description:
-    "Validate and persist one VerbOS setting to ~/.config/settings.json, then apply it visibly. Keys: theme, accent, crt, verb_hints, hostname, screensaver_minutes, cloud_kernel. cloud_kernel is mirrored for boot and returns a reboot-required note. Returns the full updated settings object.",
+    "Validate and persist one WebMCP Computer setting to ~/.config/settings.json, then apply it visibly. Keys: theme, accent, crt, verb_hints, hostname, screensaver_minutes, cloud_kernel. cloud_kernel is mirrored for boot and returns a reboot-required note. Returns the full updated settings object.",
   inputSchema: {
     type: "object",
     properties: {
@@ -477,11 +477,11 @@ export const settingsSetTool = defineTool<SettingsSetInput>({
 });
 
 export const screensaverWakeTool = defineTool<EmptyInput>({
-  stableKey: "verbos.screensaver_wake",
+  stableKey: "webmcp_computer.screensaver_wake",
   name: "screensaver_wake",
   title: "Wake screensaver",
   description:
-    "Wake VerbOS from its boot screensaver and reveal the desktop. Use when the idle screen is visible. Returns whether the screensaver was active before this call.",
+    "Wake WebMCP Computer from its boot screensaver and reveal the desktop. Use when the idle screen is visible. Returns whether the screensaver was active before this call.",
   inputSchema: { type: "object", properties: {}, additionalProperties: false },
   annotations: ACT_ANNOTATIONS,
   intent: "act",

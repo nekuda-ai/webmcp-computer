@@ -1,7 +1,7 @@
 /*
  * QR Code generator library (TypeScript port, byte mode / ECC low subset)
  * Copyright (c) 2009 Kazuhiko Arase
- * Copyright (c) 2026 VerbOS contributors
+ * Copyright (c) 2026 WebMCP Computer contributors
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -88,7 +88,7 @@ function reedSolomon(data: number[], degree: number): number[] {
 function codewords(text: string): { version: number; bytes: number[] } {
   const encoded = [...new TextEncoder().encode(text)];
   const versionIndex = BYTE_CAPACITY.findIndex((capacity) => encoded.length <= capacity);
-  if (versionIndex === -1) throw new Error("verbos: QR URL exceeds 106-byte cap");
+  if (versionIndex === -1) throw new Error("webmcp-computer: QR URL exceeds 106-byte cap");
   const dataLength = DATA_CODEWORDS[versionIndex] ?? 0;
   const bits = new Bits();
   bits.append(0b0100, 4);

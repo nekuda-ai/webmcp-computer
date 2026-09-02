@@ -37,12 +37,12 @@ describe("M5 persisted settings", () => {
     await loadSettings();
     const before = await readFile(SETTINGS_PATH);
     await expect(setSetting("theme", "sepia", "human")).rejects.toThrow(
-      "verbos: theme must be one of light, dark",
+      "webmcp-computer: theme must be one of light, dark",
     );
     await expect(setSetting("hostname", "no spaces allowed", "human")).rejects.toThrow(
-      "verbos: hostname must look like user@host",
+      "webmcp-computer: hostname must look like user@host",
     );
-    await expect(setSetting("missing", true, "human")).rejects.toThrow("verbos: unknown setting 'missing'");
+    await expect(setSetting("missing", true, "human")).rejects.toThrow("webmcp-computer: unknown setting 'missing'");
     expect(await readFile(SETTINGS_PATH)).toBe(before);
   });
 
@@ -52,7 +52,7 @@ describe("M5 persisted settings", () => {
     const before = await readFile(SETTINGS_PATH);
 
     await expect(setSetting("verb_hints", "off", "human")).rejects.toThrow(
-      "verbos: verb_hints must be a boolean",
+      "webmcp-computer: verb_hints must be a boolean",
     );
     expect(await readFile(SETTINGS_PATH)).toBe(before);
 
@@ -115,7 +115,7 @@ describe("M5 persisted settings", () => {
     await loadSettings(storage);
     const before = await readFile(SETTINGS_PATH);
     await expect(setSetting("cloud_kernel", "yes", "agent", storage)).rejects.toThrow(
-      "verbos: cloud_kernel must be a boolean",
+      "webmcp-computer: cloud_kernel must be a boolean",
     );
     expect(await readFile(SETTINGS_PATH)).toBe(before);
 
@@ -143,13 +143,13 @@ describe("M5 persisted settings", () => {
     await loadSettings(storage);
     const before = await readFile(SETTINGS_PATH);
     await expect(setSetting("cloud_kernel", true, "agent", storage)).rejects.toThrow(
-      "verbos: could not persist cloud_kernel boot mirror: blocked",
+      "webmcp-computer: could not persist cloud_kernel boot mirror: blocked",
     );
     expect(await readFile(SETTINGS_PATH)).toBe(before);
     expect(useKernelStore.getState().settings.cloud_kernel).toBe(false);
 
     await expect(setSetting("cloud_kernel", true, "agent", null)).rejects.toThrow(
-      "verbos: cloud_kernel boot mirror is unavailable",
+      "webmcp-computer: cloud_kernel boot mirror is unavailable",
     );
     expect(await readFile(SETTINGS_PATH)).toBe(before);
   });

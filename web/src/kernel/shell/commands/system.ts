@@ -48,7 +48,7 @@ export function createSystemCommands(): readonly ShellCommand[] {
     },
     {
       name: "whoami",
-      summary: "Print current VerbOS user name.",
+      summary: "Print current WebMCP Computer user name.",
       usage: "whoami",
       flags: [],
       async run(_context, args) {
@@ -58,7 +58,7 @@ export function createSystemCommands(): readonly ShellCommand[] {
     },
     {
       name: "hostname",
-      summary: "Print VerbOS host name.",
+      summary: "Print WebMCP Computer host name.",
       usage: "hostname",
       flags: [],
       async run(_context, args) {
@@ -68,18 +68,18 @@ export function createSystemCommands(): readonly ShellCommand[] {
     },
     {
       name: "uname",
-      summary: "Print VerbOS system information.",
+      summary: "Print WebMCP Computer system information.",
       usage: "uname [OPTION]...",
       flags: unameFlags,
       async run(_context, args) {
         const options = parseOptions("uname", args, unameFlags);
         requireOperandCount("uname", options.operands, 0);
-        return { stdout: optionEnabled(options, "all") ? "VerbOS 1.0 wasm32 (browser)\n" : "VerbOS\n" };
+        return { stdout: optionEnabled(options, "all") ? "WebMCP Computer 1.0 wasm32 (browser)\n" : "WebMCP Computer\n" };
       },
     },
     {
       name: "ps",
-      summary: "List running VerbOS windows and commands.",
+      summary: "List running WebMCP Computer windows and commands.",
       usage: "ps",
       flags: [],
       async run(context, args) {
@@ -92,26 +92,26 @@ export function createSystemCommands(): readonly ShellCommand[] {
     },
     {
       name: "kill",
-      summary: "Terminate a VerbOS window or running command by PID.",
+      summary: "Terminate a WebMCP Computer window or running command by PID.",
       usage: "kill PID",
       flags: [],
       async run(context, args) {
         requireOperandCount("kill", args, 1);
         const pid = Number(args[0]);
         if (pid === 1) {
-          throw new Error("verbos: pid 1 is the screensaver; window pids start at 2");
+          throw new Error("webmcp-computer: pid 1 is the screensaver; window pids start at 2");
         }
         if (!Number.isInteger(pid) || pid < 2) {
           throw new ShellUsageError(`kill: invalid PID '${args[0] ?? ""}'`);
         }
         const killed = context.processes.kill(pid);
-        if (!killed) throw new Error(`verbos: process PID ${pid} not found`);
+        if (!killed) throw new Error(`webmcp-computer: process PID ${pid} not found`);
         return {};
       },
     },
     {
       name: "open",
-      summary: "Open a VerbOS app, file, or directory in a new window.",
+      summary: "Open a WebMCP Computer app, file, or directory in a new window.",
       usage: "open APP|PATH",
       flags: [],
       async run(context, args) {
@@ -126,7 +126,7 @@ export function createSystemCommands(): readonly ShellCommand[] {
     },
     {
       name: "serve",
-      summary: "Serve a directory in a live VerbOS Preview window.",
+      summary: "Serve a directory in a live WebMCP Computer Preview window.",
       usage: "serve DIRECTORY",
       flags: [],
       async run(context, args) {
@@ -141,7 +141,7 @@ export function createSystemCommands(): readonly ShellCommand[] {
     },
     {
       name: "dmesg",
-      summary: "Print VerbOS event log.",
+      summary: "Print WebMCP Computer event log.",
       usage: "dmesg",
       flags: [],
       async run(context, args) {

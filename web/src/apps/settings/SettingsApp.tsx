@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { setSetting, type SettingKey } from "../../kernel/settings";
 import { useKernelStore } from "../../kernel/store";
-import { ACCENT_COLORS, THEMES, type VerbOSSettings } from "../../kernel/types";
+import { ACCENT_COLORS, THEMES, type WebMCPComputerSettings } from "../../kernel/types";
 import { VerbHint } from "../../desktop/VerbHint";
 import type { AppComponentProps } from "../registry";
 import { ActivityLog } from "./ActivityLog";
@@ -59,7 +59,7 @@ export function SettingsApp({ process }: AppComponentProps) {
 
   useEffect(() => setHostname(settings.hostname), [settings.hostname]);
 
-  const update = async <K extends SettingKey>(key: K, value: VerbOSSettings[K]) => {
+  const update = async <K extends SettingKey>(key: K, value: WebMCPComputerSettings[K]) => {
     const event = useKernelStore.getState().osEvent("human", "settings_set", { key, value });
     setError("");
     try {

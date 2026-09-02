@@ -88,7 +88,7 @@ export function TerminalApp({ process }: AppComponentProps) {
     terminal.open(host);
     terminalRef.current = terminal;
 
-    let prompt = "guest@verbos:~$";
+    let prompt = "guest@webmcp-computer:~$";
     let buffer = "";
     let cursor = 0;
     let historyIndex = controller.shell.history.length;

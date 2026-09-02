@@ -22,7 +22,7 @@ export async function agentDrivesDesktopScenario(page: Page): Promise<void> {
   expect(opened).toEqual(expect.objectContaining({ pid: 2, appId: "files" }));
   await waitForWindow(page, "Files", opened.pid);
   await waitForText(page, `[aria-label="Files window, PID ${opened.pid}"] .window-pid`, "PID 2");
-  await waitForText(page, ".agent-toast", "AGENT RAN: files · app_open");
+  await waitForText(page, ".agent-toast", "AGENT RAN: app_open · files · succeeded");
 
   const moved = await executeWebMcpTool<ProcessResult>(page, "window_move", {
     pid: opened.pid,
@@ -30,7 +30,7 @@ export async function agentDrivesDesktopScenario(page: Page): Promise<void> {
     y: 180,
   });
   expect(await windowGeometry(page, "Files", opened.pid)).toEqual(moved.windowRect);
-  await waitForText(page, ".agent-toast", "AGENT RAN: PID 2 · window_move");
+  await waitForText(page, ".agent-toast", "AGENT RAN: window_move · PID 2 · succeeded");
 
   const resized = await executeWebMcpTool<ProcessResult>(page, "window_resize", {
     pid: opened.pid,
@@ -38,7 +38,7 @@ export async function agentDrivesDesktopScenario(page: Page): Promise<void> {
     height: 420,
   });
   expect(await windowGeometry(page, "Files", opened.pid)).toEqual(resized.windowRect);
-  await waitForText(page, ".agent-toast", "AGENT RAN: PID 2 · window_resize");
+  await waitForText(page, ".agent-toast", "AGENT RAN: window_resize · PID 2 · succeeded");
 
   await page.setViewport({ width: 500, height: 400 });
   await page.waitForFunction(
@@ -65,40 +65,40 @@ export async function agentDrivesDesktopScenario(page: Page): Promise<void> {
     appId: "files",
   });
   await waitForWindowGone(page, "Files", opened.pid);
-  await waitForText(page, ".agent-toast", "AGENT RAN: files · app_close");
+  await waitForText(page, ".agent-toast", "AGENT RAN: app_close · files · succeeded");
 }
 
 export async function honestFailureScenario(page: Page): Promise<void> {
   const result = await executeWebMcpToolRaw(page, "app_close", { pid: 99 });
   expect(result.status).toBe("Completed");
   expect(result.output).toEqual({
-    content: [{ type: "text", text: "verbos: process PID 99 not found" }],
+    content: [{ type: "text", text: "webmcp-computer: process PID 99 not found" }],
     isError: true,
   });
   await waitForText(
     page,
     ".agent-toast",
-    "AGENT FAILED: app_close · verbos: process PID 99 not found",
+    "AGENT FAILED: app_close · PID 99 — process PID 99 not found · failed",
   );
 
   await waitForFileSystemReady(page);
   const missingFile = await executeWebMcpToolRaw(page, "fs_read", { path: "~/missing-x3.txt" });
   expect(missingFile.status).toBe("Completed");
   expect(missingFile.output).toEqual({
-    content: [{ type: "text", text: "verbos: no such file: ~/missing-x3.txt" }],
+    content: [{ type: "text", text: "webmcp-computer: no such file: ~/missing-x3.txt" }],
     isError: true,
   });
   await waitForText(
     page,
     ".agent-toast",
-    "AGENT FAILED: fs_read · verbos: no such file: ~/missing-x3.txt",
+    "AGENT FAILED: fs_read · ~/missing-x3.txt — no such file: ~/missing-x3.txt · failed",
   );
 }
 
 export async function multiTabProtectionScenario(page: Page): Promise<void> {
   await page.waitForFunction(async () => {
     const snapshot = await navigator.locks.query();
-    return snapshot.held?.some(({ name }) => name === "verbos-machine") === true;
+    return snapshot.held?.some(({ name }) => name === "webmcp-computer-machine") === true;
   });
 
   const secondPage = await page.browserContext().newPage();

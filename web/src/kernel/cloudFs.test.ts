@@ -226,7 +226,7 @@ describe("cloud filesystem backend", () => {
     expect(requestSignal).toBeInstanceOf(AbortSignal);
     expect(requestSignal?.aborted).toBe(true);
     expect(warning[0]).toEqual(expect.objectContaining({
-      message: "verbos: cloud filesystem mount timed out after 10ms",
+      message: "webmcp-computer: cloud filesystem mount timed out after 10ms",
     }));
   });
 

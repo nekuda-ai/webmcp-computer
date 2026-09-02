@@ -8,26 +8,26 @@ import {
 } from "./terminalInputRendering";
 
 describe("terminal input rendering", () => {
-  test("strips command control sequences before adding VerbOS styling", () => {
+  test("strips command control sequences before adding WebMCP Computer styling", () => {
     const command = "echo ok \x1b[2J\x1b[10A\x1b]0;pwned";
 
-    expect(renderAgentCommandEcho("codex@verbos:~$", command)).toBe(
+    expect(renderAgentCommandEcho("codex@webmcp-computer:~$", command)).toBe(
       `\x1b[?25h${TERMINAL_AGENT_ROW}${TERMINAL_INPUT}` +
-        `• codex@verbos:~$ echo ok ${TERMINAL_RESET}\r\n`,
+        `• codex@webmcp-computer:~$ echo ok ${TERMINAL_RESET}\r\n`,
     );
     expect(renderStoredInputLine({
-      text: `codex@verbos:~$ ${command}`,
+      text: `codex@webmcp-computer:~$ ${command}`,
       source: "agent",
     })).toBe(
       `${TERMINAL_AGENT_ROW}${TERMINAL_INPUT}` +
-        `codex@verbos:~$ echo ok ${TERMINAL_RESET}\r\n`,
+        `codex@webmcp-computer:~$ echo ok ${TERMINAL_RESET}\r\n`,
     );
   });
 
   test("renders plain command text unchanged", () => {
-    expect(renderAgentCommandEcho("codex@verbos:~$", "echo Aurora 🙂")).toBe(
+    expect(renderAgentCommandEcho("codex@webmcp-computer:~$", "echo Aurora 🙂")).toBe(
       `\x1b[?25h${TERMINAL_AGENT_ROW}${TERMINAL_INPUT}` +
-        `• codex@verbos:~$ echo Aurora 🙂${TERMINAL_RESET}\r\n`,
+        `• codex@webmcp-computer:~$ echo Aurora 🙂${TERMINAL_RESET}\r\n`,
     );
   });
 });

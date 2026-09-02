@@ -178,17 +178,34 @@ class MemorySiteStore implements SiteStore {
   }
 }
 
-export function createFakeComputerHandler(): FakeComputerHandler {
+export function createFakeComputerHandler(options: { requireAuthorization?: boolean } = {}): FakeComputerHandler {
   const workspaces = new Map<string, MemoryWorkspace>();
   const sites = new MemorySiteStore();
   let nextSite = 1;
   const env = {
+    GATEWAY_SIGNING_SECRET: "fake-computer-gateway-secret-at-least-32-characters",
     SITES: sites,
     EXEC_RATE: { async limit() { return { success: true }; } },
     PUBLISH_RATE: { async limit() { return { success: true }; } },
     WORKSPACE_WRITE_RATE: { async limit() { return { success: true }; } },
   } satisfies HandlerEnv;
   const dependencies = {
+    async authenticate(request: Request, _env: HandlerEnv, workspaceId: string) {
+      if (
+        options.requireAuthorization &&
+        !request.headers.get("Authorization")?.startsWith("Bearer ")
+      ) throw new Error("unauthorized");
+      return {
+        audience: "verbos-cloudflare" as const,
+        expiresAt: 2_000,
+        issuedAt: 1_000,
+        origin: "http://127.0.0.1",
+        scopes: ["computer" as const],
+        subject: "fake-subject",
+        version: 1 as const,
+        workspace: workspaceId,
+      };
+    },
     async openWorkspace(wsid: string) {
       let workspace = workspaces.get(wsid);
       if (!workspace) {
@@ -217,7 +234,7 @@ export function createFakeComputerHandler(): FakeComputerHandler {
 }
 
 export function startFakeComputer(): FakeComputer {
-  const handler = createFakeComputerHandler();
+  const handler = createFakeComputerHandler({ requireAuthorization: true });
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,

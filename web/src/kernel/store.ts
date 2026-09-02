@@ -8,7 +8,7 @@ import type {
   ProcessRecord,
   ToolRegistrationStatus,
   ToolRegistryGroup,
-  VerbOSSettings,
+  WebMCPComputerSettings,
   FileSystemBackend,
   FileSystemStatus,
   WindowRect,
@@ -44,7 +44,7 @@ type KernelData = {
   fileSystemWarnings: string[];
   notesPreviewEnabledByPid: Record<number, boolean>;
   stickyNotes: StickyNoteRecord[];
-  settings: VerbOSSettings;
+  settings: WebMCPComputerSettings;
   settingsLoaded: boolean;
   toolRegistryGroups: ToolRegistryGroup[];
   lastActivityAt: number;
@@ -84,7 +84,7 @@ type KernelActions = {
   setNotesPreviewEnabled: (pid: number, enabled: boolean) => void;
   setNoteSticky: (path: string, sticky: boolean) => StickyNoteRecord | undefined;
   moveStickyNote: (path: string, x: number, y: number) => StickyNoteRecord | undefined;
-  setSettings: (settings: VerbOSSettings) => void;
+  setSettings: (settings: WebMCPComputerSettings) => void;
   setToolRegistryGroup: (group: ToolRegistryGroup) => void;
   removeToolRegistryGroup: (id: string) => void;
   recordActivity: () => void;
@@ -172,11 +172,11 @@ export function assertPidSafety(
 ): void {
   const pids = [...processes, ...commandProcesses].map(({ pid }) => pid);
   if (new Set(pids).size !== pids.length) {
-    throw new Error("verbos: duplicate PID after session restore");
+    throw new Error("webmcp-computer: duplicate PID after session restore");
   }
   const highestPid = pids.reduce((highest, pid) => Math.max(highest, pid), 1);
   if (nextPid <= highestPid) {
-    throw new Error(`verbos: next PID ${nextPid} is not above live PID ${highestPid}`);
+    throw new Error(`webmcp-computer: next PID ${nextPid} is not above live PID ${highestPid}`);
   }
 }
 
@@ -254,7 +254,7 @@ export const useKernelStore = create<KernelState>()((set, get) => ({
         ? setFocusedProcess(normalized, existing.pid)
         : normalized;
       const focused = processes.find((entry) => entry.pid === existing.pid);
-      if (!focused) throw new Error(`verbos: singleton ${appId} disappeared while focusing`);
+      if (!focused) throw new Error(`webmcp-computer: singleton ${appId} disappeared while focusing`);
       set({
         processes,
         minimizedPids: state.minimizedPids.filter((pid) => pid !== existing.pid),
@@ -292,7 +292,7 @@ export const useKernelStore = create<KernelState>()((set, get) => ({
       process,
     ]);
     const spawned = processes.find(({ pid }) => pid === process.pid);
-    if (!spawned) throw new Error(`verbos: ${appId} disappeared while spawning`);
+    if (!spawned) throw new Error(`webmcp-computer: ${appId} disappeared while spawning`);
 
     set({
       processes,

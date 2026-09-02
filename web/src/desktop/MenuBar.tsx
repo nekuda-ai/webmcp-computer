@@ -1,7 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { latestAgentEvent, useKernelStore } from "../kernel/store";
 import type { ToolRegistrationStatus } from "../kernel/types";
 import { machineIdentity } from "../kernel/identity";
+import {
+  hostedMachineId,
+  hostedSessionSnapshot,
+  subscribeHostedSession,
+} from "../kernel/hostedSession";
 
 const formatClock = (date: Date) =>
   new Intl.DateTimeFormat(undefined, {
@@ -9,6 +14,18 @@ const formatClock = (date: Date) =>
     minute: "2-digit",
     hour12: false,
   }).format(date);
+
+export function friendlyMachineId(machineId: string): string {
+  return `${machineId.slice(0, 3).toUpperCase()}-${machineId.slice(3, 5).toUpperCase()}`;
+}
+
+export function formatLeaseRemaining(expiresAt: number, nowMs: number): string {
+  const remaining = Math.max(0, Math.ceil(expiresAt - nowMs / 1_000));
+  if (remaining === 0) return "ENDED";
+  const minutes = Math.floor(remaining / 60);
+  const seconds = remaining % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
 
 export function agentSurfaceLabel(
   statuses: readonly ToolRegistrationStatus[] | null,
@@ -26,8 +43,12 @@ export function MenuBar() {
   const fileSystemStatus = useKernelStore((state) => state.fileSystemStatus);
   const fileSystemBackend = useKernelStore((state) => state.fileSystemBackend);
   const hostname = useKernelStore((state) => state.settings.hostname);
+  const hostedSession = useSyncExternalStore(
+    subscribeHostedSession,
+    hostedSessionSnapshot,
+    hostedSessionSnapshot,
+  );
   const [now, setNow] = useState(() => new Date());
-
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 1_000);
     return () => window.clearInterval(timer);
@@ -37,12 +58,19 @@ export function MenuBar() {
   const surfaceLabel = agentSurfaceLabel(toolRegistrationStatuses);
   const agentStatus = surfaceLabel ?? (agentOnline ? "AGENT ONLINE" : "AGENT —");
   const identity = machineIdentity(hostname);
+  const machineId = hostedSession.status === "active" ? hostedSession.machineId : hostedMachineId();
+  const lease = hostedSession.status === "active"
+    ? formatLeaseRemaining(hostedSession.expiresAt, now.getTime())
+    : undefined;
 
   return (
     <header className="menu-bar" data-fs-status={fileSystemStatus}>
       <div className="menu-bar__identity">
-        <span className="wordmark">verbOS</span>
+        <span className="wordmark">WebMCP Computer</span>
         <span className="menu-bar__user mono">~/{identity.user.toUpperCase()}</span>
+        {machineId ? (
+          <span className="menu-bar__machine mono">MACHINE {friendlyMachineId(machineId)}</span>
+        ) : null}
       </div>
       <div className="menu-bar__status">
         {fileSystemStatus !== "ready" ? (
@@ -55,6 +83,7 @@ export function MenuBar() {
         {fileSystemStatus === "ready" && fileSystemBackend === "cloud" ? (
           <span className="menu-bar__cloud mono">CLOUD</span>
         ) : null}
+        {lease ? <span className="menu-bar__lease mono">LEASE {lease}</span> : null}
         <span className={`agent-status${agentOnline ? " is-online" : ""}`}>
           <span className="agent-status__dot" aria-hidden="true" />
           <span className="mono">{agentStatus}</span>

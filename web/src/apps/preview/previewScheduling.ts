@@ -49,7 +49,7 @@ export function createPreviewReloadScheduler(
 
   return {
     request(delayMs = 0) {
-      if (disposed) return Promise.reject(new Error("verbos: preview reload scheduler is closed"));
+      if (disposed) return Promise.reject(new Error("webmcp-computer: preview reload scheduler is closed"));
       const result = new Promise<void>((resolve, reject) => {
         waiters.push({ resolve, reject });
       });
@@ -71,7 +71,7 @@ export function createPreviewReloadScheduler(
       disposed = true;
       cancelTimer?.();
       cancelTimer = undefined;
-      const error = new Error("verbos: preview reload scheduler is closed");
+      const error = new Error("webmcp-computer: preview reload scheduler is closed");
       waiters.forEach(({ reject }) => reject(error));
       waiters = [];
       pending = false;

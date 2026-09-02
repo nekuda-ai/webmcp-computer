@@ -125,13 +125,13 @@ describe("UI host bridge", () => {
     await Promise.resolve();
     expect(getInFlightToolInvocationCount()).toBe(1);
 
-    host.dispose(new Error("verbos: UI tool bridge reloaded"));
-    await expect(pending).rejects.toThrow("verbos: UI tool bridge reloaded");
+    host.dispose(new Error("webmcp-computer: UI tool bridge reloaded"));
+    await expect(pending).rejects.toThrow("webmcp-computer: UI tool bridge reloaded");
     expect(useKernelStore.getState().events.at(-1)).toEqual(expect.objectContaining({
       source: "app",
       verb: "ui_call",
       ok: false,
-      reason: "verbos: UI tool bridge reloaded",
+      reason: "webmcp-computer: UI tool bridge reloaded",
     }));
 
     release?.();
@@ -151,11 +151,11 @@ describe("UI host bridge", () => {
     setUiToolGrant(2, []);
     release?.();
 
-    await expect(pending).rejects.toThrow("verbos: UI tool not granted: slow");
+    await expect(pending).rejects.toThrow("webmcp-computer: UI tool not granted: slow");
     expect(useKernelStore.getState().events.at(-1)).toEqual(expect.objectContaining({
       verb: "ui_call",
       ok: false,
-      reason: "verbos: UI tool not granted: slow",
+      reason: "webmcp-computer: UI tool not granted: slow",
     }));
   });
 
@@ -170,11 +170,11 @@ describe("UI host bridge", () => {
     await Promise.resolve();
     useKernelStore.getState().kill(2);
 
-    await expect(pending).rejects.toThrow("verbos: UI process closed");
+    await expect(pending).rejects.toThrow("webmcp-computer: UI process closed");
     expect(useKernelStore.getState().events.at(-1)).toEqual(expect.objectContaining({
       verb: "ui_call",
       ok: false,
-      reason: "verbos: UI process closed",
+      reason: "webmcp-computer: UI process closed",
     }));
 
     release?.();
@@ -185,7 +185,7 @@ describe("UI host bridge", () => {
     const echo = testTool("echo", (input) => input);
     const { client, host } = connect([echo], []);
     await expect(client.callTool("echo", {})).rejects.toThrow(
-      "verbos: UI tool not granted: echo",
+      "webmcp-computer: UI tool not granted: echo",
     );
 
     setUiToolGrant(2, ["echo"]);
@@ -196,7 +196,7 @@ describe("UI host bridge", () => {
       send: (message) => results.push(message),
     });
     strictHost.receive({
-      __verbosUi: true,
+      __webmcpComputerUi: true,
       pid: 2,
       token: "strict",
       kind: "ui-call",
@@ -208,7 +208,7 @@ describe("UI host bridge", () => {
       kind: "ui-result",
       callId: "bad-input",
       ok: false,
-      error: "verbos: UI tool input must be a plain object: echo",
+      error: "webmcp-computer: UI tool input must be a plain object: echo",
     }));
     expect(host).toBeDefined();
   });
@@ -218,13 +218,13 @@ describe("UI host bridge", () => {
     const { client } = connect([slow], ["slow"], 5);
 
     await expect(client.callTool("slow", {})).rejects.toThrow(
-      "verbos: UI tool timed out: slow",
+      "webmcp-computer: UI tool timed out: slow",
     );
     expect(useKernelStore.getState().events.at(-1)).toEqual(expect.objectContaining({
       source: "app",
       verb: "ui_call",
       ok: false,
-      reason: "verbos: UI tool timed out: slow",
+      reason: "webmcp-computer: UI tool timed out: slow",
     }));
   });
 
@@ -232,7 +232,7 @@ describe("UI host bridge", () => {
     const client = createUiBridgeClient(42, "timeout-token", () => {}, () => {}, 5);
 
     await expect(client.callTool("dropped", {})).rejects.toThrow(
-      "verbos: UI tool call was not answered: dropped",
+      "webmcp-computer: UI tool call was not answered: dropped",
     );
   });
 
@@ -240,7 +240,7 @@ describe("UI host bridge", () => {
     const large = testTool("large", () => "x".repeat(256 * 1_024 + 1));
     const { client } = connect([large], ["large"]);
     await expect(client.callTool("large", {})).rejects.toThrow(
-      "verbos: UI tool result too large: large",
+      "webmcp-computer: UI tool result too large: large",
     );
   });
 
@@ -254,7 +254,7 @@ describe("UI host bridge", () => {
 
     await expect(client.callTool("echo", {
       value: "x".repeat(256 * 1_024 + 1),
-    })).rejects.toThrow("verbos: UI tool input too large: echo");
+    })).rejects.toThrow("webmcp-computer: UI tool input too large: echo");
     expect(executions).toBe(0);
   });
 
@@ -268,7 +268,7 @@ describe("UI host bridge", () => {
     const first = client.callTool("concurrent", {});
     const second = client.callTool("concurrent", {});
     await expect(client.callTool("concurrent", {})).rejects.toThrow(
-      "verbos: UI tool call limit reached: concurrent",
+      "webmcp-computer: UI tool call limit reached: concurrent",
     );
     await Promise.resolve();
     expect(releases).toHaveLength(2);
@@ -305,7 +305,7 @@ describe("UI host bridge", () => {
       },
     });
     const call = {
-      __verbosUi: true,
+      __webmcpComputerUi: true,
       pid,
       token: "duplicate-token",
       kind: "ui-call",
@@ -322,7 +322,7 @@ describe("UI host bridge", () => {
     expect(executions).toBe(1);
     expect(responses.filter((message) =>
       message.kind === "ui-result" &&
-      message.error === "verbos: duplicate UI call id: same"
+      message.error === "webmcp-computer: duplicate UI call id: same"
     )).toHaveLength(2);
 
     release?.();
@@ -358,7 +358,7 @@ describe("UI host bridge", () => {
     );
     const pending = client.callTool("echo", {});
     receive({
-      __verbosUi: true,
+      __webmcpComputerUi: true,
       pid: 99,
       token: "right-token",
       kind: "ui-result",
@@ -367,7 +367,7 @@ describe("UI host bridge", () => {
       result: "wrong pid",
     });
     receive({
-      __verbosUi: true,
+      __webmcpComputerUi: true,
       pid: 42,
       token: "wrong-token",
       kind: "ui-result",
@@ -376,7 +376,7 @@ describe("UI host bridge", () => {
       result: "wrong token",
     });
     receive({
-      __verbosUi: true,
+      __webmcpComputerUi: true,
       pid: 42,
       token: "right-token",
       kind: "ui-result",
@@ -392,8 +392,8 @@ describe("UI host bridge", () => {
       token: "right-token",
       send: (message) => hostMessages.push(message),
     });
-    host.receive({ __verbosUi: true, pid: 99, token: "right-token", kind: "ui-init" });
-    host.receive({ __verbosUi: true, pid: 42, token: "wrong-token", kind: "ui-init" });
+    host.receive({ __webmcpComputerUi: true, pid: 99, token: "right-token", kind: "ui-init" });
+    host.receive({ __webmcpComputerUi: true, pid: 42, token: "wrong-token", kind: "ui-init" });
     expect(hostMessages).toEqual([]);
     expect(sent[0]).toEqual(expect.objectContaining({ kind: "ui-init" }));
   });

@@ -26,8 +26,9 @@
   left: 0;
   display: flex;
   align-items: center;
-  width: 220px;
+  width: max-content;
   height: 76px;
+  white-space: nowrap;
   padding: 10px;
   will-change: transform, filter;
 }
@@ -42,6 +43,7 @@
   position: absolute;
   top: 0;
   left: 0;
+  white-space: nowrap;
   color: var(--accent);
   font-size: 34px;
   opacity: 0.11;

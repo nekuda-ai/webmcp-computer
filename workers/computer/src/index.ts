@@ -1,16 +1,23 @@
 import {
   getWorkspace,
-  withWorkspace,
+  Workspace,
   type DurableObjectStorageLike,
   type WorkspaceClient,
   type WorkspaceFilesystemStub,
   type WorkspaceOptions,
+  type WorkspaceStub,
 } from "@cloudflare/computer";
 import {
   CloudflareContainerBackend,
   withWorkspaceContainer,
 } from "@cloudflare/computer/backends/container";
 import { DurableObject } from "cloudflare:workers";
+import { createCloudflareObserver } from "@cloudflare/computer/observe/cloudflare";
+import {
+  bearerGatewayCapability,
+  verifyGatewayCapability,
+  type GatewayCapabilityClaims,
+} from "../../../shared/gateway-capability";
 import {
   handleRequest,
   type HandlerEnv,
@@ -20,15 +27,17 @@ import {
   type WorkspaceHandle,
 } from "./handler";
 import { randomSlug } from "./slug";
+import { DurableSyncRetryScheduler } from "./syncRetry";
 
 export { WorkspaceProxy } from "@cloudflare/computer";
 
-type Env = HandlerEnv & {
-  WORKSPACES: DurableObjectNamespace<VerbosWorkspace>;
+export type Env = HandlerEnv & {
+  WORKSPACES: DurableObjectNamespace<WebMCPComputerWorkspace>;
 };
 
 class ContainerBase extends withWorkspaceContainer(class extends DurableObject<Env> {}) {
   readonly backend = new CloudflareContainerBackend({
+    id: "container",
     container: () => this,
     workspace: { binding: "WORKSPACES", id: this.ctx.id.toString() },
     egress: { mode: "direct" },
@@ -39,15 +48,45 @@ function workspaceOptions(self: InstanceType<typeof ContainerBase>): WorkspaceOp
   // @cloudflare/computer 0.2.1 and current workers-types carry structurally
   // equivalent SQL generics that TypeScript cannot unify across package copies.
   const { ctx } = self as unknown as { ctx: DurableObjectState };
+  type CloudflareTracing = Parameters<typeof createCloudflareObserver>[0]["tracing"];
+  const tracing = (ctx as unknown as { tracing?: CloudflareTracing }).tracing;
   return {
     storage: ctx.storage as unknown as DurableObjectStorageLike,
     backends: [self.backend],
+    observer: createCloudflareObserver({ tracing }),
+    retryScheduler: new DurableSyncRetryScheduler(ctx.storage),
+    retry: {
+      initialDelayMs: 2_000,
+      maxDelayMs: 60_000,
+      maxAttempts: 12,
+    },
   };
 }
 
-export class VerbosWorkspace extends withWorkspace(ContainerBase, workspaceOptions) {
+export class WebMCPComputerWorkspace extends ContainerBase {
+  readonly workspace = new Workspace(workspaceOptions(this));
+
+  async __getWorkspaceStub(): Promise<WorkspaceStub> {
+    await this.workspace.ready();
+    return this.workspace.stub();
+  }
+
   override async fetch(request: Request): Promise<Response> {
     return await this.backend.handleFetch(request);
+  }
+
+  override async alarm(alarmInfo?: { retryCount: number; isRetry: boolean }): Promise<void> {
+    try {
+      const result = await this.workspace.retryPendingSync(this.backend.id);
+      console.log("WebMCP Computer workspace sync retry", JSON.stringify(result));
+    } catch (error) {
+      if ((alarmInfo?.retryCount ?? 0) >= 5) {
+        await this.ctx.storage.setAlarm(Date.now() + 30_000);
+        console.error("WebMCP Computer workspace sync retry rescheduled", error);
+        return;
+      }
+      throw error;
+    }
   }
 }
 
@@ -90,6 +129,7 @@ function handlerWorkspace(client: WorkspaceClient): WorkspaceHandle {
 }
 
 const dependencies: WorkerDependencies = {
+  authenticate: authenticateComputerRequest,
   async openWorkspace(wsid, env) {
     const workerEnv = env as Env;
     const id = workerEnv.WORKSPACES.idFromName(wsid);
@@ -103,6 +143,19 @@ const dependencies: WorkerDependencies = {
   },
   randomSlug,
 };
+
+export async function authenticateComputerRequest(
+  request: Request,
+  env: HandlerEnv,
+  workspaceId: string,
+): Promise<GatewayCapabilityClaims> {
+  return await verifyGatewayCapability(bearerGatewayCapability(request), {
+    secret: env.GATEWAY_SIGNING_SECRET,
+    scope: "computer",
+    origin: request.headers.get("Origin"),
+    workspace: workspaceId,
+  });
+}
 
 export default {
   fetch(request: Request, env: Env): Promise<Response> {

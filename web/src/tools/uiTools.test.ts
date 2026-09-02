@@ -69,24 +69,24 @@ describe("ui_open", () => {
   test("rejects invalid names and oversized UTF-8 HTML", async () => {
     for (const name of ["", "bad name", "-bad", "x".repeat(41)]) {
       await expect(uiOpenTool.execute({ name, html: "ok" })).rejects.toThrow(
-        `verbos: invalid UI app name '${name}'`,
+        `webmcp-computer: invalid UI app name '${name}'`,
       );
     }
     await expect(uiOpenTool.execute({
       name: "large",
       html: "🙂".repeat(Math.floor(MAX_UI_HTML_BYTES / 4) + 1),
-    })).rejects.toThrow("verbos: html too large for 'large'");
+    })).rejects.toThrow("webmcp-computer: html too large for 'large'");
   });
 
   test("requires exactly one of html or path", async () => {
     await expect(uiOpenTool.execute({ name: "missing" })).rejects.toThrow(
-      "verbos: ui_open for 'missing' requires exactly one of html or path",
+      "webmcp-computer: ui_open for 'missing' requires exactly one of html or path",
     );
     await expect(uiOpenTool.execute({
       name: "both",
       html: "<p>inline</p>",
       path: "~/site/index.html",
-    })).rejects.toThrow("verbos: ui_open for 'both' requires exactly one of html or path");
+    })).rejects.toThrow("webmcp-computer: ui_open for 'both' requires exactly one of html or path");
   });
 
   test("opens only existing HTML files and names the offending path", async () => {
@@ -96,15 +96,15 @@ describe("ui_open", () => {
     await expect(uiOpenTool.execute({
       name: "missing-file",
       path: "~/site/missing.html",
-    })).rejects.toThrow("verbos: no such file: ~/site/missing.html");
+    })).rejects.toThrow("webmcp-computer: no such file: ~/site/missing.html");
     await expect(uiOpenTool.execute({
       name: "wrong-extension",
       path: "~/site/plain.txt",
-    })).rejects.toThrow("verbos: UI app path must end in .html: ~/site/plain.txt");
+    })).rejects.toThrow("webmcp-computer: UI app path must end in .html: ~/site/plain.txt");
     await expect(uiOpenTool.execute({
       name: "directory",
       path: "~/site/folder.html",
-    })).rejects.toThrow("verbos: is a directory: ~/site/folder.html");
+    })).rejects.toThrow("webmcp-computer: is a directory: ~/site/folder.html");
   });
 
   test("restored and unknown PIDs have no grant", async () => {

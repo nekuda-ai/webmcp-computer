@@ -28,36 +28,36 @@ export function truncateTerminalOutput(value: string): { value: string; truncate
 function requireEmptyInput(input: EmptyInput | null | undefined): void {
   if (input == null) return;
   if (typeof input !== "object" || Array.isArray(input) || Object.keys(input).length > 0) {
-    throw new Error("verbos: input must be an empty object");
+    throw new Error("webmcp-computer: input must be an empty object");
   }
 }
 
 function requireString(value: unknown, name: string): string {
-  if (typeof value !== "string") throw new Error(`verbos: ${name} must be a string`);
+  if (typeof value !== "string") throw new Error(`webmcp-computer: ${name} must be a string`);
   return value;
 }
 
 function requirePid(value: unknown, name = "pid"): number {
   if (value === 1) {
-    throw new Error("verbos: pid 1 is the screensaver; window pids start at 2");
+    throw new Error("webmcp-computer: pid 1 is the screensaver; window pids start at 2");
   }
   if (!Number.isInteger(value) || (value as number) < 2) {
-    throw new Error(`verbos: ${name} must be an integer PID starting at 2`);
+    throw new Error(`webmcp-computer: ${name} must be an integer PID starting at 2`);
   }
   return value as number;
 }
 
 function requireTimeout(value: unknown): number {
   if (!Number.isInteger(value) || (value as number) < 1 || (value as number) > MAX_TIMEOUT_MS) {
-    throw new Error("verbos: timeout_ms must be an integer from 1 to 120000");
+    throw new Error("webmcp-computer: timeout_ms must be an integer from 1 to 120000");
   }
   return value as number;
 }
 
 function terminalProcess(pid: number) {
   const process = useKernelStore.getState().processes.find((entry) => entry.pid === pid);
-  if (!process) throw new Error(`verbos: process PID ${pid} not found`);
-  if (process.appId !== "terminal") throw new Error(`verbos: process PID ${pid} is not a terminal`);
+  if (!process) throw new Error(`webmcp-computer: process PID ${pid} not found`);
+  if (process.appId !== "terminal") throw new Error(`webmcp-computer: process PID ${pid} is not a terminal`);
   return process;
 }
 
@@ -84,16 +84,16 @@ function resolveTermReadPid(rawPid: unknown): number {
     return pid;
   }
   const process = selectedTerminal();
-  if (!process) throw new Error("verbos: no terminal is open");
+  if (!process) throw new Error("webmcp-computer: no terminal is open");
   return process.pid;
 }
 
 export const termExecTool = defineTool<TermExecInput>({
-  stableKey: "verbos.term_exec",
+  stableKey: "webmcp_computer.term_exec",
   name: "term_exec",
   title: "Execute terminal command",
   description:
-    "Visibly type and execute one just-bash command against the shared VerbOS filesystem. Opens a Terminal when none exists; optionally target a terminal PID. Supports pipes, redirects, variables, subshells, jq, awk, sed, grep, and other bundled commands; network, Python, and JavaScript runtimes are disabled. Times out after 30s by default; timeout_ms can set up to 120s. Returns stdout, stderr, exit_code, and truncated after output appears; stdout and stderr are each capped at 256 KB.",
+    "Visibly type and execute one just-bash command against the shared WebMCP Computer filesystem. Opens a Terminal when none exists; optionally target a terminal PID. Supports pipes, redirects, variables, subshells, jq, awk, sed, grep, and other bundled commands; network, Python, and JavaScript runtimes are disabled. Times out after 30s by default; timeout_ms can set up to 120s. Returns stdout, stderr, exit_code, and truncated after output appears; stdout and stderr are each capped at 256 KB.",
   inputSchema: {
     type: "object",
     properties: {
@@ -143,11 +143,11 @@ export const termExecTool = defineTool<TermExecInput>({
 });
 
 export const termReadTool = defineTool<TermReadInput>({
-  stableKey: "verbos.term_read",
+  stableKey: "webmcp_computer.term_read",
   name: "term_read",
   title: "Read terminal scrollback",
   description:
-    "Read the last lines of an open VerbOS Terminal's shared 2000-line scrollback. Defaults to the frontmost Terminal and 50 lines; returns the terminal PID, plain-text lines, and truncated when older scrollback was discarded.",
+    "Read the last lines of an open WebMCP Computer Terminal's shared 2000-line scrollback. Defaults to the frontmost Terminal and 50 lines; returns the terminal PID, plain-text lines, and truncated when older scrollback was discarded.",
   inputSchema: {
     type: "object",
     properties: {
@@ -164,7 +164,7 @@ export const termReadTool = defineTool<TermReadInput>({
       const pid = resolveTermReadPid(rawPid);
       const lines = rawLines === undefined ? 50 : rawLines;
       if (!Number.isInteger(lines) || lines < 1 || lines > 200) {
-        throw new Error("verbos: lines must be an integer from 1 to 200");
+        throw new Error("webmcp-computer: lines must be an integer from 1 to 200");
       }
       const session = terminalSession(pid);
       return {
@@ -177,7 +177,7 @@ export const termReadTool = defineTool<TermReadInput>({
 });
 
 export const termStateTool = defineTool<TermStateInput>({
-  stableKey: "verbos.term_state",
+  stableKey: "webmcp_computer.term_state",
   name: "term_state",
   title: "Read terminal session state",
   description:
@@ -201,7 +201,7 @@ export const termStateTool = defineTool<TermStateInput>({
 });
 
 export const termHistoryTool = defineTool<TermHistoryInput>({
-  stableKey: "verbos.term_history",
+  stableKey: "webmcp_computer.term_history",
   name: "term_history",
   title: "Read terminal command history",
   description:
@@ -221,7 +221,7 @@ export const termHistoryTool = defineTool<TermHistoryInput>({
     return runAgentAction("term_history", { ...(rawPid === undefined ? {} : { term_pid: rawPid }) }, () => {
       const limit = rawLimit ?? 50;
       if (!Number.isInteger(limit) || limit < 1 || limit > 1000) {
-        throw new Error("verbos: limit must be an integer from 1 to 1000");
+        throw new Error("webmcp-computer: limit must be an integer from 1 to 1000");
       }
       const pid = resolveTermReadPid(rawPid);
       return terminalSession(pid).history(limit);
@@ -230,11 +230,11 @@ export const termHistoryTool = defineTool<TermHistoryInput>({
 });
 
 export const psTool = defineTool<EmptyInput>({
-  stableKey: "verbos.ps",
+  stableKey: "webmcp_computer.ps",
   name: "ps",
   title: "List processes",
   description:
-    "List the real VerbOS process table: PID 1, open app windows, and transient running shell commands. Returns small records with PID, kind, command, and optional app or cwd.",
+    "List the real WebMCP Computer process table: PID 1, open app windows, and transient running shell commands. Returns small records with PID, kind, command, and optional app or cwd.",
   inputSchema: { type: "object", properties: {}, additionalProperties: false },
   annotations: ASK_ANNOTATIONS,
   intent: "answer",
@@ -247,11 +247,11 @@ export const psTool = defineTool<EmptyInput>({
 });
 
 export const killTool = defineTool<PidInput>({
-  stableKey: "verbos.kill",
+  stableKey: "webmcp_computer.kill",
   name: "kill",
   title: "Kill process",
   description:
-    "Terminate one VerbOS app window or transient shell command by PID. PID 1 is protected. Returns the killed process record; throws when the PID does not exist.",
+    "Terminate one WebMCP Computer app window or transient shell command by PID. PID 1 is protected. Returns the killed process record; throws when the PID does not exist.",
   inputSchema: {
     type: "object",
     properties: { pid: { type: "integer", minimum: 2, description: "Process PID to terminate." } },
@@ -274,7 +274,7 @@ export const killTool = defineTool<PidInput>({
       () => {
         const pid = requirePid(rawPid);
         const killed = killKernelProcess(pid);
-        if (!killed) throw new Error(`verbos: process PID ${pid} not found`);
+        if (!killed) throw new Error(`webmcp-computer: process PID ${pid} not found`);
         if (killed.appId === "terminal") releaseTerminalSession(pid);
         return { killed: true, ...killed };
       },

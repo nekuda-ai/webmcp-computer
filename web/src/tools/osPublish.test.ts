@@ -124,7 +124,7 @@ describe("os_publish", () => {
     });
 
     await expect(missingExpiry.execute({})).rejects.toThrow(
-      "verbos: computer Worker returned an invalid publish expiry",
+      "webmcp-computer: computer Worker returned an invalid publish expiry",
     );
   });
 
@@ -132,7 +132,7 @@ describe("os_publish", () => {
     await expect(collectPublishFiles(undefined, fakeFileSystem({
       "~/site/index.html": "ok",
       "~/site/assets/photo.png": "not text",
-    }))).rejects.toThrow("verbos: os_publish rejects non-text file: ~/site/assets/photo.png");
+    }))).rejects.toThrow("webmcp-computer: os_publish rejects non-text file: ~/site/assets/photo.png");
   });
 
   test("enforces file count, per-file, and total caps before network", async () => {
@@ -140,23 +140,23 @@ describe("os_publish", () => {
       Array.from({ length: 65 }, (_, index) => [`~/site/${index}.txt`, "x"]),
     );
     await expect(collectPublishFiles(undefined, fakeFileSystem(tooMany))).rejects.toThrow(
-      "verbos: os_publish exceeds 64-file cap",
+      "webmcp-computer: os_publish exceeds 64-file cap",
     );
     await expect(collectPublishFiles(undefined, fakeFileSystem({
       "~/site/large.txt": "x".repeat(MAX_PUBLISH_FILE_BYTES + 1),
-    }))).rejects.toThrow("verbos: os_publish file exceeds 256 KB: ~/site/large.txt");
+    }))).rejects.toThrow("webmcp-computer: os_publish file exceeds 256 KB: ~/site/large.txt");
     await expect(collectPublishFiles(undefined, fakeFileSystem(Object.fromEntries(
       Array.from({ length: 9 }, (_, index) => [
         `~/site/${index}.txt`,
         "x".repeat(MAX_PUBLISH_FILE_BYTES),
       ]),
-    )))).rejects.toThrow("verbos: os_publish exceeds 2 MB total cap");
+    )))).rejects.toThrow("webmcp-computer: os_publish exceeds 2 MB total cap");
   });
 
   test("rejects a file root, Worker failure, and unsafe publish URL with house voice", async () => {
     const files = fakeFileSystem({ "~/site/index.html": "ok" });
     await expect(collectPublishFiles("~/site/index.html", files)).rejects.toThrow(
-      "verbos: publish path is not a directory: ~/site/index.html",
+      "webmcp-computer: publish path is not a directory: ~/site/index.html",
     );
     const failed = createOsPublishTool({
       fileSystem: files,
@@ -164,7 +164,7 @@ describe("os_publish", () => {
       workspaceId: WSID,
       fetch: (async () => Response.json({ error: "rate limited" }, { status: 429 })) as unknown as typeof fetch,
     });
-    await expect(failed.execute({})).rejects.toThrow("verbos: site publish failed: rate limited");
+    await expect(failed.execute({})).rejects.toThrow("webmcp-computer: site publish failed: rate limited");
 
     const unsafe = createOsPublishTool({
       fileSystem: files,
@@ -173,7 +173,7 @@ describe("os_publish", () => {
       fetch: (async () => Response.json({ url: "javascript:alert(1)" })) as unknown as typeof fetch,
     });
     await expect(unsafe.execute({})).rejects.toThrow(
-      "verbos: computer Worker returned an invalid publish URL",
+      "webmcp-computer: computer Worker returned an invalid publish URL",
     );
   });
 

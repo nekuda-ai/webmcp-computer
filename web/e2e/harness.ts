@@ -18,7 +18,7 @@ import {
 
 const DEFAULT_CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const SURFACE_REQUIREMENT =
-  "Chrome 151+ with --enable-features=WebMCP; set VERBOS_CHROME to its executable";
+  "Chrome 151+ with --enable-features=WebMCP; set WEBMCP_COMPUTER_CHROME to its executable";
 const WAIT_TIMEOUT_MS = 10_000;
 // Trade-off: duplicates arriving later can escape detection; longer waits can flag calls still in flight.
 const INVOCATION_LEDGER_SETTLE_MS = 75;
@@ -30,7 +30,7 @@ type HarnessFixture = {
   userDataDir: string;
 };
 
-export type VerbOSPage = {
+export type WebMCPComputerPage = {
   context: BrowserContext;
   cdpSession: CDPSession;
   invocationLedger: Map<string, InvocationLedgerEntry>;
@@ -61,8 +61,8 @@ const pagesWithToolCalls = new WeakSet<Page>();
 function surfaceError(chromePath: string, detail: unknown): Error {
   const message = detail instanceof Error ? detail.message : String(detail);
   return new Error(
-    `VerbOS e2e WebMCP surface missing. Required: ${SURFACE_REQUIREMENT}. ` +
-      `VERBOS_CHROME resolved to ${chromePath}. ${message}`,
+    `WebMCP Computer e2e WebMCP surface missing. Required: ${SURFACE_REQUIREMENT}. ` +
+      `WEBMCP_COMPUTER_CHROME resolved to ${chromePath}. ${message}`,
   );
 }
 
@@ -75,8 +75,8 @@ async function closePreview(server: PreviewServer): Promise<void> {
 export async function startHarness(): Promise<void> {
   if (fixture) return;
 
-  const chromePath = process.env.VERBOS_CHROME ?? DEFAULT_CHROME;
-  const userDataDir = await mkdtemp(join(tmpdir(), "verbos-e2e-"));
+  const chromePath = process.env.WEBMCP_COMPUTER_CHROME ?? DEFAULT_CHROME;
+  const userDataDir = await mkdtemp(join(tmpdir(), "webmcp-computer-e2e-"));
   let previewServer: PreviewServer | undefined;
   let browser: Browser | undefined;
 
@@ -88,7 +88,7 @@ export async function startHarness(): Promise<void> {
     });
     const address = previewServer.httpServer.address();
     if (address === null || typeof address === "string") {
-      throw new Error("VerbOS e2e could not resolve vite preview port");
+      throw new Error("WebMCP Computer e2e could not resolve vite preview port");
     }
 
     try {
@@ -126,7 +126,8 @@ export async function stopHarness(): Promise<void> {
   await rm(current.userDataDir, { recursive: true, force: true });
 }
 
-type OpenVerbOSPageOptions = {
+type OpenWebMCPComputerPageOptions = {
+  activeHostedSession?: boolean;
   browserWorkerUrl?: string;
   computerWorkerUrl?: string;
   forceFileSystemBootFailure?: boolean;
@@ -139,7 +140,7 @@ export async function seedSessionOnNextDocument(
   snapshot: SessionSnapshot,
 ): Promise<void> {
   await page.evaluateOnNewDocument((key, serialized) => {
-    window.sessionStorage.setItem(key, serialized);
+    window.localStorage.setItem(key, serialized);
   }, SESSION_STORAGE_KEY, serializeSession(snapshot));
 }
 
@@ -147,22 +148,22 @@ export async function rejectPausedFileSystemBoot(page: Page): Promise<void> {
   await page.evaluate(() => {
     const init = (
       globalThis as typeof globalThis & {
-        __VERBOS_INIT__?: { rejectFileSystemBoot?: () => void };
+        __WEBMCP_COMPUTER_INIT__?: { rejectFileSystemBoot?: () => void };
       }
-    ).__VERBOS_INIT__;
+    ).__WEBMCP_COMPUTER_INIT__;
     if (!init?.rejectFileSystemBoot) {
-      throw new Error("VerbOS e2e filesystem boot is not paused");
+      throw new Error("WebMCP Computer e2e filesystem boot is not paused");
     }
     init.rejectFileSystemBoot();
   });
 }
 
-export async function openVerbOSPage(options: OpenVerbOSPageOptions = {}): Promise<VerbOSPage> {
-  if (!fixture) throw new Error("VerbOS e2e harness has not started");
+export async function openWebMCPComputerPage(options: OpenWebMCPComputerPageOptions = {}): Promise<WebMCPComputerPage> {
+  if (!fixture) throw new Error("WebMCP Computer e2e harness has not started");
   if (options.forceFileSystemBootFailure && options.pauseFileSystemBoot) {
-    throw new Error("VerbOS e2e filesystem boot cannot be forced and paused together");
+    throw new Error("WebMCP Computer e2e filesystem boot cannot be forced and paused together");
   }
-  const chromePath = process.env.VERBOS_CHROME ?? DEFAULT_CHROME;
+  const chromePath = process.env.WEBMCP_COMPUTER_CHROME ?? DEFAULT_CHROME;
   const context = await fixture.browser.createBrowserContext();
   const page = await context.newPage();
   await page.setViewport({ width: 1280, height: 720 });
@@ -192,9 +193,32 @@ export async function openVerbOSPage(options: OpenVerbOSPageOptions = {}): Promi
 
     if (options.sessionSnapshot) await seedSessionOnNextDocument(page, options.sessionSnapshot);
 
+    {
+      const sessionPayload = JSON.stringify({
+        active: true,
+        machineId: "0123456789abcdef0123456789abcdef",
+        workspaceId: "0123456789abcdef0123456789abcdef",
+        capability: "e2e-hosted-capability-token",
+        expiresAt: Math.floor(Date.now() / 1_000) + 3_600,
+        browserWorkerUrl: options.browserWorkerUrl ?? fixture.baseUrl,
+        computerWorkerUrl: options.computerWorkerUrl ?? fixture.baseUrl,
+      });
+      await page.setRequestInterception(true);
+      page.on("request", (request) => {
+        const url = new URL(request.url());
+        if (url.origin === fixture?.baseUrl && url.pathname === "/api/session") {
+          void request.respond(options.activeHostedSession
+            ? { status: 200, contentType: "application/json", body: sessionPayload }
+            : { status: 503, contentType: "application/json", body: '{"error":"disabled for test"}' });
+          return;
+        }
+        void request.continue();
+      });
+    }
+
     if (options.forceFileSystemBootFailure) {
       await page.evaluateOnNewDocument(() => {
-        Object.defineProperty(globalThis, "__VERBOS_INIT__", {
+        Object.defineProperty(globalThis, "__WEBMCP_COMPUTER_INIT__", {
           configurable: true,
           value: {
             bootFileSystem: async () => {
@@ -206,7 +230,7 @@ export async function openVerbOSPage(options: OpenVerbOSPageOptions = {}): Promi
     } else if (options.pauseFileSystemBoot) {
       await page.evaluateOnNewDocument(() => {
         let rejectBoot: ((error: Error) => void) | undefined;
-        Object.defineProperty(globalThis, "__VERBOS_INIT__", {
+        Object.defineProperty(globalThis, "__WEBMCP_COMPUTER_INIT__", {
           configurable: true,
           value: {
             bootFileSystem: () => new Promise<never>((_resolve, reject) => {
@@ -241,7 +265,7 @@ export async function openVerbOSPage(options: OpenVerbOSPageOptions = {}): Promi
   }
 }
 
-export async function closeVerbOSPage(testPage: VerbOSPage): Promise<void> {
+export async function closeWebMCPComputerPage(testPage: WebMCPComputerPage): Promise<void> {
   let ledgerError: Error | undefined;
   try {
     await new Promise((resolve) => setTimeout(resolve, INVOCATION_LEDGER_SETTLE_MS));
@@ -266,7 +290,7 @@ export async function closeVerbOSPage(testPage: VerbOSPage): Promise<void> {
       }
     }
     if (failures.length > 0) {
-      ledgerError = new Error(`VerbOS e2e WebMCP exactly-once ledger failed:\n${failures.join("\n")}`);
+      ledgerError = new Error(`WebMCP Computer e2e WebMCP exactly-once ledger failed:\n${failures.join("\n")}`);
     }
   } finally {
     await testPage.cdpSession.detach().catch(() => undefined);
@@ -339,7 +363,7 @@ export async function executeWebMcpToolRaw(
   signal: AbortSignal = AbortSignal.timeout(WAIT_TIMEOUT_MS),
 ): Promise<WebMCPToolCallResult> {
   const tool = page.webmcp.tools().find((candidate) => candidate.name === name);
-  if (!tool) throw new Error(`VerbOS e2e WebMCP tool not registered: ${name}`);
+  if (!tool) throw new Error(`WebMCP Computer e2e WebMCP tool not registered: ${name}`);
   pagesWithToolCalls.add(page);
   return await tool.execute(input, { signal });
 }
@@ -465,7 +489,7 @@ export async function windowGeometry(
     (surface) => {
       const shell = surface.closest(".window-shell");
       const workarea = surface.closest(".desktop__workarea");
-      if (!shell || !workarea) throw new Error("VerbOS e2e could not resolve window geometry");
+      if (!shell || !workarea) throw new Error("WebMCP Computer e2e could not resolve window geometry");
       const shellRect = shell.getBoundingClientRect();
       const workareaRect = workarea.getBoundingClientRect();
       return {
@@ -488,7 +512,7 @@ export async function openFilesDirectory(page: Page, name: string): Promise<void
     await button.click({ count: 2 });
     return;
   }
-  throw new Error(`VerbOS e2e file row not found: ${name}`);
+  throw new Error(`WebMCP Computer e2e file row not found: ${name}`);
 }
 
 export async function typeInEditor(
@@ -501,7 +525,7 @@ export async function typeInEditor(
     visible: true,
     timeout: WAIT_TIMEOUT_MS,
   });
-  if (!editor) throw new Error(`VerbOS e2e editor not found: ${selector}`);
+  if (!editor) throw new Error(`WebMCP Computer e2e editor not found: ${selector}`);
   await editor.click();
   await page.keyboard.press("End");
   await page.keyboard.type(text, delay === undefined ? undefined : { delay });
@@ -510,7 +534,7 @@ export async function typeInEditor(
 export async function typeInTerminal(page: Page, pid: number, command: string): Promise<void> {
   const selector = `.terminal-app[data-terminal-pid="${pid}"] .xterm-helper-textarea`;
   const input = await page.waitForSelector(selector, { timeout: WAIT_TIMEOUT_MS });
-  if (!input) throw new Error(`VerbOS e2e terminal input not found for PID ${pid}`);
+  if (!input) throw new Error(`WebMCP Computer e2e terminal input not found for PID ${pid}`);
   await input.focus();
   await page.keyboard.type(command);
   await page.keyboard.press("Enter");
@@ -528,7 +552,7 @@ export async function typeInTerminal(page: Page, pid: number, command: string): 
   );
 }
 
-export async function reloadVerbOS(page: Page, requiredTools: readonly string[]): Promise<void> {
+export async function reloadWebMCPComputer(page: Page, requiredTools: readonly string[]): Promise<void> {
   await page.reload({ waitUntil: "domcontentloaded" });
   await page.waitForSelector(".desktop", { visible: true, timeout: WAIT_TIMEOUT_MS });
   await waitForWebMcpTools(page, requiredTools);

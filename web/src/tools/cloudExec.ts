@@ -24,8 +24,8 @@ const LOCAL_TIMEOUT_GRACE_MS = 30_000;
 const encoder = new TextEncoder();
 
 function cloudExecFailure(reason: string): Error {
-  const detail = reason.replace(/^verbos:\s*/, "").replace(/[\r\n]+/g, " ").trim();
-  return new Error(`verbos: cloud exec failed: ${detail || "unknown error"}`);
+  const detail = reason.replace(/^webmcp-computer:\s*/, "").replace(/[\r\n]+/g, " ").trim();
+  return new Error(`webmcp-computer: cloud exec failed: ${detail || "unknown error"}`);
 }
 
 function requireInput(input: unknown): CloudExecRequest {
@@ -67,11 +67,11 @@ function requireInput(input: unknown): CloudExecRequest {
 
 export function createCloudExecTool(dependencies?: CloudExecDependencies) {
   return defineTool<CloudExecToolInput>({
-    stableKey: "verbos.cloud_exec",
+    stableKey: "webmcp_computer.cloud_exec",
     name: "cloud_exec",
     title: "Execute cloud command",
     description:
-      "Visibly execute one command in the VerbOS cloud container when the cloud kernel is active. Returns exitCode, stdout, stderr, pushed, pulled, and truncated after ordered output appears in Terminal; stdout and stderr are each capped at 256 KB. cwd defaults to /workspace and must stay below it; timeoutMs defaults to 300000 and caps at 600000. node_modules is container-only and is lost when the container restarts.",
+      "Visibly execute one command in the WebMCP Computer cloud container when the cloud kernel is active. Returns exitCode, stdout, stderr, pushed, pulled, and truncated after ordered output appears in Terminal; stdout and stderr are each capped at 256 KB. cwd defaults to /workspace and must stay below it; timeoutMs defaults to 300000 and caps at 600000. node_modules is container-only and is lost when the container restarts.",
     inputSchema: {
       type: "object",
       properties: {
@@ -125,7 +125,7 @@ export function createCloudExecTool(dependencies?: CloudExecDependencies) {
           const remoteResult = remote.result;
           if (!remoteResult) {
             const message = result.stderr.trim();
-            if (message.startsWith("verbos: cloud exec failed:")) throw new Error(message);
+            if (message.startsWith("webmcp-computer: cloud exec failed:")) throw new Error(message);
             throw cloudExecFailure(message || "command ended without an exit event");
           }
           const stdout = truncateTerminalOutput(remoteResult.stdout);

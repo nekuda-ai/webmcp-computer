@@ -1,7 +1,7 @@
-# WebMCP protocol reference (as VerbOS uses it)
+# WebMCP protocol reference (as WebMCP Computer uses it)
 
 Spec: https://webmachinelearning.github.io/webmcp/ (W3C Web Machine Learning CG draft;
-it churns monthly). VerbOS never touches the raw API — `@nekuda/webmcp-sdk` pins a
+it churns monthly). WebMCP Computer never touches the raw API — `@nekuda/webmcp-sdk` pins a
 spec version and absorbs the churn. This file records what the surface actually is, so
 decisions here don't rest on memory of a moving draft.
 
@@ -20,20 +20,20 @@ decisions here don't rest on memory of a moving draft.
 resolves `document ?? navigator` so both eras work). `window.agent` (the oldest
 explainer shape) is dead.
 
-Inside a served Preview or agent-made App frame, `document.modelContext` is VerbOS's
+Inside a served Preview or agent-made App frame, `document.modelContext` is WebMCP Computer's
 injected facade, not Chrome's native surface. It proxies `registerTool` and abort-signal
-unregistration to the VerbOS host, while `getTools()` returns only that frame's
+unregistration to the WebMCP Computer host, while `getTools()` returns only that frame's
 registrations. It does not expose system tools or `executeTool`.
 
 ## What the protocol does NOT have
 
 No resources, no prompts, no instructions field, no context documents — nothing like
 MCP's server-side extras. **A page's entire self-description to an agent is its tools:
-names, descriptions, input schemas, annotations.** Consequences for VerbOS:
+names, descriptions, input schemas, annotations.** Consequences for WebMCP Computer:
 
 1. Tool descriptions are load-bearing product surface, not comments. They are written
    for a stranger LLM and reviewed like API contracts.
-2. There is no native way to hand an agent a manual — so VerbOS ships its manual
+2. There is no native way to hand an agent a manual — so WebMCP Computer ships its manual
    *through* the tool channel: the seeded `~/skills/` files (readable via `fs_read` /
    `cat`) and the `os_manual` tool that returns them directly.
 3. Dynamic tools are first-class in the protocol (`ontoolchange` exists precisely for
@@ -68,14 +68,14 @@ Chrome 151's `WebMCP.toolResponded` transport currently reports rejected tool ca
 `exception.description`. A minimal repro with both a plain `Error` (`app_close` for a
 missing PID) and a filesystem error (`fs_read` for a missing path) produced the same
 shape, while the SDK's registered executor rethrew each original error unchanged. This
-isolates the loss to Chrome's CDP bridge, not VerbOS or `@nekuda/webmcp-sdk`.
+isolates the loss to Chrome's CDP bridge, not WebMCP Computer or `@nekuda/webmcp-sdk`.
 
 Not every MCP-family bridge reads `exception.description`, so application error
 messages cannot rely on that CDP fallback. Tool implementations still throw an `Error`
-with the full `verbos:` message. The registry's registered-surface wrapper catches it
+with the full `webmcp-computer:` message. The registry's registered-surface wrapper catches it
 and returns MCP's tool-error result:
 
-`{ content: [{ type: "text", text: "verbos: <cause>" }], isError: true }`
+`{ content: [{ type: "text", text: "webmcp-computer: <cause>" }], isError: true }`
 
 `isError: true` makes this a failure, not a shaped success. It also keeps the message in
 the content path every MCP-family client already transports. The Puppeteer e2e pins

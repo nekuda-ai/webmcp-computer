@@ -162,7 +162,7 @@ export function NotesApp({ process }: AppComponentProps) {
 
   const save = useCallback(async (autosave = false) => {
     if (loadError) {
-      setStatus("verbos: reload the note successfully before saving");
+      setStatus("webmcp-computer: reload the note successfully before saving");
       return;
     }
     const action = osEvent("human", "fs_write", {
@@ -314,7 +314,7 @@ export function NotesApp({ process }: AppComponentProps) {
             />
           </VerbHint>
         )}
-        <footer className={`app-status mono${status.startsWith("verbos:") ? " is-error" : ""}`}>
+        <footer className={`app-status mono${status.startsWith("webmcp-computer:") ? " is-error" : ""}`}>
           <span>{loadError ? "ERROR" : conflict ? "CONFLICT" : dirty ? "UNSAVED" : "CLEAN"}</span>
           <span>{status}</span>
         </footer>

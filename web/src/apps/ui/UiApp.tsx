@@ -51,7 +51,7 @@ function contentTypeFile(content: string): PreviewVirtualFile {
 }
 
 type UiConsoleMessage = {
-  __verbosUi?: boolean;
+  __webmcpComputerUi?: boolean;
   pid?: number;
   token?: string;
   level?: PreviewConsoleLevel;
@@ -83,7 +83,7 @@ export function UiApp({ process }: AppComponentProps) {
   const fileSystemStatus = useKernelStore((state) => state.fileSystemStatus);
 
   const syncDocument = useCallback(async () => {
-    if (path === undefined) throw new Error("verbos: UI app has no HTML path");
+    if (path === undefined) throw new Error("webmcp-computer: UI app has no HTML path");
     const content = await readFile(path);
     const nextToken = crypto.randomUUID();
     const document = buildSelfContainedDocument(
@@ -98,8 +98,8 @@ export function UiApp({ process }: AppComponentProps) {
     frameCommitGate.current?.request(() => {
       if (!active.current) return;
       siteToolScope.current?.clear();
-      siteToolProxy.current?.reset(new Error("verbos: app tool bridge reloaded"));
-      hostProxy.current?.dispose(new Error("verbos: UI tool bridge reloaded"));
+      siteToolProxy.current?.reset(new Error("webmcp-computer: app tool bridge reloaded"));
+      hostProxy.current?.dispose(new Error("webmcp-computer: UI tool bridge reloaded"));
       hostProxy.current = undefined;
       token.current = nextToken;
       setFrameDocument({ key: nextToken, html: nextHtml });
@@ -142,7 +142,7 @@ export function UiApp({ process }: AppComponentProps) {
       active.current = false;
       reloadScheduler.current?.dispose();
       frameCommitGate.current?.dispose();
-      hostProxy.current?.dispose(new Error("verbos: UI tool bridge closed"));
+      hostProxy.current?.dispose(new Error("webmcp-computer: UI tool bridge closed"));
       reloadScheduler.current = undefined;
       frameCommitGate.current = undefined;
       hostProxy.current = undefined;
@@ -157,7 +157,7 @@ export function UiApp({ process }: AppComponentProps) {
     );
     const proxy = createSiteToolProxy((message) => {
       iframeRef.current?.contentWindow?.postMessage({
-        __verbosUi: true,
+        __webmcpComputerUi: true,
         pid: process.pid,
         token: token.current,
         ...message,
@@ -199,7 +199,7 @@ export function UiApp({ process }: AppComponentProps) {
       if (event.source !== iframeRef.current?.contentWindow) return;
       const message = event.data as UiConsoleMessage | undefined;
       if (
-        message?.__verbosUi !== true ||
+        message?.__webmcpComputerUi !== true ||
         message.pid !== process.pid ||
         message.token !== token.current
       ) {
@@ -221,7 +221,7 @@ export function UiApp({ process }: AppComponentProps) {
       if (message.kind === "site-tool-register" && typeof message.requestId === "string") {
         const source = event.source as Window;
         const reply = (ok: boolean, error?: string) => source.postMessage({
-          __verbosUi: true,
+          __webmcpComputerUi: true,
           pid: process.pid,
           token: message.token,
           kind: "site-tool-registration",
@@ -230,14 +230,14 @@ export function UiApp({ process }: AppComponentProps) {
           ...(error === undefined ? {} : { error }),
         }, "*");
         if (!isSiteToolDescriptor(message.tool)) {
-          reply(false, "verbos: invalid site tool registration");
+          reply(false, "webmcp-computer: invalid site tool registration");
           return;
         }
         const descriptor = message.tool;
         const scope = siteToolScope.current;
         const proxy = siteToolProxy.current;
         if (!scope || !proxy) {
-          reply(false, "verbos: site tool scope is not ready");
+          reply(false, "webmcp-computer: site tool scope is not ready");
           return;
         }
         void scope.register(
@@ -314,7 +314,7 @@ export function UiApp({ process }: AppComponentProps) {
           </span>
         ))}
       </div>
-      <footer className={`app-status mono${status.startsWith("verbos:") ? " is-error" : ""}`}>
+      <footer className={`app-status mono${status.startsWith("webmcp-computer:") ? " is-error" : ""}`}>
         <span>{status}</span>
         <span>{consoleLines.length} CONSOLE</span>
       </footer>

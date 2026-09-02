@@ -8,8 +8,8 @@ import {
 import { BOOT_TOOL_NAMES, coldBootScenario } from "./coldBoot.e2e";
 import { agentDrivesDesktopScenario, honestFailureScenario, multiTabProtectionScenario } from "./desktop.e2e";
 import {
-  closeVerbOSPage,
-  openVerbOSPage,
+  closeWebMCPComputerPage,
+  openWebMCPComputerPage,
   startHarness,
   stopHarness,
   waitForWebMcpTools,
@@ -45,65 +45,65 @@ if (process.env.npm_lifecycle_event === "test:e2e") {
   afterAll(stopHarness);
 
   test("cold boot exposes the complete agent surface and any call wakes the OS", async () => {
-    const testPage = await openVerbOSPage();
+    const testPage = await openWebMCPComputerPage();
     try {
       await coldBootScenario(testPage.page);
     } finally {
-      await closeVerbOSPage(testPage);
+      await closeWebMCPComputerPage(testPage);
     }
   });
 
   test("agent drives visible window lifecycle and geometry", async () => {
-    const testPage = await openVerbOSPage();
+    const testPage = await openWebMCPComputerPage();
     try {
       await waitForWebMcpTools(testPage.page, BOOT_TOOL_NAMES);
       await agentDrivesDesktopScenario(testPage.page);
     } finally {
-      await closeVerbOSPage(testPage);
+      await closeWebMCPComputerPage(testPage);
     }
   });
 
   test("human and agent share one persistent file without clobbering dirty edits", async () => {
-    const testPage = await openVerbOSPage();
+    const testPage = await openWebMCPComputerPage();
     try {
       await waitForWebMcpTools(testPage.page, BOOT_TOOL_NAMES);
       await sharedFileScenario(testPage.page);
     } finally {
-      await closeVerbOSPage(testPage);
+      await closeWebMCPComputerPage(testPage);
     }
   });
 
   test("tool failures reach both caller and visible agent trace", async () => {
-    const testPage = await openVerbOSPage();
+    const testPage = await openWebMCPComputerPage();
     try {
       await waitForWebMcpTools(testPage.page, BOOT_TOOL_NAMES);
       await honestFailureScenario(testPage.page);
     } finally {
-      await closeVerbOSPage(testPage);
+      await closeWebMCPComputerPage(testPage);
     }
   });
 
-  test("a second VerbOS tab shows the persistent machine ownership warning", async () => {
-    const testPage = await openVerbOSPage();
+  test("a second WebMCP Computer tab shows the persistent machine ownership warning", async () => {
+    const testPage = await openWebMCPComputerPage();
     try {
       await multiTabProtectionScenario(testPage.page);
     } finally {
-      await closeVerbOSPage(testPage);
+      await closeWebMCPComputerPage(testPage);
     }
   });
 
   test("filesystem boot failure leaves desktop and non-filesystem tools usable", async () => {
-    const testPage = await openVerbOSPage({ forceFileSystemBootFailure: true });
+    const testPage = await openWebMCPComputerPage({ forceFileSystemBootFailure: true });
     try {
       await waitForWebMcpTools(testPage.page, BOOT_TOOL_NAMES);
       await bootResilienceScenario(testPage.page);
     } finally {
-      await closeVerbOSPage(testPage);
+      await closeWebMCPComputerPage(testPage);
     }
   });
 
   test("filesystem boot failure restores and preserves the saved window snapshot", async () => {
-    const testPage = await openVerbOSPage({
+    const testPage = await openWebMCPComputerPage({
       forceFileSystemBootFailure: true,
       sessionSnapshot: SAVED_EDITOR_SESSION,
     });
@@ -111,159 +111,159 @@ if (process.env.npm_lifecycle_event === "test:e2e") {
       await waitForWebMcpTools(testPage.page, BOOT_TOOL_NAMES);
       await bootFailurePreservesSessionScenario(testPage.page);
     } finally {
-      await closeVerbOSPage(testPage);
+      await closeWebMCPComputerPage(testPage);
     }
   });
 
   test("app_open completed before restore keeps its live PID after snapshot merge", async () => {
-    const testPage = await openVerbOSPage({
+    const testPage = await openWebMCPComputerPage({
       pauseFileSystemBoot: true,
       sessionSnapshot: SAVED_EDITOR_SESSION,
     });
     try {
       await preRestoreAppOpenScenario(testPage.page);
     } finally {
-      await closeVerbOSPage(testPage);
+      await closeWebMCPComputerPage(testPage);
     }
   });
 
   test("agent and human share one visible terminal", async () => {
-    const testPage = await openVerbOSPage();
+    const testPage = await openWebMCPComputerPage();
     try {
       await waitForWebMcpTools(testPage.page, BOOT_TOOL_NAMES);
       await terminalScenario(testPage.page);
     } finally {
-      await closeVerbOSPage(testPage);
+      await closeWebMCPComputerPage(testPage);
     }
   });
 
   test("verb hints preserve mounted children and one active chip across setting changes", async () => {
-    const testPage = await openVerbOSPage();
+    const testPage = await openWebMCPComputerPage();
     try {
       await waitForWebMcpTools(testPage.page, BOOT_TOOL_NAMES);
       await verbHintScenario(testPage.page);
     } finally {
-      await closeVerbOSPage(testPage);
+      await closeWebMCPComputerPage(testPage);
     }
   });
 
   test("agent builds a multi-file site with a base64 PNG in a live dynamic Preview", async () => {
-    const testPage = await openVerbOSPage();
+    const testPage = await openWebMCPComputerPage();
     try {
       await waitForWebMcpTools(testPage.page, BOOT_TOOL_NAMES);
       await previewScenario(testPage.page);
     } finally {
-      await closeVerbOSPage(testPage);
+      await closeWebMCPComputerPage(testPage);
     }
   });
 
   test("settings, Spotlight, manual, and Tool Monitor share persisted OS state", async () => {
-    const testPage = await openVerbOSPage();
+    const testPage = await openWebMCPComputerPage();
     try {
       await waitForWebMcpTools(testPage.page, BOOT_TOOL_NAMES);
       await m5Scenario(testPage.page);
     } finally {
-      await closeVerbOSPage(testPage);
+      await closeWebMCPComputerPage(testPage);
     }
   });
 
   test("Spotlight pointer movement overrides keyboard selection from isolated state", async () => {
-    const testPage = await openVerbOSPage();
+    const testPage = await openWebMCPComputerPage();
     try {
       await waitForWebMcpTools(testPage.page, BOOT_TOOL_NAMES);
       await spotlightHoverPrecedenceScenario(testPage.page);
     } finally {
-      await closeVerbOSPage(testPage);
+      await closeWebMCPComputerPage(testPage);
     }
   });
 
-  test("reload restores per-tab windows, geometry, focus, paths, and terminal cwd", async () => {
-    const testPage = await openVerbOSPage();
+  test("reload restores durable windows, geometry, focus, paths, and terminal cwd", async () => {
+    const testPage = await openWebMCPComputerPage();
     try {
       await waitForWebMcpTools(testPage.page, BOOT_TOOL_NAMES);
       await sessionRestoreScenario(testPage.page);
     } finally {
-      await closeVerbOSPage(testPage);
+      await closeWebMCPComputerPage(testPage);
     }
   });
 
   test("three reloads keep exactly two restored windows with stable unique PIDs", async () => {
-    const testPage = await openVerbOSPage();
+    const testPage = await openWebMCPComputerPage();
     try {
       await waitForWebMcpTools(testPage.page, BOOT_TOOL_NAMES);
       await repeatedSessionRestoreScenario(testPage.page);
     } finally {
-      await closeVerbOSPage(testPage);
+      await closeWebMCPComputerPage(testPage);
     }
   });
 
   test("restore clamps a large-viewport window into a smaller viewport", async () => {
-    const testPage = await openVerbOSPage();
+    const testPage = await openWebMCPComputerPage();
     try {
       await waitForWebMcpTools(testPage.page, BOOT_TOOL_NAMES);
       await smallerViewportRestoreScenario(testPage.page);
     } finally {
-      await closeVerbOSPage(testPage);
+      await closeWebMCPComputerPage(testPage);
     }
   });
 
   test("app_open places an agent window at its requested rectangle", async () => {
-    const testPage = await openVerbOSPage();
+    const testPage = await openWebMCPComputerPage();
     try {
       await waitForWebMcpTools(testPage.page, BOOT_TOOL_NAMES);
       await agentPlacementScenario(testPage.page);
     } finally {
-      await closeVerbOSPage(testPage);
+      await closeWebMCPComputerPage(testPage);
     }
   });
 
   test("app_open focus false keeps the focused window above the new window", async () => {
-    const testPage = await openVerbOSPage();
+    const testPage = await openWebMCPComputerPage();
     try {
       await waitForWebMcpTools(testPage.page, BOOT_TOOL_NAMES);
       await unfocusedStackingScenario(testPage.page);
     } finally {
-      await closeVerbOSPage(testPage);
+      await closeWebMCPComputerPage(testPage);
     }
   });
 
   test("empty fs_write and shell redirects truncate files on real OPFS", async () => {
-    const testPage = await openVerbOSPage();
+    const testPage = await openWebMCPComputerPage();
     try {
       await waitForWebMcpTools(testPage.page, BOOT_TOOL_NAMES);
       await emptyOpfsWriteScenario(testPage.page);
     } finally {
-      await closeVerbOSPage(testPage);
+      await closeWebMCPComputerPage(testPage);
     }
   });
 
   test("Editor autosave is coherent with an immediate terminal cat", async () => {
-    const testPage = await openVerbOSPage();
+    const testPage = await openWebMCPComputerPage();
     try {
       await waitForWebMcpTools(testPage.page, BOOT_TOOL_NAMES);
       await autosaveCatScenario(testPage.page);
     } finally {
-      await closeVerbOSPage(testPage);
+      await closeWebMCPComputerPage(testPage);
     }
   });
 
   test("desktop file icon opens its file in Editor", async () => {
-    const testPage = await openVerbOSPage();
+    const testPage = await openWebMCPComputerPage();
     try {
       await waitForWebMcpTools(testPage.page, BOOT_TOOL_NAMES);
       await desktopIconScenario(testPage.page);
     } finally {
-      await closeVerbOSPage(testPage);
+      await closeWebMCPComputerPage(testPage);
     }
   });
 
   test("sticky notes and Settings Activity share visible OS state", async () => {
-    const testPage = await openVerbOSPage();
+    const testPage = await openWebMCPComputerPage();
     try {
       await waitForWebMcpTools(testPage.page, BOOT_TOOL_NAMES);
       await stickyActivityScenario(testPage.page);
     } finally {
-      await closeVerbOSPage(testPage);
+      await closeWebMCPComputerPage(testPage);
     }
   });
 
@@ -277,57 +277,57 @@ if (process.env.npm_lifecycle_event === "test:e2e") {
       lastSpawnOrigin: null,
       stickyNotes: [{ path: "~/notes/missing.md", x: 200, y: 120 }],
     } satisfies SessionSnapshot;
-    const testPage = await openVerbOSPage({ sessionSnapshot: orphanedStickySession });
+    const testPage = await openWebMCPComputerPage({ sessionSnapshot: orphanedStickySession });
     try {
       await waitForWebMcpTools(testPage.page, BOOT_TOOL_NAMES);
       await orphanedStickyNoteScenario(testPage.page);
     } finally {
-      await closeVerbOSPage(testPage);
+      await closeWebMCPComputerPage(testPage);
     }
   });
 
   test("shared window chrome and dock icons hold across every app and both themes", async () => {
-    const testPage = await openVerbOSPage();
+    const testPage = await openWebMCPComputerPage();
     try {
       await waitForWebMcpTools(testPage.page, BOOT_TOOL_NAMES);
       await windowChromeThemeScenario(testPage.page);
     } finally {
-      await closeVerbOSPage(testPage);
+      await closeWebMCPComputerPage(testPage);
     }
   });
 
   test("agent-made app shares granted OS tools, live edits, and safe restore", async () => {
-    const testPage = await openVerbOSPage();
+    const testPage = await openWebMCPComputerPage();
     try {
       await waitForWebMcpTools(testPage.page, BOOT_TOOL_NAMES);
       await agentMadeAppScenario(testPage.page);
     } finally {
-      await closeVerbOSPage(testPage);
+      await closeWebMCPComputerPage(testPage);
     }
   });
 
   test("human and agent share one remote browser and its inner WebMCP tools", async () => {
     const fake = startFakeBrowserRun();
-    let testPage: Awaited<ReturnType<typeof openVerbOSPage>> | undefined;
+    let testPage: Awaited<ReturnType<typeof openWebMCPComputerPage>> | undefined;
     try {
-      testPage = await openVerbOSPage({ browserWorkerUrl: fake.origin });
+      testPage = await openWebMCPComputerPage({ activeHostedSession: true, browserWorkerUrl: fake.origin });
       await waitForWebMcpTools(testPage.page, BOOT_TOOL_NAMES);
       await browserScenario(testPage.page, fake);
     } finally {
-      if (testPage) await closeVerbOSPage(testPage);
+      if (testPage) await closeWebMCPComputerPage(testPage);
       await fake.stop();
     }
   });
 
   test("cloud kernel persists shared shell bytes and publishes a visible public site", async () => {
     const fake = startFakeComputer();
-    let testPage: Awaited<ReturnType<typeof openVerbOSPage>> | undefined;
+    let testPage: Awaited<ReturnType<typeof openWebMCPComputerPage>> | undefined;
     try {
-      testPage = await openVerbOSPage({ computerWorkerUrl: fake.origin });
+      testPage = await openWebMCPComputerPage({ activeHostedSession: true, computerWorkerUrl: fake.origin });
       await waitForWebMcpTools(testPage.page, BOOT_TOOL_NAMES);
       await cloudKernelScenario(testPage.page, fake);
     } finally {
-      if (testPage) await closeVerbOSPage(testPage);
+      if (testPage) await closeWebMCPComputerPage(testPage);
       await fake.stop();
     }
   });

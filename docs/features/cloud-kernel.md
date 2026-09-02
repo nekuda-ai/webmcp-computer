@@ -1,4 +1,4 @@
-# Cloud kernel + os_publish — cloudflare/computer (M10, NEK-837)
+# Cloud kernel + os_publish — cloudflare/computer
 
 ## Goal
 
@@ -31,10 +31,10 @@ Same shape as `workers/browser-session/` (own folder, wrangler.jsonc on the neku
 account, `workers_dev: true`, pure injected route handlers, rate-limit binding, CORS `*`,
 `bun run check` green). Needs `compatibility_flags: ["nodejs_compat"]`, a Durable Object
 binding + sqlite migration for the Workspace class, and an R2 bucket binding
-(`verbos-sites`) for publishing. No API-token secret at all — everything is native
+(`webmcp-computer-sites`) for publishing. No API-token secret at all — everything is native
 bindings.
 
-Durable Object `VerbosWorkspace` = `withWorkspace` mixin from `@cloudflare/computer`
+Durable Object `WebMCPComputerWorkspace` = `withWorkspace` mixin from `@cloudflare/computer`
 (see packages/computer README).
 
 **Verified SDK surface (0.2.1, inspected in `workers/computer/node_modules` — build against
@@ -79,8 +79,8 @@ Endpoints:
   (charter seam 3). All of `zenfs.promises` used by `fs.ts` (readFile, writeFile, mkdir,
   readdir, rm, rename, stat) must work, because seeds/fsck call zenfs directly.
 - Mount decision at boot, before anything touches the fs — settings live *in* the fs, so
-  the toggle is mirrored to `localStorage["verbos.cloud_kernel"]` (plus
-  `localStorage["verbos.workspace"]` for the wsid, minted on first enable):
+  the toggle is mirrored to `localStorage["webmcp_computer.cloud_kernel"]` (plus
+  `localStorage["webmcp_computer.workspace"]` for the wsid, minted on first enable):
   `configurePreferredBackend` order becomes: cloud (if flag set) → OPFS → memory. Cloud
   mount failure logs the existing "backend unavailable" pattern, falls through to OPFS,
   and surfaces a visible OS banner/toast so the human knows they're local.
@@ -105,7 +105,7 @@ Endpoints:
   their machine lives.
 - New tool `os_publish` — intent **transact** (`consequentialHint: true` — it makes
   content public; third transact tool after `fs_delete` and `kill`, taxonomy pins update). stableKey
-  `verbos.os_publish`. Input: `path?` (default `~/site`, must be an existing
+  `webmcp_computer.os_publish`. Input: `path?` (default `~/site`, must be an existing
   directory). Reads the tree via kernel fs (works in both modes), rejects non-text
   files by extension allowlist (html/css/js/json/svg/txt/md), enforces the same caps as
   the Worker, POSTs, returns `{ url, expiresInDays, files, bytes }`. Visible trace + a
@@ -175,7 +175,7 @@ two; e2e is the lead's gate). `workers/computer` `bun run check` green.
 - `bun install` in `workers/computer` needs the network — the lead preinstalls
   (including the pinned `@cloudflare/computer` — 0.2.1 at time of writing, pin exact)
   before dispatching the builder.
-- Deploy: create R2 bucket `verbos-sites`, then `wrangler deploy` (DO migration rides
+- Deploy: create R2 bucket `webmcp-computer-sites`, then `wrangler deploy` (DO migration rides
   along). No secrets needed. `VITE_COMPUTER_WORKER_URL` default set to the deployed
   workers.dev URL.
 - Configure the R2 bucket lifecycle to delete `sites/` objects after 30 days before

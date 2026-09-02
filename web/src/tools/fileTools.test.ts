@@ -136,7 +136,7 @@ describe("M2 filesystem tools", () => {
     await expectToolError(
       "fs_write",
       { path, content: "/x==", encoding: "base64" },
-      "verbos: invalid base64 content",
+      "webmcp-computer: invalid base64 content",
     );
     expect(await readFileBytes(path)).toEqual(new TextEncoder().encode("keep me"));
   });
@@ -150,7 +150,7 @@ describe("M2 filesystem tools", () => {
         old_string: "one",
         new_string: "three",
       },
-      "verbos: old_string matches 2 times in ~/site/edit.txt; pass replace_all or a longer anchor",
+      "webmcp-computer: old_string matches 2 times in ~/site/edit.txt; pass replace_all or a longer anchor",
     );
     expect(
       await invoke("fs_edit", {
@@ -183,7 +183,7 @@ describe("M2 filesystem tools", () => {
         old_string: "missing",
         new_string: "found",
       },
-      "verbos: old_string not found in ~/site/edit.txt",
+      "webmcp-computer: old_string not found in ~/site/edit.txt",
     );
   });
 
@@ -242,13 +242,13 @@ describe("M2 filesystem tools", () => {
 
   test("fs_mkdir and fs_move identify a missing destination directory", async () => {
     await expectToolError("fs_mkdir", { path: "~/site/a/b" },
-      "verbos: no such directory: ~/site/a",
+      "webmcp-computer: no such directory: ~/site/a",
     );
     await invoke("fs_write", { path: "~/site/source.txt", content: "source" });
     await expectToolError(
       "fs_move",
       { from: "~/site/source.txt", to: "~/nope/moved.txt" },
-      "verbos: no such directory: ~/nope",
+      "webmcp-computer: no such directory: ~/nope",
     );
   });
 
@@ -258,7 +258,7 @@ describe("M2 filesystem tools", () => {
     await expectToolError(
       "fs_move",
       { from: "~/site/source.txt", to: "~/site/destination.txt" },
-      "verbos: destination exists: ~/site/destination.txt",
+      "webmcp-computer: destination exists: ~/site/destination.txt",
     );
 
     expect(await invoke("fs_move", {
@@ -300,10 +300,10 @@ describe("M2 filesystem tools", () => {
     await expectToolError(
       "app_open",
       { appId: "editor", path: "~/site/image.png" },
-      "verbos: not a text file: ~/site/image.png (3 bytes)",
+      "webmcp-computer: not a text file: ~/site/image.png (3 bytes)",
     );
     await expectToolError("editor_open_file", { path: "~/site/image.png" },
-      "verbos: not a text file: ~/site/image.png (3 bytes)",
+      "webmcp-computer: not a text file: ~/site/image.png (3 bytes)",
     );
   });
 
@@ -332,7 +332,7 @@ describe("M2 filesystem tools", () => {
   test("fs_read rejects binary files and truncates large text", async () => {
     await invoke("fs_write", { path: "~/site/image.png", content: "PNG" });
     await expectToolError("fs_read", { path: "~/site/image.png" },
-      "verbos: not a text file: ~/site/image.png (3 bytes)",
+      "webmcp-computer: not a text file: ~/site/image.png (3 bytes)",
     );
 
     const large = "x".repeat(256 * 1_024 + 1);
@@ -357,7 +357,7 @@ describe("M2 filesystem tools", () => {
     await expectToolError(
       "fs_read",
       { path: "~/site/large.png", encoding: "base64" },
-      "verbos: base64 content exceeds 256 KB result limit: ~/site/large.png (196609 bytes)",
+      "webmcp-computer: base64 content exceeds 256 KB result limit: ~/site/large.png (196609 bytes)",
     );
   });
 
@@ -394,7 +394,7 @@ describe("M2 filesystem tools", () => {
 
   test("invalid paths fail with visible agent trace", async () => {
     await expectToolError("fs_read", { path: "~/../escape" },
-      "verbos: path escapes home",
+      "webmcp-computer: path escapes home",
     );
     expect(useKernelStore.getState().events.at(-1)).toEqual(
       expect.objectContaining({ source: "agent", verb: "fs_read", ok: false }),
@@ -403,7 +403,7 @@ describe("M2 filesystem tools", () => {
 
   test("fs_delete protects the home root", async () => {
     await expectToolError("fs_delete", { path: "~" },
-      "verbos: cannot delete home directory: ~",
+      "webmcp-computer: cannot delete home directory: ~",
     );
     expect(await invoke("fs_list", { path: "~" })).toEqual({
       path: "~",

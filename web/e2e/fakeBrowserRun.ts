@@ -23,7 +23,7 @@ export type FakeBrowserRun = {
 };
 
 const CORS = {
-  "Access-Control-Allow-Headers": "Content-Type",
+  "Access-Control-Allow-Headers": "Authorization, Content-Type",
   "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
   "Access-Control-Allow-Origin": "*",
 };
@@ -35,6 +35,21 @@ function json(body: unknown, status = 200): Response {
 function requireExpressionValue(expression: string, value: string, operation: string): void {
   if (!expression.includes(JSON.stringify(value))) {
     throw new Error(`Fake Browser Run ${operation} expression omitted ${JSON.stringify(value)}`);
+  }
+}
+
+function requireDocumentWebMcpExpression(expression: string, operation: "site_tools" | "site_call"): void {
+  if (!expression.includes("document.modelContext") || !expression.includes("api.getTools")) {
+    throw new Error(`Fake Browser Run ${operation} expression omitted document.modelContext.getTools`);
+  }
+  if (expression.includes("navigator.modelContext")) {
+    throw new Error(`Fake Browser Run ${operation} expression used obsolete navigator.modelContext`);
+  }
+  if (!expression.includes("JSON.parse")) {
+    throw new Error(`Fake Browser Run ${operation} expression omitted serialized-value normalization`);
+  }
+  if (operation === "site_call" && !expression.includes("api.executeTool(tool,")) {
+    throw new Error("Fake Browser Run site_call expression did not execute the resolved tool descriptor");
   }
 }
 
@@ -78,6 +93,12 @@ export function startFakeBrowserRun(): FakeBrowserRun {
       if (request.method === "OPTIONS") {
         return new Response(null, { status: 204, headers: CORS });
       }
+      if (
+        url.pathname.startsWith("/session") &&
+        !request.headers.get("Authorization")?.startsWith("Bearer ")
+      ) {
+        return json({ error: "unauthorized" }, 401);
+      }
       if (url.pathname === `/cdp/${SESSION_ID}`) {
         if (bunServer.upgrade(request, { data: { sessionId: SESSION_ID } })) return;
         return new Response("websocket upgrade failed", { status: 400, headers: CORS });
@@ -102,7 +123,7 @@ export function startFakeBrowserRun(): FakeBrowserRun {
           liveViewUrl: `http://127.0.0.1:${port}/rest-live`,
           tabWsUrl: `ws://127.0.0.1:${port}/cdp/${SESSION_ID}`,
           targetId: "fake-target",
-          keepAliveMs: 300_000,
+          keepAliveMs: 900_000,
         });
       }
       if (request.method === "POST" && url.pathname === `/session/${SESSION_ID}/refresh`) {
@@ -111,7 +132,7 @@ export function startFakeBrowserRun(): FakeBrowserRun {
           liveViewUrl: `http://127.0.0.1:${port}/rest-live-refresh`,
           tabWsUrl: `ws://127.0.0.1:${port}/cdp/${SESSION_ID}`,
           targetId: "fake-target",
-          keepAliveMs: 300_000,
+          keepAliveMs: 900_000,
         });
       }
       if (request.method === "DELETE" && url.pathname === `/session/${SESSION_ID}`) {
@@ -170,7 +191,7 @@ export function startFakeBrowserRun(): FakeBrowserRun {
         const expression = request.params?.expression;
         const expressionText = typeof expression === "string" ? expression : "";
         const operation = typeof expression === "string"
-          ? /^\/\*verbos:([^*]+)\*\//.exec(expressionText)?.[1]
+          ? /^\/\*webmcp-computer:([^*]+)\*\//.exec(expressionText)?.[1]
           : undefined;
         let value: unknown;
         switch (operation) {
@@ -200,6 +221,7 @@ export function startFakeBrowserRun(): FakeBrowserRun {
             value = true;
             break;
           case "site_tools":
+            requireDocumentWebMcpExpression(expressionText, "site_tools");
             value = {
               supported: true,
               tools: [{
@@ -215,13 +237,14 @@ export function startFakeBrowserRun(): FakeBrowserRun {
             };
             break;
           case "site_call":
+            requireDocumentWebMcpExpression(expressionText, "site_call");
             state.siteCallCount += 1;
             value = { echoed: "hello from inner site" };
             break;
           default:
             socket.send(JSON.stringify({
               id: request.id,
-              error: { code: -32602, message: "missing verbos evaluate marker" },
+              error: { code: -32602, message: "missing webmcp-computer evaluate marker" },
             }));
             return;
         }

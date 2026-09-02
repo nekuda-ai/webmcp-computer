@@ -27,7 +27,7 @@ export function Screensaver() {
     if (!stage || !logo) return undefined;
 
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      logo.style.transform = "translate(calc(50vw - 110px), calc(50vh - 38px))";
+      logo.style.transform = "translate(calc(50vw - 50%), calc(50vh - 50%))";
       return undefined;
     }
 
@@ -138,7 +138,7 @@ export function Screensaver() {
       className="screensaver"
       role="button"
       tabIndex={0}
-      aria-label="Wake VerbOS"
+      aria-label="Wake WebMCP Computer"
       onPointerDown={wake}
     >
       <div className="screensaver__pixel-grid" aria-hidden="true" />
@@ -153,14 +153,14 @@ export function Screensaver() {
           }}
           aria-hidden="true"
         >
-          verbOS
+          WebMCP Computer
         </span>
       ))}
       <div ref={logoRef} className="screensaver__logo">
-        <span className="wordmark">verbOS</span>
+        <span className="wordmark">WebMCP Computer</span>
       </div>
       <span className="screensaver__state mono">
-        VERBOS // STATE: IDLE — SCREENSAVER PID 1 — FS: {fileSystemStatus.toUpperCase()}
+        WEBMCP COMPUTER // STATE: IDLE — SCREENSAVER PID 1 — FS: {fileSystemStatus.toUpperCase()}
         {fileSystemStatus === "mounting" ? "…" : ""}
       </span>
       {fileSystemStatus === "failed" ? (

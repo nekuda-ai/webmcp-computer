@@ -2,17 +2,19 @@ import { configureSingle, fs as zenfs, InMemory } from "@zenfs/core";
 import { WebAccess } from "@zenfs/dom";
 import { useKernelStore } from "./store";
 import type { FileSystemBackend } from "./types";
-import { AGENT_SKILL_FILES } from "./manualContent";
+import { AGENT_SKILL_FILES, AGENT_SKILL_SHA256 } from "./manualContent";
 import {
   cloudKernelPreference,
   createCloudFileSystem,
   ensureWorkspaceId,
   resolveComputerWorkerUrl,
+  setCloudKernelPreference,
 } from "./cloudFs";
+import { hostedAuthorization, hostedSessionActive } from "./hostedSession";
 
 export const AURORA_BRIEF = `# Aurora Trails — landing page brief
 
-You are inside VerbOS. Build me a small landing page for **Aurora Trails**, a guided
+You are inside WebMCP Computer. Build me a small landing page for **Aurora Trails**, a guided
 night-hiking company in northern Norway. Put the site in \`~/site/\` and serve it when done
 (\`serve site/\` in the terminal).
 
@@ -35,7 +37,7 @@ export const PIZZA_DEMO_BRIEF = `# Slice/01 - pizza demo brief
 
 ## Goal
 
-Inside VerbOS, build a polished pizza-ordering page that humans and agents operate
+Inside WebMCP Computer, build a polished pizza-ordering page that humans and agents operate
 through one shared cart. This is a local demo: no network, payment, or real order.
 
 ## Build
@@ -69,147 +71,49 @@ structured JSON and visibly updates shared UI. Tools exist only while Preview is
 5. Leave Preview served for human handoff.
 `;
 
-const WELCOME_NOTE = `# Welcome to VerbOS
+const WELCOME_NOTE = `# Welcome to WebMCP Computer
 
 Your notes live here as Markdown files. Human and agent edits share the same filesystem.
 `;
-const SEED_MARKER = "/.verbos-m2-seeded";
-const M5_SEED_MARKER = "/.verbos-m5-seeded";
-const M7_SEED_MARKER = "/.verbos-m7-seeded";
-const M8_SEED_MARKER = "/.verbos-m8-seeded";
-const M9_SEED_MARKER = "/.verbos-m9-seeded";
-const M9_BROWSER_SEED_MARKER = "/.verbos-m9-browser-seeded";
-const M10_CLOUD_SEED_MARKER = "/.verbos-m10-cloud-seeded";
-const NEK_852_SEED_MARKER = "/.verbos-nek-852-seeded";
-const CONTEXT_MENUS_SEED_MARKER = "/.verbos-context-menus-seeded";
-const CONTEXT_MENUS_FIXES_SEED_MARKER = "/.verbos-context-menus-fixes-seeded";
-const CONTEXT_MENUS_FIXES_2_SEED_MARKER = "/.verbos-context-menus-fixes-2-seeded";
-const NEK850_CLOUD_EXEC_SEED_MARKER = "/.verbos-nek-850-cloud-exec-seeded";
-const NEK850_FIXES_SEED_MARKER = "/.verbos-nek-850-fixes-seeded";
-const NEK850_TRANSACT_SEED_MARKER = "/.verbos-nek-850-transact-seeded";
-const EXPANSION_MERGE_SEED_MARKER = "/.verbos-webmcp-expansion-merge-seeded";
-const PIZZA_DEMO_SEED_MARKER = "/.verbos-pizza-demo-seeded";
-export const M7_AGENT_SKILL_SHA256 = {
-  "conventions.md": "a58d9bbaa633bb673c0d5b5d7f15a62550ec3d5d9774f9e458eee62545206981",
-  "terminal.md": "23540bf387b02a3443d58803ce50fe9b9a86943ec1df15a109426f6a9e804526",
-} as const;
-export const M8_AGENT_SKILL_SHA256 = {
-  "terminal.md": "e95623ba3711cc70379bf69f0cbb4eb894c1b0e5c0600894df47d71a3f6ae798",
-} as const;
-export const M9_BROWSER_AGENT_SKILL_SHA256 = {
-  "README.md": "1071643cd3d990922650e56b08609c07fead0c362e3376a236b714e457650763",
-  "windows.md": "b701f8204ffff831f36d74b217022c488bab368e55c8ae4003b55a718dd883bb",
-} as const;
-export const M10_CLOUD_AGENT_SKILL_SHA256 = {
-  "README.md": "4bc26504589cc14b3330ecaa9d1b90ae9ee11a69274c3ad33199ce1af307a30d",
-  "conventions.md": "10f945744725d80df55511a912268c16de86a11e07f0cfef05c47502f48bf90a",
-  "filesystem.md": "7202b7b8bdf3e75376bce40f6408d428fd425ae8c4b32650f40af2802e4951b6",
-} as const;
-export const NEK_852_AGENT_SKILL_SHA256 = {
-  "README.md": "1259e1fd4526eae32db91b0c3affb562cd3d108daf65f253a1fa34c1d921be0b",
-  "windows.md": "912a53344e613a2e4dfa405bef916083342e264d54d8fff0f7d725dd1c6cfe14",
-} as const;
-export const CONTEXT_MENUS_AGENT_SKILL_SHA256 = {
-  "windows.md": "912a53344e613a2e4dfa405bef916083342e264d54d8fff0f7d725dd1c6cfe14",
-} as const;
-export const CONTEXT_MENUS_FIXES_AGENT_SKILL_SHA256 = {
-  "windows.md": "23747daceb02541e1513ec9b7da80c9783b223de3d600043dc66afb1d8fabfb7",
-} as const;
-export const CONTEXT_MENUS_FIXES_2_AGENT_SKILL_SHA256 = {
-  "windows.md": "7ba030736a76531f87e290d826d99bc70152b63b66116c9157b44e5abb46f28b",
-} as const;
-export const NEK850_CLOUD_EXEC_AGENT_SKILL_SHA256 = {
-  "README.md": "1259e1fd4526eae32db91b0c3affb562cd3d108daf65f253a1fa34c1d921be0b",
-  "cloud.md": "146c762df05862b58bd07c88109228a676c3275f443117d75c3bd61740fa92d7",
-} as const;
-export const NEK850_FIXES_AGENT_SKILL_SHA256 = {
-  "cloud.md": "30ddbeaaf6023653f0b6819b808b3ecef7e4b73d7893d76918aa18b291449427",
-  "terminal.md": "ffb37ad856c26cebf506fb26911933f33a90dcc36b53795e357c9e12063c4d67",
-} as const;
-export const NEK850_TRANSACT_AGENT_SKILL_SHA256 = {
-  "conventions.md": "a97add3b56113335c03d69c6b8a07461864dad7613f42dbb1f9eb0fcb56a9939",
-} as const;
-// Reconciliation for dev profiles seeded on one side of the NEK-850/852/853
-// sibling merges: each branch's final manuals rewrite to the merged content.
-export const EXPANSION_MERGE_852_SHA256 = {
-  "README.md": "807500a99d0011503ffd2394d0d9a7bc19548b2aa62d4d6835faf38d637fd95f",
-  "windows.md": "424b03b439db115aa2182718b3dc1e8268f768806f42865e4341edba5d6ede92",
-} as const;
-export const EXPANSION_MERGE_853_SHA256 = {
-  "windows.md": "f61a81f66b7e41285cc652a120c59961325ebceb771c3edc6207bc7c28703ad2",
-} as const;
-export const EXPANSION_MERGE_850_SHA256 = {
-  "README.md": "5f083b9b1018ea3545dc1701f3189151fcfb48fe8c6bfab56338a0818e0728a1",
-} as const;
+const SEED_MARKER = "/.webmcp-computer-seeded";
+const AGENT_SKILL_SEED_MARKER_PREFIX = "/.webmcp-computer-skills-";
 
-const AGENT_SKILL_SEED_STAGES = [
-  { marker: M5_SEED_MARKER, label: "M5" },
-  { marker: M7_SEED_MARKER, label: "M7" },
-  { marker: M8_SEED_MARKER, label: "M8", previousHashes: M7_AGENT_SKILL_SHA256 },
-  { marker: M9_SEED_MARKER, label: "M9", previousHashes: M8_AGENT_SKILL_SHA256 },
-  {
-    marker: M9_BROWSER_SEED_MARKER,
-    label: "M9-browser",
-    previousHashes: M9_BROWSER_AGENT_SKILL_SHA256,
-    newFiles: ["browser.md"],
-  },
-  {
-    marker: M10_CLOUD_SEED_MARKER,
-    label: "M10-cloud",
-    previousHashes: M10_CLOUD_AGENT_SKILL_SHA256,
-    newFiles: ["cloud.md"],
-  },
-  {
-    marker: NEK_852_SEED_MARKER,
-    label: "NEK-852",
-    previousHashes: NEK_852_AGENT_SKILL_SHA256,
-  },
-  {
-    marker: CONTEXT_MENUS_SEED_MARKER,
-    label: "context-menus",
-    previousHashes: CONTEXT_MENUS_AGENT_SKILL_SHA256,
-  },
-  {
-    marker: CONTEXT_MENUS_FIXES_SEED_MARKER,
-    label: "context-menus-fixes",
-    previousHashes: CONTEXT_MENUS_FIXES_AGENT_SKILL_SHA256,
-  },
-  {
-    marker: CONTEXT_MENUS_FIXES_2_SEED_MARKER,
-    label: "context-menus-fixes-2",
-    previousHashes: CONTEXT_MENUS_FIXES_2_AGENT_SKILL_SHA256,
-  },
-  {
-    marker: NEK850_CLOUD_EXEC_SEED_MARKER,
-    label: "NEK-850-cloud-exec",
-    previousHashes: NEK850_CLOUD_EXEC_AGENT_SKILL_SHA256,
-  },
-  {
-    marker: NEK850_FIXES_SEED_MARKER,
-    label: "NEK-850-fixes",
-    previousHashes: NEK850_FIXES_AGENT_SKILL_SHA256,
-  },
-  {
-    marker: NEK850_TRANSACT_SEED_MARKER,
-    label: "NEK-850-transact",
-    previousHashes: NEK850_TRANSACT_AGENT_SKILL_SHA256,
-  },
-  {
-    marker: EXPANSION_MERGE_SEED_MARKER,
-    label: "webmcp-expansion-merge",
-    previousHashes: EXPANSION_MERGE_852_SHA256,
-  },
-  {
-    marker: `${EXPANSION_MERGE_SEED_MARKER}-853`,
-    label: "webmcp-expansion-merge-853",
-    previousHashes: EXPANSION_MERGE_853_SHA256,
-  },
-  {
-    marker: `${EXPANSION_MERGE_SEED_MARKER}-850`,
-    label: "webmcp-expansion-merge-850",
-    previousHashes: EXPANSION_MERGE_850_SHA256,
-  },
-] as const;
+// Every manual hash this product has ever shipped. A visitor's ~/skills file that still
+// matches one of them was never edited, so it is replaced by the current manual; any other
+// content is a visitor edit and is left alone. When the manual changes, append the outgoing
+// AGENT_SKILL_SHA256 values here.
+export const LEGACY_AGENT_SKILL_SHA256: ReadonlySet<string> = new Set([
+  "1071643cd3d990922650e56b08609c07fead0c362e3376a236b714e457650763",
+  "10f945744725d80df55511a912268c16de86a11e07f0cfef05c47502f48bf90a",
+  "1259e1fd4526eae32db91b0c3affb562cd3d108daf65f253a1fa34c1d921be0b",
+  "146c762df05862b58bd07c88109228a676c3275f443117d75c3bd61740fa92d7",
+  "23540bf387b02a3443d58803ce50fe9b9a86943ec1df15a109426f6a9e804526",
+  "23747daceb02541e1513ec9b7da80c9783b223de3d600043dc66afb1d8fabfb7",
+  "30ddbeaaf6023653f0b6819b808b3ecef7e4b73d7893d76918aa18b291449427",
+  "424b03b439db115aa2182718b3dc1e8268f768806f42865e4341edba5d6ede92",
+  "4bc26504589cc14b3330ecaa9d1b90ae9ee11a69274c3ad33199ce1af307a30d",
+  "59c11bf05bac00ab193fcaff85dfe9b6d5df9e35b2ed3c7479cbe8a195f67bb6",
+  "5f083b9b1018ea3545dc1701f3189151fcfb48fe8c6bfab56338a0818e0728a1",
+  "6dc336a39b8b7ed36123b71087054250d1b1f9495b1f8364de3f53ed55e78657",
+  "7202b7b8bdf3e75376bce40f6408d428fd425ae8c4b32650f40af2802e4951b6",
+  "7ba030736a76531f87e290d826d99bc70152b63b66116c9157b44e5abb46f28b",
+  "807500a99d0011503ffd2394d0d9a7bc19548b2aa62d4d6835faf38d637fd95f",
+  "912a53344e613a2e4dfa405bef916083342e264d54d8fff0f7d725dd1c6cfe14",
+  "a58d9bbaa633bb673c0d5b5d7f15a62550ec3d5d9774f9e458eee62545206981",
+  "a97add3b56113335c03d69c6b8a07461864dad7613f42dbb1f9eb0fcb56a9939",
+  "b701f8204ffff831f36d74b217022c488bab368e55c8ae4003b55a718dd883bb",
+  "bce24ac1da8da0c0d90985d6e7ba1a353bc30d8df3677ed58ffd635d943de819",
+  "c0fdf102caffb42fc4070fcddb2d6cd8518ff95164f4b071c2148da53d32b0af",
+  "d2bef8d10d3e51f2e652b2a0756f0ab0d4c2f193f6d65df21364f0825ff40625",
+  "d4b4c50272f60ff68b2b9862c7e53d180717ac1a1c55aaba119a89b5395a2bbe",
+  "e95623ba3711cc70379bf69f0cbb4eb894c1b0e5c0600894df47d71a3f6ae798",
+  "eff251ae9e80dee5988116161838d6bf97ffa9e9f16861614bb7249803eb0d60",
+  "eff2c30a8aabdfe5661d457085526acbabce4bf15d4c621cc7210eef27330c3d",
+  "f5512a38e082e98611a53af47912ebf5fc362e06b38d4d6426e390bc27f49e0f",
+  "f61a81f66b7e41285cc652a120c59961325ebceb771c3edc6207bc7c28703ad2",
+  "fdbc019861e6129beaa15c5a52d1411e50f47ffd33174d809fbd5f9573c05cd9",
+  "ffb37ad856c26cebf506fb26911933f33a90dcc36b53795e357c9e12063c4d67",
+]);
 
 export type FileKind = "file" | "directory";
 
@@ -237,7 +141,7 @@ const mutationChains = new Map<string, Promise<void>>();
 let ready: Promise<FileSystemBackend> | undefined;
 let activeBackend: FileSystemBackend | undefined;
 
-export const FILE_SYSTEM_WRITE_LOCK = "verbos-filesystem-write";
+export const FILE_SYSTEM_WRITE_LOCK = "webmcp-computer-filesystem-write";
 
 type LockRequester = Pick<LockManager, "request">;
 
@@ -293,11 +197,11 @@ let fsckTempId = 0;
 function fsckTemporaryPath(path: string): string {
   const slash = path.lastIndexOf("/");
   const parent = slash <= 0 ? "" : path.slice(0, slash);
-  return `${parent}/.verbos-fsck-${++fsckTempId}`;
+  return `${parent}/.webmcp-computer-fsck-${++fsckTempId}`;
 }
 
 function staleTemporaryName(name: string): boolean {
-  return /^\.verbos-(?:write|fsck)-/.test(name);
+  return /^\.webmcp-computer-(?:write|fsck)-/.test(name);
 }
 
 async function checkNode(
@@ -442,14 +346,14 @@ function fsError(error: unknown, path: string): Error {
     ? (error as { path: string }).path
     : path;
   const displayedPath = errorPath.startsWith("/") ? `~${errorPath}` : errorPath;
-  if (message) return new FileSystemError(`verbos: ${message}: ${displayedPath}`, code);
+  if (message) return new FileSystemError(`webmcp-computer: ${message}: ${displayedPath}`, code);
   if (error instanceof Error) {
-    const detail = error.message.startsWith("verbos:")
+    const detail = error.message.startsWith("webmcp-computer:")
       ? error.message
-      : `verbos: filesystem error: ${error.message}`;
+      : `webmcp-computer: filesystem error: ${error.message}`;
     return new FileSystemError(detail, code);
   }
-  return new FileSystemError(`verbos: filesystem error: ${String(error)}`, code);
+  return new FileSystemError(`webmcp-computer: filesystem error: ${String(error)}`, code);
 }
 
 async function serializeMutation<T>(
@@ -486,7 +390,7 @@ function emitChange(change: FileSystemChange): void {
     try {
       listener(change);
     } catch (error) {
-      console.error("VerbOS filesystem watcher failed", error);
+      console.error("WebMCP Computer filesystem watcher failed", error);
     }
   }
 }
@@ -498,62 +402,40 @@ export function notifyFileSystemChange(
   emitChange({ operation: "write", path: normalizePath(path), source });
 }
 
-async function seedFileSystemUnlocked(): Promise<void> {
-  let m2Seeded = false;
+async function markerExists(path: string): Promise<boolean> {
   try {
-    await zenfs.promises.stat(SEED_MARKER);
-    m2Seeded = true;
+    await zenfs.promises.stat(path);
+    return true;
   } catch (error) {
     if (!isMissing(error)) throw error;
+    return false;
   }
+}
 
-  if (!m2Seeded) {
+/** Marker written once the current manual bundle has been seeded into ~/skills. */
+export async function agentSkillSeedMarkerPath(): Promise<string> {
+  const bundle = await sha256(Object.values(AGENT_SKILL_SHA256).join("\n"));
+  return `${AGENT_SKILL_SEED_MARKER_PREFIX}${bundle.slice(0, 16)}`;
+}
+
+async function seedFileSystemUnlocked(): Promise<void> {
+  if (!(await markerExists(SEED_MARKER))) {
     await zenfs.promises.mkdir("/desktop", { recursive: true });
     await zenfs.promises.mkdir("/site", { recursive: true });
     await zenfs.promises.mkdir("/notes", { recursive: true });
     await writeSeedFileIfAbsent("/desktop/brief.md", AURORA_BRIEF);
-    await writeSeedFileIfAbsent("/notes/welcome.md", WELCOME_NOTE);
-    await zenfs.promises.writeFile(SEED_MARKER, "M2\n", "utf8");
-  }
-
-  try {
-    await zenfs.promises.stat(PIZZA_DEMO_SEED_MARKER);
-  } catch (error) {
-    if (!isMissing(error)) throw error;
-    await zenfs.promises.mkdir("/desktop", { recursive: true });
     await writeSeedFileIfAbsent("/desktop/pizza-demo.md", PIZZA_DEMO_BRIEF);
-    await zenfs.promises.writeFile(PIZZA_DEMO_SEED_MARKER, "pizza-demo\n", "utf8");
+    await writeSeedFileIfAbsent("/notes/welcome.md", WELCOME_NOTE);
+    await zenfs.promises.writeFile(SEED_MARKER, "seeded\n", "utf8");
   }
 
-  for (const stage of AGENT_SKILL_SEED_STAGES) {
-    try {
-      await zenfs.promises.stat(stage.marker);
-      continue;
-    } catch (error) {
-      if (!isMissing(error)) throw error;
-    }
-
-    await zenfs.promises.mkdir("/skills", { recursive: true });
-    if ("previousHashes" in stage) {
-      for (const name of Object.keys(stage.previousHashes) as Array<keyof typeof stage.previousHashes>) {
-        await migrateSeedFileIfUnchanged(
-          `/skills/${name}`,
-          stage.previousHashes[name],
-          AGENT_SKILL_FILES[name],
-        );
-      }
-      if ("newFiles" in stage) {
-        for (const name of stage.newFiles) {
-          await writeSeedFileIfAbsent(`/skills/${name}`, AGENT_SKILL_FILES[name]);
-        }
-      }
-    } else {
-      for (const [name, content] of Object.entries(AGENT_SKILL_FILES)) {
-        await writeSeedFileIfAbsent(`/skills/${name}`, content);
-      }
-    }
-    await zenfs.promises.writeFile(stage.marker, `${stage.label}\n`, "utf8");
+  const skillsMarker = await agentSkillSeedMarkerPath();
+  if (await markerExists(skillsMarker)) return;
+  await zenfs.promises.mkdir("/skills", { recursive: true });
+  for (const [name, content] of Object.entries(AGENT_SKILL_FILES)) {
+    await migrateSeedFileIfUnchanged(`/skills/${name}`, content);
   }
+  await zenfs.promises.writeFile(skillsMarker, `${Object.keys(AGENT_SKILL_FILES).length} manuals\n`, "utf8");
 }
 
 export async function seedFileSystem(): Promise<void> {
@@ -574,11 +456,7 @@ async function sha256(content: string): Promise<string> {
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-async function migrateSeedFileIfUnchanged(
-  path: string,
-  previousHash: string,
-  content: string,
-): Promise<void> {
+async function migrateSeedFileIfUnchanged(path: string, content: string): Promise<void> {
   let current: string;
   try {
     current = await zenfs.promises.readFile(path, "utf8");
@@ -587,13 +465,14 @@ async function migrateSeedFileIfUnchanged(
     await zenfs.promises.writeFile(path, content, "utf8");
     return;
   }
-  if (await sha256(current) === previousHash) {
+  if (current === content) return;
+  if (LEGACY_AGENT_SKILL_SHA256.has(await sha256(current))) {
     await zenfs.promises.writeFile(path, content, "utf8");
   }
 }
 
 async function configureMemory(): Promise<void> {
-  await configureSingle({ backend: InMemory, label: "verbos-memory" });
+  await configureSingle({ backend: InMemory, label: "webmcp-computer-memory" });
 }
 
 export const CLOUD_MOUNT_TIMEOUT_MS = 8_000;
@@ -602,7 +481,7 @@ async function withDeadline<T>(task: () => Promise<T>, timeoutMs: number): Promi
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_resolve, reject) => {
     timer = setTimeout(() => {
-      reject(new Error(`verbos: cloud filesystem mount timed out after ${timeoutMs}ms`));
+      reject(new Error(`webmcp-computer: cloud filesystem mount timed out after ${timeoutMs}ms`));
     }, timeoutMs);
   });
   try {
@@ -624,7 +503,7 @@ export async function selectFileSystemBackend(
       await withDeadline(mountCloud, cloudMountTimeoutMs);
       return "cloud";
     } catch (error) {
-      console.warn("VerbOS cloud backend unavailable; using local filesystem", error);
+      console.warn("WebMCP Computer cloud backend unavailable; using local filesystem", error);
       onCloudUnavailable?.(error);
     }
   }
@@ -632,7 +511,7 @@ export async function selectFileSystemBackend(
     await mountOpfs();
     return "opfs";
   } catch (error) {
-    console.warn("VerbOS OPFS unavailable; using in-memory filesystem", error);
+    console.warn("WebMCP Computer OPFS unavailable; using in-memory filesystem", error);
     await mountMemory();
     return "memory";
   }
@@ -642,9 +521,10 @@ async function configurePreferredBackend(): Promise<FileSystemBackend> {
   const mountWarnings: string[] = [];
   let prefersCloud = false;
   try {
-    prefersCloud = cloudKernelPreference();
+    prefersCloud = hostedSessionActive();
+    setCloudKernelPreference(prefersCloud);
   } catch {
-    prefersCloud = false;
+    prefersCloud = cloudKernelPreference();
   }
   const backend = await selectFileSystemBackend(
     async () => {
@@ -666,6 +546,7 @@ async function configurePreferredBackend(): Promise<FileSystemBackend> {
             fetch: globalThis.fetch.bind(globalThis),
             workerBaseUrl: resolveComputerWorkerUrl(),
             workspaceId: ensureWorkspaceId(),
+            authorization: () => hostedAuthorization("computer"),
           });
           await configureSingle(cloud);
         }
@@ -683,9 +564,9 @@ async function configurePreferredBackend(): Promise<FileSystemBackend> {
     warnings: [...mountWarnings, ...check.warnings],
   });
   if (check.repaired.length > 0) {
-    console.warn(`VerbOS filesystem repaired: ${check.repaired.join(", ")}`);
+    console.warn(`WebMCP Computer filesystem repaired: ${check.repaired.join(", ")}`);
   }
-  for (const warning of check.warnings) console.error(`VerbOS filesystem check: ${warning}`);
+  for (const warning of check.warnings) console.error(`WebMCP Computer filesystem check: ${warning}`);
   return backend;
 }
 
@@ -712,16 +593,16 @@ function ensureReady(): void {
     activeBackend === undefined ||
     useKernelStore.getState().fileSystemStatus !== "ready"
   ) {
-    throw new Error("verbos: filesystem not ready");
+    throw new Error("webmcp-computer: filesystem not ready");
   }
 }
 
 export function bootFileSystem(): Promise<FileSystemBackend> {
   const init = (
     globalThis as typeof globalThis & {
-      __VERBOS_INIT__?: { bootFileSystem?: () => Promise<FileSystemBackend> };
+      __WEBMCP_COMPUTER_INIT__?: { bootFileSystem?: () => Promise<FileSystemBackend> };
     }
-  ).__VERBOS_INIT__;
+  ).__WEBMCP_COMPUTER_INIT__;
   return ready ?? trackBoot(init?.bootFileSystem ?? configurePreferredBackend);
 }
 
@@ -744,15 +625,15 @@ export function fileSystemBackend(): FileSystemBackend | undefined {
 
 export function normalizePath(path: string): string {
   if (typeof path !== "string" || (path !== "~" && !path.startsWith("~/"))) {
-    throw new Error(`verbos: path must start with ~/: ${String(path)}`);
+    throw new Error(`webmcp-computer: path must start with ~/: ${String(path)}`);
   }
-  if (path.includes("\0")) throw new Error(`verbos: invalid path: ${path}`);
+  if (path.includes("\0")) throw new Error(`webmcp-computer: invalid path: ${path}`);
 
   const normalized: string[] = [];
   for (const segment of path.slice(path === "~" ? 1 : 2).split("/")) {
     if (segment === "" || segment === ".") continue;
     if (segment === "..") {
-      if (normalized.length === 0) throw new Error(`verbos: path escapes home: ${path}`);
+      if (normalized.length === 0) throw new Error(`webmcp-computer: path escapes home: ${path}`);
       normalized.pop();
       continue;
     }
@@ -764,7 +645,7 @@ export function normalizePath(path: string): string {
 export function joinPath(directory: string, name: string): string {
   const parent = normalizePath(directory);
   if (name === "" || name === "." || name === ".." || name.includes("/") || name.includes("\0")) {
-    throw new Error(`verbos: invalid file name: ${name}`);
+    throw new Error(`webmcp-computer: invalid file name: ${name}`);
   }
   return normalizePath(`${parent}/${name}`);
 }
@@ -785,10 +666,10 @@ export async function readFile(path: string): Promise<string> {
   const normalized = normalizePath(path);
   try {
     const result = await zenfs.promises.stat(realPath(normalized));
-    if (result.isDirectory()) throw new Error(`verbos: is a directory: ${normalized}`);
+    if (result.isDirectory()) throw new Error(`webmcp-computer: is a directory: ${normalized}`);
     return await zenfs.promises.readFile(realPath(normalized), "utf8");
   } catch (error) {
-    if (error instanceof Error && error.message.startsWith("verbos:")) throw error;
+    if (error instanceof Error && error.message.startsWith("webmcp-computer:")) throw error;
     throw fsError(error, normalized);
   }
 }
@@ -797,11 +678,11 @@ export async function readFilePrefix(path: string, maxBytes: number): Promise<st
   ensureReady();
   const normalized = normalizePath(path);
   if (!Number.isInteger(maxBytes) || maxBytes < 1) {
-    throw new Error("verbos: maxBytes must be a positive integer");
+    throw new Error("webmcp-computer: maxBytes must be a positive integer");
   }
   try {
     const result = await zenfs.promises.stat(realPath(normalized));
-    if (result.isDirectory()) throw new Error(`verbos: is a directory: ${normalized}`);
+    if (result.isDirectory()) throw new Error(`webmcp-computer: is a directory: ${normalized}`);
     const length = Math.min(result.size, maxBytes);
     const buffer = new Uint8Array(length);
     const handle = await zenfs.promises.open(realPath(normalized), "r");
@@ -812,7 +693,7 @@ export async function readFilePrefix(path: string, maxBytes: number): Promise<st
       await handle.close();
     }
   } catch (error) {
-    if (error instanceof Error && error.message.startsWith("verbos:")) throw error;
+    if (error instanceof Error && error.message.startsWith("webmcp-computer:")) throw error;
     throw fsError(error, normalized);
   }
 }
@@ -822,10 +703,10 @@ export async function readFileBytes(path: string): Promise<Uint8Array> {
   const normalized = normalizePath(path);
   try {
     const result = await zenfs.promises.stat(realPath(normalized));
-    if (result.isDirectory()) throw new Error(`verbos: is a directory: ${normalized}`);
+    if (result.isDirectory()) throw new Error(`webmcp-computer: is a directory: ${normalized}`);
     return Uint8Array.from(await zenfs.promises.readFile(realPath(normalized)));
   } catch (error) {
-    if (error instanceof Error && error.message.startsWith("verbos:")) throw error;
+    if (error instanceof Error && error.message.startsWith("webmcp-computer:")) throw error;
     throw fsError(error, normalized);
   }
 }
@@ -833,10 +714,10 @@ export async function readFileBytes(path: string): Promise<Uint8Array> {
 async function assertWritableFileTarget(path: string): Promise<void> {
   try {
     const target = await zenfs.promises.stat(realPath(path));
-    if (target.isDirectory()) throw new Error(`verbos: is a directory: ${path}`);
+    if (target.isDirectory()) throw new Error(`webmcp-computer: is a directory: ${path}`);
     return;
   } catch (error) {
-    if (error instanceof Error && error.message.startsWith("verbos:")) throw error;
+    if (error instanceof Error && error.message.startsWith("webmcp-computer:")) throw error;
     if (!isMissing(error)) throw fsError(error, path);
   }
 
@@ -848,7 +729,7 @@ function temporaryWritePath(path: string): string {
   const token = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
     ? crypto.randomUUID()
     : `${Date.now()}-${++fsckTempId}`;
-  return `${parent === "/" ? "" : parent}/.verbos-write-${token}`;
+  return `${parent === "/" ? "" : parent}/.webmcp-computer-write-${token}`;
 }
 
 async function replaceFileAtomically(
@@ -883,10 +764,10 @@ async function assertDirectoryParent(path: string): Promise<void> {
   const parent = parentPath(path);
   try {
     const targetParent = await zenfs.promises.stat(realPath(parent));
-    if (!targetParent.isDirectory()) throw new Error(`verbos: not a directory: ${parent}`);
+    if (!targetParent.isDirectory()) throw new Error(`webmcp-computer: not a directory: ${parent}`);
   } catch (error) {
-    if (error instanceof Error && error.message.startsWith("verbos:")) throw error;
-    if (isMissing(error)) throw new Error(`verbos: no such directory: ${parent}`);
+    if (error instanceof Error && error.message.startsWith("webmcp-computer:")) throw error;
+    if (isMissing(error)) throw new Error(`webmcp-computer: no such directory: ${parent}`);
     throw fsError(error, parent);
   }
 }
@@ -929,7 +810,7 @@ export async function createFile(
       await writeFileUnlocked(normalized, content, source);
       return;
     }
-    throw new FileSystemError(`verbos: file exists: ${normalized}`, "EEXIST");
+    throw new FileSystemError(`webmcp-computer: file exists: ${normalized}`, "EEXIST");
   });
 }
 
@@ -966,7 +847,7 @@ export async function touchFile(
       await writeFileUnlocked(normalized, "", source);
       return;
     }
-    if (target.isDirectory()) throw new Error(`verbos: is a directory: ${normalized}`);
+    if (target.isDirectory()) throw new Error(`webmcp-computer: is a directory: ${normalized}`);
     try {
       await zenfs.promises.utimes(realPath(normalized), modifiedAt, modifiedAt);
       emitChange({ operation: "write", path: normalized, source });
@@ -1015,7 +896,7 @@ export async function ls(path: string): Promise<FileEntry[]> {
     const names = await zenfs.promises.readdir(realPath(normalized));
     const entries = await Promise.all(
       names
-        .filter((name): name is string => typeof name === "string" && !name.startsWith(".verbos-"))
+        .filter((name): name is string => typeof name === "string" && !name.startsWith(".webmcp-computer-"))
         .map(async (name) => {
           const childPath = joinPath(normalized, name);
           const childStat = await zenfs.promises.stat(realPath(childPath));
@@ -1034,7 +915,7 @@ export async function ls(path: string): Promise<FileEntry[]> {
     });
   } catch (error) {
     if (isMissing(error)) {
-      throw new FileSystemError(`verbos: no such directory: ${normalized}`, "ENOENT");
+      throw new FileSystemError(`webmcp-computer: no such directory: ${normalized}`, "ENOENT");
     }
     throw fsError(error, normalized);
   }
@@ -1049,9 +930,9 @@ export async function mkdir(
   await serializeMutation([normalized], async () => {
     try {
       const target = await zenfs.promises.stat(realPath(normalized));
-      if (!target.isDirectory()) throw new Error(`verbos: is a file: ${normalized}`);
+      if (!target.isDirectory()) throw new Error(`webmcp-computer: is a file: ${normalized}`);
     } catch (error) {
-      if (error instanceof Error && error.message.startsWith("verbos:")) throw error;
+      if (error instanceof Error && error.message.startsWith("webmcp-computer:")) throw error;
       if (!isMissing(error)) throw fsError(error, normalized);
       await assertDirectoryParent(normalized);
       try {
@@ -1062,7 +943,7 @@ export async function mkdir(
         throw fsError(mkdirError, normalized);
       }
     }
-    throw new Error(`verbos: file exists: ${normalized}`);
+    throw new Error(`webmcp-computer: file exists: ${normalized}`);
   });
 }
 
@@ -1072,7 +953,7 @@ export async function rm(
 ): Promise<void> {
   ensureReady();
   const normalized = normalizePath(path);
-  if (normalized === "~") throw new Error("verbos: cannot delete home directory: ~");
+  if (normalized === "~") throw new Error("webmcp-computer: cannot delete home directory: ~");
   await serializeMutation([normalized], async () => {
     try {
       await zenfs.promises.rm(realPath(normalized), { recursive: true });
@@ -1092,9 +973,9 @@ export async function mv(
   ensureReady();
   const normalizedFrom = normalizePath(from);
   const normalizedTo = normalizePath(to);
-  if (normalizedFrom === "~") throw new Error("verbos: cannot move home directory: ~");
+  if (normalizedFrom === "~") throw new Error("webmcp-computer: cannot move home directory: ~");
   if (normalizedTo === normalizedFrom || normalizedTo.startsWith(`${normalizedFrom}/`)) {
-    throw new Error(`verbos: cannot move ${normalizedFrom} into itself: ${normalizedTo}`);
+    throw new Error(`webmcp-computer: cannot move ${normalizedFrom} into itself: ${normalizedTo}`);
   }
   await serializeMutation([normalizedFrom, normalizedTo], async () => {
     try {
@@ -1110,7 +991,7 @@ export async function mv(
       if (!isMissing(error)) throw fsError(error, normalizedTo);
     }
     if (destinationExists && !overwrite) {
-      throw new Error(`verbos: destination exists: ${normalizedTo}`);
+      throw new Error(`webmcp-computer: destination exists: ${normalizedTo}`);
     }
     await assertDirectoryParent(normalizedTo);
     try {

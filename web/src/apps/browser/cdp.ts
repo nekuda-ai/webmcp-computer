@@ -34,7 +34,7 @@ export type CdpClientOptions = {
 };
 
 const DEFAULT_COMMAND_TIMEOUT_MS = 10_000;
-const EVALUATE_MARKER = /^\/\*verbos:(identity|read|click|type|site_tools|site_call)\*\//;
+const EVALUATE_MARKER = /^\/\*webmcp-computer:(identity|read|click|type|site_tools|site_call)\*\//;
 
 function errorMessage(value: unknown): string {
   return value instanceof Error ? value.message : String(value);
@@ -77,7 +77,7 @@ export class CdpClient {
       this.#pending.delete(message.id);
       clearTimeout(pending.timeout);
       if (message.error) {
-        pending.reject(new Error(`verbos: browser command failed: ${message.error.message ?? message.error.code ?? "unknown error"}`));
+        pending.reject(new Error(`webmcp-computer: browser command failed: ${message.error.message ?? message.error.code ?? "unknown error"}`));
       } else {
         pending.resolve(message.result);
       }
@@ -100,7 +100,7 @@ export class CdpClient {
   #settleConnection(state: "closed" | "error", reason: string): void {
     if (this.#settled) return;
     this.#settled = true;
-    const error = new Error(`verbos: ${reason}`);
+    const error = new Error(`webmcp-computer: ${reason}`);
     for (const pending of this.#pending.values()) {
       clearTimeout(pending.timeout);
       pending.reject(error);
@@ -111,19 +111,19 @@ export class CdpClient {
 
   send<T = unknown>(method: string, params: Record<string, unknown> = {}): Promise<T> {
     if (this.#settled || this.#socket.readyState !== WebSocket.OPEN) {
-      return Promise.reject(new Error("verbos: browser connection is not open"));
+      return Promise.reject(new Error("webmcp-computer: browser connection is not open"));
     }
     if (method === "Runtime.evaluate") {
       const expression = params.expression;
       if (typeof expression !== "string" || !EVALUATE_MARKER.test(expression)) {
-        return Promise.reject(new Error("verbos: browser evaluate expression is missing its operation marker"));
+        return Promise.reject(new Error("webmcp-computer: browser evaluate expression is missing its operation marker"));
       }
     }
     const id = this.#nextId++;
     return new Promise<T>((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.#pending.delete(id);
-        reject(new Error(`verbos: browser command timed out: ${method}`));
+        reject(new Error(`webmcp-computer: browser command timed out: ${method}`));
       }, this.#commandTimeoutMs);
       this.#pending.set(id, {
         resolve: (value) => resolve(value as T),
@@ -135,7 +135,7 @@ export class CdpClient {
       } catch (error) {
         clearTimeout(timeout);
         this.#pending.delete(id);
-        reject(new Error(`verbos: browser command failed: ${errorMessage(error)}`));
+        reject(new Error(`webmcp-computer: browser command failed: ${errorMessage(error)}`));
       }
     });
   }
@@ -145,18 +145,18 @@ export class CdpClient {
       exceptionDetails?: { text?: string; exception?: { description?: string } };
       result?: { value?: T };
     }>("Runtime.evaluate", {
-      expression: `/*verbos:${operation}*/${expression}`,
+      expression: `/*webmcp-computer:${operation}*/${expression}`,
       awaitPromise: true,
       returnByValue: true,
     });
     if (result.exceptionDetails) {
       throw new Error(
-        `verbos: browser page evaluation failed: ${result.exceptionDetails.exception?.description ?? result.exceptionDetails.text ?? "unknown error"}`,
+        `webmcp-computer: browser page evaluation failed: ${result.exceptionDetails.exception?.description ?? result.exceptionDetails.text ?? "unknown error"}`,
       );
     }
     const value = result.result?.value;
     if (value === undefined) {
-      throw new Error(`verbos: browser returned no value for ${operation}`);
+      throw new Error(`webmcp-computer: browser returned no value for ${operation}`);
     }
     return value;
   }
@@ -189,7 +189,7 @@ export class CdpClient {
       });
       const timeout = setTimeout(() => {
         off();
-        reject(new Error(`verbos: browser event timed out: ${method}`));
+        reject(new Error(`webmcp-computer: browser event timed out: ${method}`));
       }, timeoutMs);
     });
   }
@@ -225,15 +225,15 @@ export async function waitForWebSocketOpen(
     };
     const handleClose = () => {
       cleanup();
-      reject(new Error("verbos: browser connection closed before opening"));
+      reject(new Error("webmcp-computer: browser connection closed before opening"));
     };
     const handleError = () => {
       cleanup();
-      reject(new Error("verbos: browser connection failed"));
+      reject(new Error("webmcp-computer: browser connection failed"));
     };
     const timeout = setTimeout(() => {
       cleanup();
-      reject(new Error("verbos: browser connection timed out"));
+      reject(new Error("webmcp-computer: browser connection timed out"));
     }, timeoutMs);
     socket.addEventListener("open", handleOpen);
     socket.addEventListener("close", handleClose);

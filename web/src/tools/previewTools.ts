@@ -20,7 +20,7 @@ const inputSchema = {
 } as const;
 
 export const previewGetConsoleTool = defineTool<PreviewInput>({
-  stableKey: "verbos.preview_get_console",
+  stableKey: "webmcp_computer.preview_get_console",
   name: "preview_get_console",
   title: "Read Preview console",
   description:
@@ -47,11 +47,11 @@ export const previewGetConsoleTool = defineTool<PreviewInput>({
 });
 
 export const previewReloadTool = defineTool<PreviewInput>({
-  stableKey: "verbos.preview_reload",
+  stableKey: "webmcp_computer.preview_reload",
   name: "preview_reload",
   title: "Reload Preview",
   description:
-    "Reload the frontmost Preview from its served VerbOS directory. Pass pid when multiple Preview windows exist.",
+    "Reload the frontmost Preview from its served WebMCP Computer directory. Pass pid when multiple Preview windows exist.",
   inputSchema,
   annotations: ACT_ANNOTATIONS,
   intent: "act",
@@ -69,11 +69,11 @@ export const previewReloadTool = defineTool<PreviewInput>({
 });
 
 export const previewGetUrlTool = defineTool<PreviewInput>({
-  stableKey: "verbos.preview_get_url",
+  stableKey: "webmcp_computer.preview_get_url",
   name: "preview_get_url",
   title: "Read Preview URL",
   description:
-    "Read the verbos:// address and served filesystem root of the frontmost Preview. Pass pid when multiple Preview windows exist.",
+    "Read the webmcp-computer:// address and served filesystem root of the frontmost Preview. Pass pid when multiple Preview windows exist.",
   inputSchema,
   annotations: ASK_ANNOTATIONS,
   intent: "answer",

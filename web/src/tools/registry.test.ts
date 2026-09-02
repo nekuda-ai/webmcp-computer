@@ -94,7 +94,7 @@ const toolCases: ToolCase[] = [
       });
     },
     rejectInput: { appId: "ui" },
-    rejection: "verbos: unknown app 'ui'; expected files, editor, terminal, notes, preview, settings",
+    rejection: "webmcp-computer: unknown app 'ui'; expected files, editor, terminal, notes, preview, settings",
   },
   {
     name: "app_close",
@@ -111,7 +111,7 @@ const toolCases: ToolCase[] = [
       });
     },
     rejectInput: { pid: 999 },
-    rejection: "verbos: process PID 999 not found",
+    rejection: "webmcp-computer: process PID 999 not found",
   },
   {
     name: "app_list",
@@ -123,7 +123,7 @@ const toolCases: ToolCase[] = [
       ]);
     },
     rejectInput: { unexpected: true },
-    rejection: "verbos: input must be an empty object",
+    rejection: "webmcp-computer: input must be an empty object",
   },
   {
     name: "window_focus",
@@ -136,7 +136,7 @@ const toolCases: ToolCase[] = [
       expect(result).toEqual(expect.objectContaining({ pid: 2, focused: true, zIndex: 1 }));
     },
     rejectInput: { pid: 999 },
-    rejection: "verbos: process PID 999 not found",
+    rejection: "webmcp-computer: process PID 999 not found",
   },
   {
     name: "window_move",
@@ -146,7 +146,7 @@ const toolCases: ToolCase[] = [
       expect(result.windowRect).toEqual({ x: 1_220, y: 0, width: 420, height: 300 });
     },
     rejectInput: { pid: 2, x: Number.POSITIVE_INFINITY, y: 0 },
-    rejection: "verbos: x must be a finite number",
+    rejection: "webmcp-computer: x must be a finite number",
   },
   {
     name: "window_resize",
@@ -156,14 +156,14 @@ const toolCases: ToolCase[] = [
       expect(result.windowRect).toEqual({ x: 54, y: 82, width: 300, height: 682 });
     },
     rejectInput: { pid: 2, width: Number.NaN, height: 300 },
-    rejection: "verbos: width must be a finite number",
+    rejection: "webmcp-computer: width must be a finite number",
   },
   {
     name: "sys_status",
     input: {},
     assertResult(result) {
       expect(result).toEqual({
-        hostname: "guest@verbos",
+        hostname: "guest@webmcp-computer",
         uptime_s: expect.any(Number),
         processes: 0,
         fs_backend: null,
@@ -172,7 +172,7 @@ const toolCases: ToolCase[] = [
       });
     },
     rejectInput: { unexpected: true },
-    rejection: "verbos: input must be an empty object",
+    rejection: "webmcp-computer: input must be an empty object",
   },
   {
     name: "screensaver_wake",
@@ -181,7 +181,7 @@ const toolCases: ToolCase[] = [
       expect(result).toEqual({ awake: true, wasActive: true });
     },
     rejectInput: { unexpected: true },
-    rejection: "verbos: input must be an empty object",
+    rejection: "webmcp-computer: input must be an empty object",
   },
 ];
 
@@ -383,13 +383,13 @@ describe("system tool registry", () => {
 
   test("registry transports implementation errors as MCP tool errors", async () => {
     await expect(appCloseTool.execute({ pid: 999 })).rejects.toThrow(
-      "verbos: process PID 999 not found",
+      "webmcp-computer: process PID 999 not found",
     );
     const registered = await captureTool("app_close");
     try {
       expectToolErrorResult(
         await registered.tool.execute({ pid: 999 }),
-        "verbos: process PID 999 not found",
+        "webmcp-computer: process PID 999 not found",
       );
     } finally {
       registered.registration.unregister();
@@ -437,11 +437,11 @@ describe("system tool registry", () => {
     try {
       expectToolErrorResult(
         await close.tool.execute({ pid: 2.5 }),
-        "verbos: pid must be an integer",
+        "webmcp-computer: pid must be an integer",
       );
       expectToolErrorResult(
         await close.tool.execute({ pid: 1 }),
-        "verbos: pid 1 is the screensaver; window pids start at 2",
+        "webmcp-computer: pid 1 is the screensaver; window pids start at 2",
       );
     } finally {
       close.registration.unregister();
@@ -481,7 +481,7 @@ describe("system tool registry", () => {
   test("site tool scope enforces prefix and cap, forces annotations, and clears its PID batch", async () => {
     const process = useKernelStore.getState().spawn("preview", { path: "~/site" });
     const captured: CapturedRegistration[] = [];
-    const scope = createSiteToolRegistryScope(process.pid, "verbos://site/", {
+    const scope = createSiteToolRegistryScope(process.pid, "webmcp-computer://site/", {
       modelContext: createModelContext(captured),
       telemetry: false,
     });
@@ -490,12 +490,12 @@ describe("system tool registry", () => {
       name: "hello",
       description: "Wrong namespace.",
     }, async () => "no"))
-      .rejects.toThrow("verbos: site tool name must start with site_");
+      .rejects.toThrow("webmcp-computer: site tool name must start with site_");
     await expect(scope.register({
       name: "site_",
       description: "Missing local name.",
     }, async () => "no"))
-      .rejects.toThrow("verbos: site tool name must include at least one character after site_");
+      .rejects.toThrow("webmcp-computer: site tool name must include at least one character after site_");
 
     for (let index = 0; index < MAX_SITE_TOOLS; index += 1) {
       await scope.register({
@@ -507,7 +507,7 @@ describe("system tool registry", () => {
       name: "site_over_limit",
       description: "Seventeenth tool.",
     }, async () => "no"))
-      .rejects.toThrow("verbos: site tool limit reached");
+      .rejects.toThrow("webmcp-computer: site tool limit reached");
 
     expect(captured).toHaveLength(MAX_SITE_TOOLS);
     expect(captured[0]?.tool.description).toBe("Description 0");
@@ -518,7 +518,7 @@ describe("system tool registry", () => {
     });
     expect(useKernelStore.getState().toolRegistryGroups).toContainEqual(
       expect.objectContaining({
-        owner: "verbos://site/",
+        owner: "webmcp-computer://site/",
         pid: process.pid,
         tools: Array.from({ length: MAX_SITE_TOOLS }, (_, index) => `site_tool_${index}`),
       }),
@@ -533,7 +533,7 @@ describe("system tool registry", () => {
   test("site tool scope rejects oversized descriptions and serialized input schemas", async () => {
     const process = useKernelStore.getState().spawn("preview", { path: "~/site" });
     const captured: CapturedRegistration[] = [];
-    const scope = createSiteToolRegistryScope(process.pid, "verbos://site/", {
+    const scope = createSiteToolRegistryScope(process.pid, "webmcp-computer://site/", {
       modelContext: createModelContext(captured),
       telemetry: false,
     });
@@ -542,13 +542,13 @@ describe("system tool registry", () => {
       name: "site_large_description",
       description: "x".repeat(MAX_SITE_TOOL_DESCRIPTION_BYTES + 1),
     }, async () => "no"))
-      .rejects.toThrow("verbos: site tool description too large: site_large_description");
+      .rejects.toThrow("webmcp-computer: site tool description too large: site_large_description");
     await expect(scope.register({
       name: "site_large_schema",
       description: "Schema is too large.",
       inputSchema: { padding: "x".repeat(MAX_SITE_TOOL_INPUT_SCHEMA_BYTES) },
     }, async () => "no"))
-      .rejects.toThrow("verbos: site tool inputSchema too large: site_large_schema");
+      .rejects.toThrow("webmcp-computer: site tool inputSchema too large: site_large_schema");
 
     expect(captured).toEqual([]);
     scope.dispose();
@@ -557,7 +557,7 @@ describe("system tool registry", () => {
   test("tracks tool invocations until result conversion settles", async () => {
     const process = useKernelStore.getState().spawn("preview", { path: "~/site" });
     const captured: CapturedRegistration[] = [];
-    const scope = createSiteToolRegistryScope(process.pid, "verbos://site/", {
+    const scope = createSiteToolRegistryScope(process.pid, "webmcp-computer://site/", {
       modelContext: createModelContext(captured),
       telemetry: false,
     });
@@ -593,7 +593,7 @@ describe("system tool registry", () => {
   test("site tool scope times out, caps results, transports errors, and records Preview toast events", async () => {
     const process = useKernelStore.getState().spawn("preview", { path: "~/site" });
     const captured: CapturedRegistration[] = [];
-    const scope = createSiteToolRegistryScope(process.pid, "verbos://site/", {
+    const scope = createSiteToolRegistryScope(process.pid, "webmcp-computer://site/", {
       modelContext: createModelContext(captured),
       telemetry: false,
       executionTimeoutMs: 5,
@@ -615,11 +615,11 @@ describe("system tool registry", () => {
 
     expectToolErrorResult(
       await captured.find(({ tool }) => tool.name === "site_slow")!.tool.execute({}),
-      "verbos: site tool timed out: site_slow",
+      "webmcp-computer: site tool timed out: site_slow",
     );
     expectToolErrorResult(
       await captured.find(({ tool }) => tool.name === "site_large")!.tool.execute({}),
-      "verbos: site tool result too large: site_large",
+      "webmcp-computer: site tool result too large: site_large",
     );
     expectToolErrorResult(
       await captured.find(({ tool }) => tool.name === "site_rejects")!.tool.execute({}),

@@ -98,7 +98,7 @@ describe("Preview scheduling", () => {
       waitForQuiescence: () => new Promise<void>(() => {}),
       hasInFlightSiteTool: () => false,
       maxWaitMs: 2_000,
-      siteToolScope: "verbos://site/",
+      siteToolScope: "webmcp-computer://site/",
       schedule: timers.schedule,
     });
 
@@ -122,10 +122,10 @@ describe("Preview scheduling", () => {
     const gate = createPreviewFrameCommitGate({
       getInFlightCount: () => inFlight,
       waitForQuiescence: () => quiescence,
-      hasInFlightSiteTool: (scope) => scope === "verbos://site/",
+      hasInFlightSiteTool: (scope) => scope === "webmcp-computer://site/",
       maxWaitMs: 2_000,
       siteToolMaxWaitMs: 10_000,
-      siteToolScope: "verbos://site/",
+      siteToolScope: "webmcp-computer://site/",
       schedule: timers.schedule,
     });
 

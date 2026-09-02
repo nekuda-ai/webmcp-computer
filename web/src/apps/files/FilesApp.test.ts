@@ -12,7 +12,7 @@ describe("FilesApp New file", () => {
     await writeFile(path, "keep me", "system");
 
     await expect(createFilesAppEntry(path, "file")).rejects.toThrow(
-      `verbos: file exists: ${path}`,
+      `webmcp-computer: file exists: ${path}`,
     );
     expect(await readFile(path)).toBe("keep me");
   });

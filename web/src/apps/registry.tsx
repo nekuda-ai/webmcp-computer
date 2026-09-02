@@ -62,6 +62,6 @@ export const apps: readonly AppDefinition[] = [
 
 export function getApp(appId: AppId): AppDefinition {
   const app = apps.find((candidate) => candidate.id === appId);
-  if (!app) throw new Error(`verbos: unknown app '${appId}'`);
+  if (!app) throw new Error(`webmcp-computer: unknown app '${appId}'`);
   return app;
 }

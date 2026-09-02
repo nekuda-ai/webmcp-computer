@@ -4,7 +4,7 @@ import {
   executeWebMcpTool,
   inputValue,
   openFilesDirectory,
-  reloadVerbOS,
+  reloadWebMCPComputer,
   textContent,
   typeInEditor,
   waitForText,
@@ -68,7 +68,7 @@ export async function sharedFileScenario(page: Page): Promise<void> {
     content: DISK_REPLACEMENT,
   });
 
-  await reloadVerbOS(page, BOOT_TOOL_NAMES);
+  await reloadWebMCPComputer(page, BOOT_TOOL_NAMES);
   expect(await executeWebMcpTool(page, "fs_read", { path: PATH })).toEqual({
     path: PATH,
     content: DISK_REPLACEMENT,

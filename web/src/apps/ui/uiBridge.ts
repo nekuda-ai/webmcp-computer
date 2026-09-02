@@ -42,7 +42,7 @@ export type UiResultMessage = {
 export type UiFrameMessage = UiInitMessage | UiCallMessage;
 export type UiHostMessage = UiInitResultMessage | UiResultMessage;
 export type UiEnvelope<T extends UiFrameMessage | UiHostMessage = UiFrameMessage | UiHostMessage> = {
-  __verbosUi: true;
+  __webmcpComputerUi: true;
   pid: number;
   token: string;
 } & T;
@@ -78,7 +78,7 @@ export function createUiBridgeClient(
   let nextCallId = 1;
 
   const post = (message: UiFrameMessage) => send({
-    __verbosUi: true,
+    __webmcpComputerUi: true,
     pid,
     token,
     ...message,
@@ -88,7 +88,7 @@ export function createUiBridgeClient(
     if (typeof value !== "object" || value === null || Array.isArray(value)) return;
     const message = value as Record<string, unknown>;
     if (
-      message.__verbosUi !== true ||
+      message.__webmcpComputerUi !== true ||
       message.pid !== pid ||
       message.token !== token
     ) {
@@ -113,7 +113,7 @@ export function createUiBridgeClient(
     clearTimeout(call.timeout);
     if (message.ok) call.resolve(message.result);
     else call.reject(new Error(
-      typeof message.error === "string" ? message.error : "verbos: UI tool call failed",
+      typeof message.error === "string" ? message.error : "webmcp-computer: UI tool call failed",
     ));
   });
 
@@ -129,7 +129,7 @@ export function createUiBridgeClient(
       return new Promise((resolve, reject) => {
         const timeout = setTimeout(() => {
           pending.delete(callId);
-          reject(new Error(`verbos: UI tool call was not answered: ${name}`));
+          reject(new Error(`webmcp-computer: UI tool call was not answered: ${name}`));
         }, responseTimeoutMs);
         pending.set(callId, { resolve, reject, timeout });
         try {
@@ -164,7 +164,7 @@ function serializedBytes(value: unknown, name: string, kind: "input" | "result")
     const serialized = typeof value === "string" ? value : JSON.stringify(value ?? null);
     return new TextEncoder().encode(serialized).byteLength;
   } catch {
-    throw new Error(`verbos: UI tool ${kind} is not serializable: ${name}`);
+    throw new Error(`webmcp-computer: UI tool ${kind} is not serializable: ${name}`);
   }
 }
 
@@ -191,7 +191,7 @@ export function createUiToolHostProxy({
   let disposed = false;
   let unsubscribeProcess: (() => void) | undefined;
   const post = (message: UiHostMessage) => send({
-    __verbosUi: true,
+    __webmcpComputerUi: true,
     pid,
     token,
     ...message,
@@ -216,11 +216,11 @@ export function createUiToolHostProxy({
     let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
       const tool = grantedDefinition(message.name);
-      if (!tool) throw new Error(`verbos: UI tool not granted: ${message.name}`);
+      if (!tool) throw new Error(`webmcp-computer: UI tool not granted: ${message.name}`);
       const result = await executeUiToolInvocation(pid, message.name, async () => {
         const timedOut = new Promise<never>((_resolve, reject) => {
           timeout = setTimeout(
-            () => reject(new Error(`verbos: UI tool timed out: ${message.name}`)),
+            () => reject(new Error(`webmcp-computer: UI tool timed out: ${message.name}`)),
             executionTimeoutMs,
           );
         });
@@ -229,13 +229,13 @@ export function createUiToolHostProxy({
           timedOut,
         ]);
         if (serializedBytes(executed, message.name, "result") > MAX_UI_TOOL_RESULT_BYTES) {
-          throw new Error(`verbos: UI tool result too large: ${message.name}`);
+          throw new Error(`webmcp-computer: UI tool result too large: ${message.name}`);
         }
         return executed;
       });
       if (!inFlight.has(message.callId)) return;
       if (!grantedDefinition(message.name)) {
-        throw new Error(`verbos: UI tool not granted: ${message.name}`);
+        throw new Error(`webmcp-computer: UI tool not granted: ${message.name}`);
       }
       useKernelStore.getState().settleEvent(event, true);
       post({ kind: "ui-result", callId: message.callId, ok: true, result });
@@ -251,7 +251,7 @@ export function createUiToolHostProxy({
     }
   };
 
-  const dispose = (reason: unknown = new Error("verbos: UI tool bridge closed")) => {
+  const dispose = (reason: unknown = new Error("webmcp-computer: UI tool bridge closed")) => {
     if (disposed) return;
     disposed = true;
     unsubscribeProcess?.();
@@ -268,7 +268,7 @@ export function createUiToolHostProxy({
 
   unsubscribeProcess = useKernelStore.subscribe((state) => {
     if (!state.processes.some((process) => process.pid === pid)) {
-      dispose(new Error("verbos: UI process closed"));
+      dispose(new Error("webmcp-computer: UI process closed"));
     }
   });
 
@@ -278,7 +278,7 @@ export function createUiToolHostProxy({
       if (typeof value !== "object" || value === null || Array.isArray(value)) return;
       const message = value as Record<string, unknown>;
       if (
-        message.__verbosUi !== true ||
+        message.__webmcpComputerUi !== true ||
         message.pid !== pid ||
         message.token !== token
       ) {
@@ -300,13 +300,13 @@ export function createUiToolHostProxy({
         rejectCall(
           call.callId,
           call.name,
-          `verbos: UI tool input must be a plain object: ${call.name}`,
+          `webmcp-computer: UI tool input must be a plain object: ${call.name}`,
         );
         return;
       }
       try {
         if (serializedBytes(call.input, call.name, "input") > MAX_UI_TOOL_INPUT_BYTES) {
-          rejectCall(call.callId, call.name, `verbos: UI tool input too large: ${call.name}`);
+          rejectCall(call.callId, call.name, `webmcp-computer: UI tool input too large: ${call.name}`);
           return;
         }
       } catch (error) {
@@ -314,17 +314,17 @@ export function createUiToolHostProxy({
         return;
       }
       if (!grantedDefinition(call.name)) {
-        rejectCall(call.callId, call.name, `verbos: UI tool not granted: ${call.name}`);
+        rejectCall(call.callId, call.name, `webmcp-computer: UI tool not granted: ${call.name}`);
         return;
       }
       if (inFlight.has(call.callId)) {
-        rejectCall(call.callId, call.name, `verbos: duplicate UI call id: ${call.callId}`);
+        rejectCall(call.callId, call.name, `webmcp-computer: duplicate UI call id: ${call.callId}`);
         return;
       }
       inFlight.add(call.callId);
       if (inFlight.size > MAX_UI_TOOL_IN_FLIGHT) {
         inFlight.delete(call.callId);
-        rejectCall(call.callId, call.name, `verbos: UI tool call limit reached: ${call.name}`);
+        rejectCall(call.callId, call.name, `webmcp-computer: UI tool call limit reached: ${call.name}`);
         return;
       }
       const event = useKernelStore.getState().osEvent("app", "ui_call", {
@@ -344,7 +344,7 @@ function scriptJson(value: unknown): string {
 
 export function injectUiBridge(html: string, pid: number, token: string): string {
   const csp = `<meta http-equiv="Content-Security-Policy" content="${UI_CONTENT_SECURITY_POLICY}">`;
-  const script = `<script>(()=>{const marker=${scriptJson(token)};const uiListeners=[];const siteListeners=[];const createClient=(${createUiBridgeClient.toString()});const createFacade=(${createSiteModelContextFacade.toString()});const installConsole=(${installFrameConsoleCapture.toString()});const sendUi=(message)=>parent.postMessage(message,'*');const post=(message)=>parent.postMessage({__verbosUi:true,pid:${pid},token:marker,...message},'*');window.addEventListener('message',(event)=>{const message=event.data;if(event.source!==parent||message?.__verbosUi!==true||message.pid!==${pid}||message.token!==marker)return;if(message.kind==='site-tool-registration'||message.kind==='site-tool-call'){for(const listener of siteListeners)listener(message);return}for(const listener of uiListeners)listener(message)});const verbos=createClient(${pid},marker,sendUi,(listener)=>uiListeners.push(listener));const facade=createFacade(post,(listener)=>siteListeners.push(listener));Object.defineProperty(window,'verbos',{configurable:false,writable:false,value:verbos});Object.defineProperty(document,'modelContext',{configurable:true,value:facade});installConsole((level,message)=>post({level,message}))})();</script>`;
+  const script = `<script>(()=>{const marker=${scriptJson(token)};const uiListeners=[];const siteListeners=[];const createClient=(${createUiBridgeClient.toString()});const createFacade=(${createSiteModelContextFacade.toString()});const installConsole=(${installFrameConsoleCapture.toString()});const sendUi=(message)=>parent.postMessage(message,'*');const post=(message)=>parent.postMessage({__webmcpComputerUi:true,pid:${pid},token:marker,...message},'*');window.addEventListener('message',(event)=>{const message=event.data;if(event.source!==parent||message?.__webmcpComputerUi!==true||message.pid!==${pid}||message.token!==marker)return;if(message.kind==='site-tool-registration'||message.kind==='site-tool-call'){for(const listener of siteListeners)listener(message);return}for(const listener of uiListeners)listener(message)});const bridge=createClient(${pid},marker,sendUi,(listener)=>uiListeners.push(listener));const facade=createFacade(post,(listener)=>siteListeners.push(listener));Object.defineProperty(window,'webmcpComputer',{configurable:false,writable:false,value:bridge});Object.defineProperty(document,'modelContext',{configurable:true,value:facade});installConsole((level,message)=>post({level,message}))})();</script>`;
   const head = /<head(?:\s[^>]*)?>/i;
   const injection = `${csp}${script}`;
   if (head.test(html)) return html.replace(head, (match) => `${match}${injection}`);

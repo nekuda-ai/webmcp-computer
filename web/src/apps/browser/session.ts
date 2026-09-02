@@ -1,8 +1,12 @@
 import { CdpClient, waitForWebSocketOpen, type BrowserWebSocket } from "./cdp";
 import { resolveWorkerUrl } from "../../shared/workerUrl";
+import {
+  hostedAuthorization,
+  hostedSessionSnapshot,
+  hostedWorkerUrl,
+} from "../../kernel/hostedSession";
 
-export const PRODUCTION_BROWSER_WORKER_URL =
-  "https://verbos-browser-session.nekuda.workers.dev";
+export const BROWSER_HOME_URL = "https://webmcp.com/";
 
 export type BrowserSessionDescriptor = {
   sessionId: string;
@@ -27,6 +31,7 @@ export type BrowserSessionDependencies = {
   fetch: typeof fetch;
   createWebSocket(url: string): BrowserWebSocket;
   workerBaseUrl: string;
+  authorization?: () => Promise<{ Authorization: string }>;
   commandTimeoutMs?: number;
 };
 
@@ -93,11 +98,12 @@ function viewportDimension(value: number): number | undefined {
 export function resolveBrowserWorkerUrl(
   options: BrowserWorkerResolutionOptions = {},
 ): string {
+  if (hostedSessionSnapshot().status === "active") return hostedWorkerUrl("browser");
   return resolveWorkerUrl({
     queryKey: "browser_worker",
-    storageKey: "verbos.browser_worker",
+    storageKey: "webmcp_computer.browser_worker",
     label: "browser",
-    defaultUrl: options.defaultUrl ?? PRODUCTION_BROWSER_WORKER_URL,
+    ...(options.defaultUrl === undefined ? {} : { defaultUrl: options.defaultUrl }),
     envUrl: options.envUrl ?? import.meta.env.VITE_BROWSER_WORKER_URL,
     ...(options.search === undefined ? {} : { search: options.search }),
     ...(options.storage === undefined ? {} : { storage: options.storage }),
@@ -110,6 +116,7 @@ function defaultDependencies(): BrowserSessionDependencies {
     fetch: globalThis.fetch.bind(globalThis),
     createWebSocket: (url) => new WebSocket(url),
     workerBaseUrl: resolveBrowserWorkerUrl(),
+    authorization: () => hostedAuthorization("browser"),
   };
 }
 
@@ -131,7 +138,7 @@ function validateDescriptor(value: unknown): BrowserSessionDescriptor {
     ...(descriptor as BrowserSessionDescriptor),
     liveViewUrl: requireHttpUrl(
       descriptor.liveViewUrl,
-      "verbos: browser Worker returned an invalid live view URL",
+      "webmcp-computer: browser Worker returned an invalid live view URL",
     ),
   };
 }
@@ -141,7 +148,12 @@ async function workerRequest(
   path: string,
   init: RequestInit,
 ): Promise<BrowserSessionDescriptor> {
-  const response = await dependencies.fetch(`${dependencies.workerBaseUrl}${path}`, init);
+  const headers = new Headers(init.headers);
+  if (dependencies.authorization) {
+    const authorization = await dependencies.authorization();
+    headers.set("Authorization", authorization.Authorization);
+  }
+  const response = await dependencies.fetch(`${dependencies.workerBaseUrl}${path}`, { ...init, headers });
   let payload: unknown;
   try {
     payload = await response.json();
@@ -178,7 +190,7 @@ class BrowserSessionImpl implements BrowserSession {
 
   get cdp(): CdpClient {
     if (!this.#cdp || this.#state.status !== "live") {
-      throw new Error("verbos: browser session is not live");
+      throw new Error("webmcp-computer: browser session is not live");
     }
     return this.#cdp;
   }
@@ -220,8 +232,8 @@ class BrowserSessionImpl implements BrowserSession {
         (error: unknown) => {
           if (this.#viewportWarned) return;
           this.#viewportWarned = true;
-          const reason = message(error).replace(/^verbos: browser command failed: /, "");
-          console.warn(`VerbOS browser viewport resize failed: ${reason}`);
+          const reason = message(error).replace(/^webmcp-computer: browser command failed: /, "");
+          console.warn(`WebMCP Computer browser viewport resize failed: ${reason}`);
         },
       );
     }, VIEWPORT_DEBOUNCE_MS);
@@ -272,7 +284,7 @@ class BrowserSessionImpl implements BrowserSession {
     );
     const liveViewUrl = requireHttpUrl(
       liveView.devtoolsFrontendUrl,
-      "verbos: browser service returned an invalid live view",
+      "webmcp-computer: browser service returned an invalid live view",
     );
     this.#descriptor = descriptor;
     this.#publish({
@@ -328,9 +340,14 @@ class BrowserSessionImpl implements BrowserSession {
     this.#cdp = undefined;
     this.#publish({ status: "ended", reason: options.reason ?? "closed" });
     try {
+      const authorization = await this.#dependencies.authorization?.() ?? {};
       await this.#dependencies.fetch(
         `${this.#dependencies.workerBaseUrl}/session/${encodeURIComponent(this.sessionId)}`,
-        { method: "DELETE", keepalive: options.keepalive ?? false },
+        {
+          method: "DELETE",
+          ...(Object.keys(authorization).length === 0 ? {} : { headers: authorization }),
+          keepalive: options.keepalive ?? false,
+        },
       );
     } catch {
       // Browser Run keep_alive is the cost-control backstop when best-effort close fails.
@@ -345,7 +362,7 @@ export async function createBrowserSession(
   const descriptor = await workerRequest(dependencies, "/session", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(url === undefined ? {} : { url }),
+    body: JSON.stringify({ url: url ?? BROWSER_HOME_URL }),
   });
   const session = new BrowserSessionImpl(descriptor, dependencies);
   try {
@@ -414,7 +431,7 @@ export async function ensureBrowserSession(
 
 export function getBrowserSession(): BrowserSession {
   if (!activeSession || activeSession.state.status !== "live") {
-    throw new Error("verbos: browser session is not live");
+    throw new Error("webmcp-computer: browser session is not live");
   }
   return activeSession;
 }

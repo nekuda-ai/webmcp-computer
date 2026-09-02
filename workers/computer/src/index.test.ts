@@ -229,6 +229,7 @@ function fixture(options: {
     },
   });
   const env = {
+    GATEWAY_SIGNING_SECRET: "test-only-gateway-secret-with-at-least-32-characters",
     SITES: sites,
     EXEC_RATE: { async limit() {
       rateCalls.exec += 1;
@@ -245,6 +246,18 @@ function fixture(options: {
     } },
   } satisfies HandlerEnv;
   const dependencies = {
+    async authenticate() {
+      return {
+        audience: "verbos-cloudflare" as const,
+        expiresAt: 2_000,
+        issuedAt: 1_000,
+        origin: "https://app.test",
+        scopes: ["computer" as const],
+        subject: "subject-1",
+        version: 1 as const,
+        workspace: WSID,
+      };
+    },
     async openWorkspace() { return workspace.client; },
     randomSlug() {
       const slug = slugs.shift();
@@ -267,7 +280,11 @@ function fixture(options: {
 function fsRequest(body: unknown, suffix = ""): Request {
   return new Request(`https://computer.test/ws/${WSID}/fs${suffix}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "CF-Connecting-IP": "192.0.2.10" },
+    headers: {
+      "Content-Type": "application/json",
+      "CF-Connecting-IP": "192.0.2.10",
+      Origin: "https://app.test",
+    },
     body: JSON.stringify(body),
   });
 }
@@ -275,7 +292,11 @@ function fsRequest(body: unknown, suffix = ""): Request {
 function execRequest(body: unknown, wsid = WSID): Request {
   return new Request(`https://computer.test/ws/${wsid}/exec`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "CF-Connecting-IP": "192.0.2.10" },
+    headers: {
+      "Content-Type": "application/json",
+      "CF-Connecting-IP": "192.0.2.10",
+      Origin: "https://app.test",
+    },
     body: JSON.stringify(body),
   });
 }
@@ -297,7 +318,7 @@ describe("computer worker", () => {
     ];
     const response = await handleRequest(fsRequest(operations, "/batch"), env, dependencies);
     expect(response.status).toBe(200);
-    expect(response.headers.get("Access-Control-Allow-Origin")).toBe("*");
+    expect(response.headers.get("Access-Control-Allow-Origin")).toBe("https://app.test");
     const results = await response.json() as Array<Record<string, unknown>>;
     expect(results).toHaveLength(operations.length);
     expect(results[2]).toEqual({ data: base64("cloud") });
@@ -406,7 +427,7 @@ describe("computer worker", () => {
     expect(publish.status).toBe(429);
   });
 
-  test("charges one workspace rate token per mutating batch operation", async () => {
+  test("charges one workspace rate token per mutating batch request", async () => {
     const { env, dependencies, rateCalls, workspace } = fixture();
     const response = await handleRequest(fsRequest([
       { op: "mkdir", path: "/one" },
@@ -415,17 +436,32 @@ describe("computer worker", () => {
       { op: "write", path: "/two/file.txt", data: base64("x") },
     ], "/batch"), env, dependencies);
     expect(response.status).toBe(200);
-    expect(rateCalls.write).toBe(3);
+    expect(rateCalls.write).toBe(1);
     expect(workspace.directories.has("/workspace/one")).toBe(true);
 
-    const rejected = fixture({ writeRates: [true, false] });
+    const rejected = fixture({ writeRates: [false] });
     const limited = await handleRequest(fsRequest([
       { op: "mkdir", path: "/not-created" },
       { op: "write", path: "/also-not-created", data: base64("x") },
     ], "/batch"), rejected.env, rejected.dependencies);
     expect(limited.status).toBe(429);
-    expect(rejected.rateCalls.write).toBe(2);
+    expect(rejected.rateCalls.write).toBe(1);
     expect(rejected.workspace.directories.has("/workspace/not-created")).toBe(false);
+  });
+
+  test("rejects protected workspace routes before opening resources", async () => {
+    const scoped = fixture();
+    const response = await handleRequest(
+      fsRequest({ op: "exists", path: "/" }),
+      scoped.env,
+      {
+        ...scoped.dependencies,
+        async authenticate() { throw new Error("invalid gateway capability"); },
+      },
+    );
+    expect(response.status).toBe(401);
+    expect(await response.json() as unknown).toEqual({ error: "unauthorized" });
+    expect(scoped.workspace.disposeCount).toBe(0);
   });
 
   test("publishes validated text with retention, unique slugs, and content types", async () => {
@@ -471,7 +507,7 @@ describe("computer worker", () => {
     expect((await publish(Array.from({ length: 9 }, (_, index) => ({
       path: `${index}.txt`, content: "x".repeat(256 * 1_024),
     })))).status).toBe(413);
-    const reserved = await publish([{ path: ".verbos-site", content: "reserved" }]);
+    const reserved = await publish([{ path: ".webmcp-computer-site", content: "reserved" }]);
     expect(reserved.status).toBe(400);
     expect(await reserved.json() as unknown).toEqual(expect.objectContaining({ code: "EINVAL" }));
   });
@@ -506,7 +542,7 @@ describe("computer worker", () => {
       dependencies,
     );
     const invalidSiteMessage = await invalidSitePath.text();
-    expect(invalidSiteMessage).toContain("verbos: site path");
+    expect(invalidSiteMessage).toContain("webmcp-computer: site path");
     expect(invalidSiteMessage).not.toContain("publish path");
 
     const missing = await handleRequest(new Request("https://computer.test/missing"), env, dependencies);
@@ -528,7 +564,7 @@ describe("computer worker", () => {
       dependencies,
     );
     expect(exploded.status).toBe(502);
-    expect(exploded.headers.get("Access-Control-Allow-Origin")).toBe("*");
+    expect(exploded.headers.get("Access-Control-Allow-Origin")).toBe("https://app.test");
     expect(await exploded.json() as unknown).toEqual({ error: "rate exploded" });
   });
 
@@ -632,7 +668,7 @@ describe("computer worker", () => {
     expect(frames[0]?.data).toBe("a".repeat(megabyte));
     expect(frames[1]?.data).toBe("b".repeat(megabyte));
     expect(body).not.toContain("dropped");
-    expect(frames[2]?.data).toEqual({ message: "verbos: cloud output truncated after 2 MB" });
+    expect(frames[2]?.data).toEqual({ message: "webmcp-computer: cloud output truncated after 2 MB" });
   });
 
   test("continues the bounded remote run after the SSE client disconnects", async () => {

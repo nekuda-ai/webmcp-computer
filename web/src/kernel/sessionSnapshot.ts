@@ -1,6 +1,6 @@
 import { APP_IDS, type ProcessRecord, type StickyNoteRecord, type WindowRect } from "./types";
 
-export const SESSION_STORAGE_KEY = "verbos.session.v1";
+export const SESSION_STORAGE_KEY = "webmcp_computer.session.v1";
 
 export type SessionSnapshot = {
   version: 1;

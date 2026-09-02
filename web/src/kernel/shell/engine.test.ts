@@ -75,7 +75,7 @@ describe("M8 just-bash shell engine", () => {
     });
   });
 
-  test("keeps VerbOS home at the single POSIX root", async () => {
+  test("keeps WebMCP Computer home at the single POSIX root", async () => {
     expect((await run("cd ..; pwd")).stdout).toBe("/\n");
     expect(session.cwd).toBe("~");
     expect((await run("cd /; pwd")).stdout).toBe("/\n");
@@ -178,7 +178,7 @@ describe("M8 just-bash shell engine", () => {
     expect(useKernelStore.getState().commandProcesses).toEqual([]);
   });
 
-  test("keeps VerbOS commands registered and opens a real app", async () => {
+  test("keeps WebMCP Computer commands registered and opens a real app", async () => {
     const opened = await run("open files");
     const pid = Number(opened.stdout.match(/PID (\d+)/)?.[1]);
 
@@ -192,24 +192,24 @@ describe("M8 just-bash shell engine", () => {
     useKernelStore.getState().focus(pid);
     expect((await run("ps")).stdout).not.toContain("(minimized)");
     expect((await run("kill 1")).stderr).toBe(
-      "verbos: pid 1 is the screensaver; window pids start at 2\n",
+      "webmcp-computer: pid 1 is the screensaver; window pids start at 2\n",
     );
   });
 
-  test("help lists native and VerbOS command surfaces", async () => {
+  test("help lists native and WebMCP Computer command surfaces", async () => {
     const result = await run("help");
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toMatch(/just-bash commands \(\d+\):/);
     expect(result.stdout).toContain("jq");
-    expect(result.stdout).toContain("VerbOS commands");
+    expect(result.stdout).toContain("WebMCP Computer commands");
     expect(result.stdout).toContain("open");
     expect(result.stdout).toContain("standalone 'help [COMMAND]' is its alias");
     expect(result.stdout).not.toMatch(/\b(?:tar|yq|xan|sqlite3)\b/);
     expect((await run("help open")).stdout).toContain("Usage: open APP|PATH");
     expect((await run("help cd")).stdout).toContain("Change the shell working directory.");
     expect((await run("help jq")).stdout).toContain("Usage: jq");
-    expect((await run("help | tail -4")).stdout).not.toContain("VerbOS commands");
-    expect((await run("verbos_help | tail -5")).stdout).toContain("VerbOS commands");
+    expect((await run("help | tail -4")).stdout).not.toContain("WebMCP Computer commands");
+    expect((await run("os_help | tail -5")).stdout).toContain("WebMCP Computer commands");
   });
 
   test("clear preserves callback contract", async () => {
@@ -247,7 +247,7 @@ describe("M8 just-bash shell engine", () => {
     });
 
     await expect(run("echo overlapping")).rejects.toThrow(
-      "verbos: shell session is already executing",
+      "webmcp-computer: shell session is already executing",
     );
     controller.abort();
     expect((await first).exitCode).toBe(124);
@@ -274,7 +274,7 @@ describe("M8 just-bash shell engine", () => {
 
     expect(first.stdout).toBe("serving ~/site/ → preview (pid 3)\n");
     expect(second.stdout).toBe("serving ~/site/ → preview (pid 3)\n");
-    // Non-cloud VerbOS commands still map just-bash absolute paths into kernel
+    // Non-cloud WebMCP Computer commands still map just-bash absolute paths into kernel
     // paths (the cloud passthrough is the only opt-out).
     const rewritten = await executeShell("serve /site", session, kernelProcessContext, { source: "human" });
     expect(rewritten.stdout).toBe("serving ~/site/ → preview (pid 3)\n");
@@ -286,7 +286,7 @@ describe("M8 just-bash shell engine", () => {
   test("gates cloud execution on active cloud backend while help stays available", async () => {
     expect(await run("cloud echo hello")).toEqual({
       stdout: "",
-      stderr: "verbos: cloud requires the cloud kernel (enable it in Settings, the machine reboots)\n",
+      stderr: "webmcp-computer: cloud requires the cloud kernel (enable it in Settings, the machine reboots)\n",
       exitCode: 2,
     });
     expect((await run("cloud --help")).stdout).toContain("Usage: cloud <command...>");
@@ -465,7 +465,7 @@ describe("M8 just-bash shell engine", () => {
       writeStdout() {},
       writeStderr() {},
     }, ["pwd"]);
-    await expect(running).rejects.toThrow("verbos: cloud can only run inside the home directory");
+    await expect(running).rejects.toThrow("webmcp-computer: cloud can only run inside the home directory");
     expect(fetches).toBe(0);
   });
 
@@ -485,7 +485,7 @@ describe("M8 just-bash shell engine", () => {
     });
     expect(result).toEqual({
       stdout: "",
-      stderr: "verbos: cloud exec failed: container unavailable\n",
+      stderr: "webmcp-computer: cloud exec failed: container unavailable\n",
       exitCode: 1,
     });
   });
@@ -508,7 +508,7 @@ describe("M8 just-bash shell engine", () => {
 
     expect(result).toEqual({
       stdout: "",
-      stderr: "verbos: cloud exec failed: stream dropped\n",
+      stderr: "webmcp-computer: cloud exec failed: stream dropped\n",
       exitCode: 1,
     });
   });
@@ -555,7 +555,7 @@ describe("M8 just-bash shell engine", () => {
       await new Promise<void>((resolve) => {
         options?.signal?.addEventListener("abort", () => resolve(), { once: true });
       });
-      const stderr = "verbos: cloud exec failed: This operation was aborted\n";
+      const stderr = "webmcp-computer: cloud exec failed: This operation was aborted\n";
       options?.onStderr?.(stderr);
       return { stdout: "", stderr, exitCode: 1 };
     });

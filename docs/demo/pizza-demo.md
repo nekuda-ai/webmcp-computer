@@ -2,7 +2,7 @@
 
 ## Goal
 
-Inside VerbOS, build a polished pizza-ordering page that humans and agents operate
+Inside WebMCP Computer, build a polished pizza-ordering page that humans and agents operate
 through one shared cart. This is a local demo: no network, payment, or real order.
 
 ## Build

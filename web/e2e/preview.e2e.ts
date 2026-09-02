@@ -89,22 +89,22 @@ async function waitForFileSystem(page: Page): Promise<void> {
 async function waitForStableFrameText(
   page: Page,
   expected: string,
-  previousUrl?: string,
+  previousFrame?: Frame,
 ): Promise<Frame> {
   const deadline = Date.now() + 10_000;
-  let stableUrl = "";
+  let stableFrame: Frame | undefined;
   let stableSince = 0;
   while (Date.now() < deadline) {
     const frame = page.frames().filter(
       (candidate) => candidate.parentFrame() === page.mainFrame() &&
-        candidate.url().startsWith("blob:") &&
-        candidate.url() !== previousUrl,
+        candidate.url() === "about:srcdoc" &&
+        candidate !== previousFrame,
     ).at(-1);
     if (frame) {
       const body = await frame.$eval("body", (element) => element.textContent ?? "").catch(() => "");
       if (body.includes(expected)) {
-        if (stableUrl !== frame.url()) {
-          stableUrl = frame.url();
+        if (stableFrame !== frame) {
+          stableFrame = frame;
           stableSince = Date.now();
         } else if (Date.now() - stableSince >= 100) {
           return frame;
@@ -171,6 +171,16 @@ export async function previewScenario(page: Page): Promise<void> {
     (iframe) => iframe.getAttribute("sandbox"),
   );
   expect(sandbox).toBe("allow-scripts");
+  const frameTransport = await page.$eval(
+    `[data-preview-pid="${pid}"] iframe`,
+    (iframe) => ({
+      src: iframe.getAttribute("src"),
+      srcdoc: iframe.getAttribute("srcdoc"),
+    }),
+  );
+  expect(frameTransport.src).toBeNull();
+  expect(frameTransport.srcdoc).toContain("Aurora first");
+  expect(frameTransport.srcdoc).not.toContain("blob:");
 
   const firstFrame = await waitForStableFrameText(page, "Aurora first");
   await firstFrame.waitForFunction(
@@ -191,11 +201,11 @@ export async function previewScenario(page: Page): Promise<void> {
   expect(await firstFrame.$eval("img", (image) => image.getAttribute("src"))).toBe(
     `data:image/png;base64,${PNG_BASE64}`,
   );
-  const firstUrl = firstFrame.url();
+  expect(firstFrame.url()).toBe("about:srcdoc");
 
   await firstFrame.waitForFunction(
     () => document.body.dataset.siteRegistrationError ===
-      "verbos: site tool description too large: site_oversized",
+      "webmcp-computer: site tool description too large: site_oversized",
     { timeout: 10_000 },
   );
 
@@ -220,7 +230,7 @@ export async function previewScenario(page: Page): Promise<void> {
   expect(await executeWebMcpTool<SiteAnswer>(page, "site_book_night", { name: "Mira" })).toEqual({
     answer: "Aurora booked a night hike for Mira.",
   });
-  await waitForText(page, ".agent-toast", "AGENT RAN: preview · site_book_night");
+  await waitForText(page, ".agent-toast", "AGENT RAN: site_book_night · preview · succeeded");
   await firstFrame.waitForFunction(
     () => document.getElementById("preview-heading")?.textContent === "Night booked for Mira",
     { timeout: 10_000 },
@@ -233,7 +243,7 @@ export async function previewScenario(page: Page): Promise<void> {
   );
   expect(timedOut.status).toBe("Completed");
   expect(timedOut.output).toEqual({
-    content: [{ type: "text", text: "verbos: site tool timed out: site_timeout" }],
+    content: [{ type: "text", text: "webmcp-computer: site tool timed out: site_timeout" }],
     isError: true,
   });
 
@@ -252,7 +262,8 @@ export async function previewScenario(page: Page): Promise<void> {
       encoding: "base64",
     }),
   ]);
-  const secondFrame = await waitForStableFrameText(page, "Aurora live", firstUrl);
+  const secondFrame = await waitForStableFrameText(page, "Aurora live", firstFrame);
+  expect(secondFrame.url()).toBe("about:srcdoc");
   expect(await secondFrame.$eval("img", (image) => image.getAttribute("src"))).toBe(
     `data:image/png;base64,${PNG_BASE64}`,
   );
@@ -276,7 +287,7 @@ export async function previewScenario(page: Page): Promise<void> {
     { pid },
   );
   expect(consoleResult.pid).toBe(pid);
-  expect(consoleResult.url).toBe("verbos://site/");
+  expect(consoleResult.url).toBe("webmcp-computer://site/");
   expect(consoleResult.truncated).toBe(false);
   expect(consoleResult.dropped).toBe(0);
   expect(consoleResult.lines).toContainEqual(
@@ -287,7 +298,7 @@ export async function previewScenario(page: Page): Promise<void> {
   )).toBe(true);
   expect(await executeWebMcpTool(page, "preview_get_url", { pid })).toEqual({
     pid,
-    url: "verbos://site/",
+    url: "webmcp-computer://site/",
     root: "~/site",
   });
 
