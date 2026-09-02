@@ -121,8 +121,8 @@ capability route `POST /ws/{wsid}/publish`; no public `/publish` route exists.
 
 VerbOS registers its tools through `@nekuda/webmcp-sdk`, which sends anonymous, content-free
 usage beacons (SDK init, tool registration, tool call outcomes) to nekuda's telemetry endpoint
-by default. We keep that on deliberately: this project dogfoods the SDK end to end. It honors
-Global Privacy Control and `globalThis.__WEBMCP_TELEMETRY__ = false`. Opening Browser contacts
+by default. It honors Global Privacy Control and `globalThis.__WEBMCP_TELEMETRY__ = false`.
+Opening Browser contacts
 the small `verbos-browser-session` Worker and Cloudflare Browser Run capability URLs to create
 one shared remote Chrome. Enabling `cloud_kernel` sends filesystem bytes to a
 capability-addressed `verbos-computer` Workspace after reboot; `cloud` and `cloud_exec` send
