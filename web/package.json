@@ -1,6 +1,7 @@
 {
   "name": "verbos-web",
   "private": true,
+  "license": "MIT",
   "version": "0.1.0",
   "type": "module",
   "scripts": {
@@ -10,7 +11,7 @@
     "test:e2e": "bun test e2e --timeout 90000"
   },
   "dependencies": {
-    "@nekuda/webmcp-sdk": "file:../vendor/webmcp-sdk",
+    "@nekuda/webmcp-sdk": "0.5.0",
     "@xterm/xterm": "^6.0.0",
     "@zenfs/core": "^2.6.5",
     "@zenfs/dom": "^1.2.11",

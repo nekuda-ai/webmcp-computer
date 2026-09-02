@@ -55,8 +55,5 @@ export default defineConfig({
     alias: {
       "node:zlib": resolve(projectRoot, "src/kernel/shell/zlibShim.ts"),
     },
-    // Resolve the vendored file dependency through web/node_modules so its peers
-    // use this app's dependency graph during dev and production builds.
-    preserveSymlinks: true,
   },
 });

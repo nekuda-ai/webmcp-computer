@@ -5,7 +5,7 @@
     "": {
       "name": "verbos-web",
       "dependencies": {
-        "@nekuda/webmcp-sdk": "file:../vendor/webmcp-sdk",
+        "@nekuda/webmcp-sdk": "0.5.0",
         "@xterm/xterm": "^6.0.0",
         "@zenfs/core": "^2.6.5",
         "@zenfs/dom": "^1.2.11",
@@ -141,7 +141,7 @@
 
     "@napi-rs/lzma-linux-x64-gnu": ["@napi-rs/lzma-linux-x64-gnu@1.5.1", "", { "os": "linux", "cpu": "x64" }, "sha512-oTXEIha4SsuXdTA4Iyskj0kpdx2yVXdhd75c2v3xGrHFfVMsbhTPZU/nMPL4sWKo4pBHm3aucLaqGlF696dTyQ=="],
 
-    "@nekuda/webmcp-sdk": ["@nekuda/webmcp-sdk@file:../vendor/webmcp-sdk", {}],
+    "@nekuda/webmcp-sdk": ["@nekuda/webmcp-sdk@0.5.0", "", { "peerDependencies": { "@opentelemetry/api-logs": ">=0.50.0" }, "optionalPeers": ["@opentelemetry/api-logs"] }, "sha512-lWRjwIiaqVsKnr97T8JjyqSIjzCCxjBekzd3Jy4cpew/J0LxxZWCgL14+z1ojjDIBkfX99fV0qZvfj5vF3ZswA=="],
 
     "@nodable/entities": ["@nodable/entities@3.0.0", "", {}, "sha512-8L9xFeTYKhm49xfIypoe2W5wV1m/3Z58kT+7kR9A8OyFxcPduI4VmxaUMQyKYrRjUoLLSXv6EKKID5Tvj9cUVw=="],
 
