@@ -29,7 +29,7 @@ Every control a human can click has a verb an agent can call. Hover any button a
 
 ## How it's built
 
-- **Registration** goes through the open-source `@nekuda/webmcp-sdk`, which resolves the live `document.modelContext` surface and pins the spec version. Every tool declares an invocation class through annotations: ask (read-only), act (reversible, visible), or transact (consequential). Errors return as MCP `isError` results.
+- **Registration** goes through `@nekuda/webmcp-sdk` (npm), which resolves the live `document.modelContext` surface and pins the spec version. Every tool declares an invocation class through annotations: ask (read-only), act (reversible, visible), or transact (consequential). Errors return as MCP `isError` results.
 - **Kernel** is a pure-TypeScript Zustand store: process table, window registry, event bus. Every tool call and human action emits an OS event that the agent-presence layer, `dmesg`, and the Tool Monitor all read.
 - **Shell** is just-bash, a bash interpreter in JavaScript with coreutils, curl, jq, sqlite3, and python3.
 - **Filesystem** is ZenFS on OPFS with session restore.
