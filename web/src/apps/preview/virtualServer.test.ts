@@ -29,10 +29,10 @@ describe("Preview self-contained virtual server", () => {
     ], 7, "token");
 
     expect(result.warnings).toEqual([]);
-    expect(result.html).toContain('<style data-verbos-inlined="">body { background: url("data:image/png;base64,');
+    expect(result.html).toContain('<style data-webmcp-computer-inlined="">body { background: url("data:image/png;base64,');
     expect(result.html).toContain('<img src="data:image/png;base64,');
     expect(result.html).toContain('<script type="importmap">');
-    expect(result.html).toContain('<script type="module">import \"verbos-module:app.js\";</script>');
+    expect(result.html).toContain('<script type="module">import \"webmcp-computer-module:app.js\";</script>');
     expect(result.html).not.toContain('href="style.css"');
     expect(result.html).not.toContain('src="app.js"');
     expect(result.html).not.toContain("blob:");
@@ -63,13 +63,13 @@ describe("Preview self-contained virtual server", () => {
     ], 7, "token");
 
     expect(result.warnings).toEqual([
-      "verbos-preview: missing asset: missing.css",
-      "verbos-preview: outside the served root: ../outside.png",
+      "webmcp-computer-preview: missing asset: missing.css",
+      "webmcp-computer-preview: outside the served root: ../outside.png",
     ]);
     expect(result.html).toContain('href="missing.css"');
     expect(result.html).toContain('src="../outside.png"');
-    expect(result.html).toContain("verbos-preview: missing asset: missing.css");
-    expect(result.html).toContain("verbos-preview: internal navigation unavailable:");
+    expect(result.html).toContain("webmcp-computer-preview: missing asset: missing.css");
+    expect(result.html).toContain("webmcp-computer-preview: internal navigation unavailable:");
   });
 
   test("memoizes diamond imports, deduplicates CSS imports, and reuses asset URIs", () => {
@@ -100,7 +100,7 @@ describe("Preview self-contained virtual server", () => {
 
     expect(result.warnings).toEqual([]);
     expect(result.html.length).toBeLessThan(100_000);
-    expect(result.html.match(/verbos-module:js%2Fmodule-/g)).toHaveLength(17);
+    expect(result.html.match(/webmcp-computer-module:js%2Fmodule-/g)).toHaveLength(17);
     const imageUris = [...result.html.matchAll(/<img src="(data:image\/svg\+xml[^\"]+)"/g)]
       .map((match) => match[1]);
     expect(imageUris).toHaveLength(2);
@@ -118,7 +118,7 @@ describe("Preview self-contained virtual server", () => {
     ], 7, "token");
 
     expect(result.warnings).toEqual([
-      "verbos-preview: asset dropped (budget): photo.jpg",
+      "webmcp-computer-preview: asset dropped (budget): photo.jpg",
     ]);
     expect(new TextEncoder().encode(result.html).byteLength).toBeLessThanOrEqual(
       MAX_PREVIEW_DOCUMENT_BYTES,
@@ -126,7 +126,7 @@ describe("Preview self-contained virtual server", () => {
     expect(result.html).toContain('<main id="gallery">');
     expect(result.html).toContain('src="data:image/jpeg;base64,');
     expect(result.html).toContain('src="photo.jpg"');
-    expect(result.html).not.toContain("verbos-preview: document too large");
+    expect(result.html).not.toContain("webmcp-computer-preview: document too large");
   });
 
   test("rejects an over-budget asset before base64 encoding", () => {
@@ -145,7 +145,7 @@ describe("Preview self-contained virtual server", () => {
     ], 7, "token");
 
     expect(result.warnings).toEqual([
-      "verbos-preview: asset dropped (budget): too-big.png",
+      "webmcp-computer-preview: asset dropped (budget): too-big.png",
     ]);
     expect(result.html).toContain('src="too-big.png"');
   });
@@ -161,7 +161,7 @@ describe("Preview self-contained virtual server", () => {
     ], 7, "token");
 
     expect(result.warnings).toContain(
-      "verbos-preview: defer script delayed until DOMContentLoaded: defer.js",
+      "webmcp-computer-preview: defer script delayed until DOMContentLoaded: defer.js",
     );
     expect(result.html).toContain('document.addEventListener("DOMContentLoaded",()=>{document.getElementById("ready")');
     expect(result.html).not.toContain("<script defer");
@@ -186,7 +186,7 @@ describe("Preview self-contained virtual server", () => {
     ], 7, "token");
 
     expect(result.warnings).toEqual([]);
-    expect(result.html).toContain('style data-verbos-inlined=""');
+    expect(result.html).toContain('style data-webmcp-computer-inlined=""');
     expect(result.html).not.toContain("missing asset: nested/colors.css");
   });
 
@@ -209,10 +209,10 @@ describe("Preview self-contained virtual server", () => {
     expect(result.html).toContain('<object data="data:image/svg+xml');
     expect(result.html).toContain('<form action="data:text/html');
     expect(result.warnings).toContain(
-      "verbos-preview: unhandled local reference: iframe src: frame.html",
+      "webmcp-computer-preview: unhandled local reference: iframe src: frame.html",
     );
     expect(result.warnings).toContain(
-      "verbos-preview: internal navigation unavailable: page.html",
+      "webmcp-computer-preview: internal navigation unavailable: page.html",
     );
   });
 

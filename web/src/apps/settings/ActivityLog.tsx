@@ -1,4 +1,8 @@
 import { useEffect, useState } from "react";
+import {
+  ACTIVITY_SUMMARY_MAX_CHARS,
+  formatEventSummary,
+} from "../../desktop/verbPresentation";
 import { useKernelStore } from "../../kernel/store";
 import type { OSEvent } from "../../kernel/types";
 
@@ -11,18 +15,11 @@ export function relativeEventAge(timestamp: number, now: number): string {
   return `${Math.floor(minutes / 60)}h ago`;
 }
 
-function eventDetail(event: OSEvent): string | undefined {
-  for (const key of ["path", "appId", "command", "query", "tool", "pid"] as const) {
-    const value = event.args[key];
-    if (typeof value === "string" || typeof value === "number") return String(value);
-  }
-  return undefined;
-}
-
 export function humanizeEvent(event: OSEvent, now: number): string {
-  const detail = eventDetail(event);
-  const failure = event.ok === false ? ` — ${event.reason ?? "failed"}` : "";
-  return `[${event.source}] ${event.verb}${detail === undefined ? "" : ` · ${detail}`}${failure} · ${relativeEventAge(event.ts, now)}`;
+  const prefix = `[${event.source}] `;
+  const age = ` · ${relativeEventAge(event.ts, now)}`;
+  const eventBudget = ACTIVITY_SUMMARY_MAX_CHARS - prefix.length - age.length;
+  return `${prefix}${formatEventSummary(event, eventBudget)}${age}`;
 }
 
 export function ActivityLog() {

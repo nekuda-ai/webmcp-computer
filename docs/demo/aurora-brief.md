@@ -1,6 +1,6 @@
 # Aurora Trails — landing page brief
 
-You are inside VerbOS. Build me a small landing page for **Aurora Trails**, a guided
+You are inside WebMCP Computer. Build me a small landing page for **Aurora Trails**, a guided
 night-hiking company in northern Norway. Put the site in `~/site/` and serve it when done
 (`serve site/` in the terminal).
 

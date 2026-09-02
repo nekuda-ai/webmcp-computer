@@ -21,7 +21,7 @@ const runtimes = new Map<number, PreviewRuntime>();
 
 export function previewUrl(root: string): string {
   const name = root === "~" ? "home" : root.split("/").at(-1) ?? "site";
-  return `verbos://${name}/`;
+  return `webmcp-computer://${name}/`;
 }
 
 export function mountPreviewRuntime(
@@ -117,7 +117,7 @@ export function dropPreviewConsoleLines(pid: number, count = 1): void {
 
 export function getPreviewRuntime(pid: number): PreviewRuntime {
   const runtime = runtimes.get(pid);
-  if (!runtime) throw new Error(`verbos: preview PID ${pid} is not ready`);
+  if (!runtime) throw new Error(`webmcp-computer: preview PID ${pid} is not ready`);
   return runtime;
 }
 import { truncatePreviewConsoleMessage } from "./consoleMessage";

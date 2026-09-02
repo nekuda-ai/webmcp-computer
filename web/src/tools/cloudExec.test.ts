@@ -152,19 +152,19 @@ describe("cloud_exec", () => {
     }));
 
     await expect(tool.execute({ command: "   " })).rejects.toThrow(
-      "verbos: cloud exec failed: command must be a non-empty string",
+      "webmcp-computer: cloud exec failed: command must be a non-empty string",
     );
     await expect(tool.execute({ command: "é".repeat(4_097) })).rejects.toThrow(
-      "verbos: cloud exec failed: command exceeds 8192-byte cap",
+      "webmcp-computer: cloud exec failed: command exceeds 8192-byte cap",
     );
     await expect(tool.execute({ command: "pwd", cwd: "/tmp" })).rejects.toThrow(
-      "verbos: cloud exec failed: cwd must be /workspace or a directory below it",
+      "webmcp-computer: cloud exec failed: cwd must be /workspace or a directory below it",
     );
     await expect(tool.execute({ command: "pwd", timeoutMs: 0 })).rejects.toThrow(
-      "verbos: cloud exec failed: timeoutMs must be an integer from 1 to 600000",
+      "webmcp-computer: cloud exec failed: timeoutMs must be an integer from 1 to 600000",
     );
     await expect(tool.execute({ command: "pwd", unexpected: true } as never)).rejects.toThrow(
-      "verbos: cloud exec failed: input contains unknown field: unexpected",
+      "webmcp-computer: cloud exec failed: input contains unknown field: unexpected",
     );
     expect(fetches).toBe(0);
   });
@@ -175,12 +175,12 @@ describe("cloud_exec", () => {
     }));
     useKernelStore.getState().setFileSystemState("ready", "opfs");
     await expect(tool.execute({ command: "pwd" })).rejects.toThrow(
-      "verbos: cloud exec failed: cloud requires the cloud kernel (enable it in Settings, the machine reboots)",
+      "webmcp-computer: cloud exec failed: cloud requires the cloud kernel (enable it in Settings, the machine reboots)",
     );
 
     useKernelStore.getState().setFileSystemState("ready", "cloud");
     await expect(tool.execute({ command: "pwd" })).rejects.toThrow(
-      "verbos: cloud exec failed: should not fetch",
+      "webmcp-computer: cloud exec failed: should not fetch",
     );
   });
 });

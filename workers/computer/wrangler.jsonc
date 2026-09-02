@@ -1,13 +1,15 @@
 {
-  "name": "verbos-computer",
+  "name": "webmcp-computer-cloud",
   "main": "src/index.ts",
-  "compatibility_date": "2026-08-01",
+  "compatibility_date": "2026-09-01",
   "compatibility_flags": ["nodejs_compat"],
-  "account_id": "cf3d5b1eddd4c74d217780cdb7e55d07",
   "workers_dev": true,
+  "secrets": {
+    "required": ["GATEWAY_SIGNING_SECRET"]
+  },
   "containers": [
     {
-      "class_name": "VerbosWorkspace",
+      "class_name": "WebMCPComputerWorkspace",
       "image": "./Dockerfile",
       "instance_type": "standard-1",
       "max_instances": 2,
@@ -17,35 +19,36 @@
   ],
   "durable_objects": {
     "bindings": [
-      { "name": "WORKSPACES", "class_name": "VerbosWorkspace" }
+      { "name": "WORKSPACES", "class_name": "WebMCPComputerWorkspace" }
     ]
   },
   "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["VerbosWorkspace"] }
+    { "tag": "v1", "new_sqlite_classes": ["WebMCPComputerWorkspace"] }
   ],
   "r2_buckets": [
-    { "binding": "SITES", "bucket_name": "verbos-sites" }
+    { "binding": "SITES", "bucket_name": "webmcp-computer-sites" }
   ],
-  "unsafe": {
-    "bindings": [
-      {
-        "name": "EXEC_RATE",
-        "type": "ratelimit",
-        "namespace_id": "1012",
-        "simple": { "limit": 6, "period": 60 }
-      },
-      {
-        "name": "PUBLISH_RATE",
-        "type": "ratelimit",
-        "namespace_id": "1010",
-        "simple": { "limit": 4, "period": 60 }
-      },
-      {
-        "name": "WORKSPACE_WRITE_RATE",
-        "type": "ratelimit",
-        "namespace_id": "1011",
-        "simple": { "limit": 60, "period": 60 }
-      }
-    ]
+  "ratelimits": [
+    {
+      "name": "EXEC_RATE",
+      "namespace_id": "1012",
+      "simple": { "limit": 6, "period": 60 }
+    },
+    {
+      "name": "PUBLISH_RATE",
+      "namespace_id": "1010",
+      "simple": { "limit": 4, "period": 60 }
+    },
+    {
+      "name": "WORKSPACE_WRITE_RATE",
+      "namespace_id": "1011",
+      // Fresh demo workspaces seed bundled manuals and demos. Keep enough
+      // headroom for that one-time burst while still bounding sustained writes.
+      "simple": { "limit": 300, "period": 60 }
+    }
+  ],
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
   }
 }

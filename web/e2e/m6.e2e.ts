@@ -2,7 +2,7 @@ import { expect } from "bun:test";
 import type { Page } from "puppeteer-core";
 import {
   executeWebMcpTool,
-  reloadVerbOS,
+  reloadWebMCPComputer,
   seedSessionOnNextDocument,
   typeInEditor,
   waitForFileSystemReady,
@@ -40,7 +40,7 @@ export async function sessionRestoreScenario(page: Page): Promise<void> {
   await executeWebMcpTool(page, "window_focus", { pid: files.pid });
   const before = await executeWebMcpTool<{ processes: Process[] }>(page, "app_list");
 
-  await reloadVerbOS(page, BOOT_TOOL_NAMES);
+  await reloadWebMCPComputer(page, BOOT_TOOL_NAMES);
   await page.waitForSelector(".screensaver", { hidden: true });
   const after = await executeWebMcpTool<{ processes: Process[] }>(page, "app_list");
   expect(after.processes).toEqual(before.processes);
@@ -66,7 +66,7 @@ export async function repeatedSessionRestoreScenario(page: Page): Promise<void> 
   expect(before.processes).toHaveLength(2);
   await page.waitForFunction(
     (storageKey) => {
-      const serialized = window.sessionStorage.getItem(storageKey);
+      const serialized = window.localStorage.getItem(storageKey);
       if (!serialized) return false;
       const snapshot = JSON.parse(serialized) as { processes?: unknown[] };
       return snapshot.processes?.length === 2;
@@ -76,7 +76,7 @@ export async function repeatedSessionRestoreScenario(page: Page): Promise<void> 
   );
 
   for (let reload = 0; reload < 3; reload += 1) {
-    await reloadVerbOS(page, BOOT_TOOL_NAMES);
+    await reloadWebMCPComputer(page, BOOT_TOOL_NAMES);
     await page.waitForSelector(".screensaver", { hidden: true });
     const restored = await executeWebMcpTool<{ processes: Process[] }>(page, "app_list");
     const pids = restored.processes.map(({ pid }) => pid);
@@ -106,7 +106,7 @@ export async function smallerViewportRestoreScenario(page: Page): Promise<void> 
   };
   await seedSessionOnNextDocument(page, snapshot);
   await page.setViewport({ width: 640, height: 480 });
-  await reloadVerbOS(page, BOOT_TOOL_NAMES);
+  await reloadWebMCPComputer(page, BOOT_TOOL_NAMES);
   await waitForWindow(page, "Preview", 2);
 
   const restored = await executeWebMcpTool<{ processes: Process[] }>(page, "app_list");
@@ -198,14 +198,14 @@ export async function emptyOpfsWriteScenario(page: Page): Promise<void> {
     command: "echo -n > ~/m6-missing-parent/empty.txt",
   });
   expect(failedRedirect.exit_code).toBe(1);
-  expect(failedRedirect.stderr).toContain("verbos: no such directory: ~/m6-missing-parent");
+  expect(failedRedirect.stderr).toContain("webmcp-computer: no such directory: ~/m6-missing-parent");
 }
 
 export async function orphanedStickyNoteScenario(page: Page): Promise<void> {
   await waitForFileSystemReady(page);
   await page.waitForFunction(
     (storageKey) => {
-      const serialized = window.sessionStorage.getItem(storageKey);
+      const serialized = window.localStorage.getItem(storageKey);
       if (!serialized) return false;
       const snapshot = JSON.parse(serialized) as { stickyNotes?: unknown[] };
       return snapshot.stickyNotes?.length === 0;
@@ -236,7 +236,7 @@ export async function desktopIconScenario(page: Page): Promise<void> {
   await waitForFileSystemReady(page);
   const path = "~/desktop/brief.md";
   const icon = await page.waitForSelector(`[data-desktop-path="${path}"]`, { visible: true });
-  if (!icon) throw new Error(`VerbOS e2e desktop icon missing: ${path}`);
+  if (!icon) throw new Error(`WebMCP Computer e2e desktop icon missing: ${path}`);
   await icon.click({ count: 2, delay: 80 });
   await page.waitForSelector(`[aria-label="Editing ${path}"]`, { visible: true });
   const listed = await executeWebMcpTool<{ processes: Process[] }>(page, "app_list");

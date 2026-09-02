@@ -12,7 +12,7 @@ export function SystemToolRegistrar() {
       const statuses = results.map(({ name, state }) => ({ name, state }));
       useKernelStore.getState().setToolRegistrationStatuses(statuses);
       if (statuses.some(({ state }) => state !== "registered")) {
-        console.warn("VerbOS WebMCP tool registration incomplete", statuses);
+        console.warn("WebMCP Computer WebMCP tool registration incomplete", statuses);
       }
     });
 

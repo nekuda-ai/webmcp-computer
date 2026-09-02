@@ -69,7 +69,7 @@ function bytesFromString(content: string, encoding: BufferEncoding): Uint8Array 
   if (encoding === "utf8" || encoding === "utf-8") return new TextEncoder().encode(content);
   if (encoding === "hex") {
     if (content.length % 2 !== 0 || !/^[0-9a-f]*$/i.test(content)) {
-      throw new Error("verbos: invalid hex file content");
+      throw new Error("webmcp-computer: invalid hex file content");
     }
     return Uint8Array.from(
       Array.from({ length: content.length / 2 }, (_, index) =>
@@ -134,7 +134,7 @@ export class JustBashFileSystem implements IFileSystem {
     try {
       return await readFileBytes(kernelPathFromJustBash(path));
     } catch (error) {
-      if (error instanceof Error && error.message.startsWith("verbos: is a directory:")) {
+      if (error instanceof Error && error.message.startsWith("webmcp-computer: is a directory:")) {
         throw new FileSystemError(error.message, "EISDIR");
       }
       throw error;
@@ -201,7 +201,7 @@ export class JustBashFileSystem implements IFileSystem {
       current = normalizePath(`${current}/${segment}`);
       if (await missing(current)) await kernelMkdir(current, this.source());
       else if ((await kernelStat(current)).kind !== "directory") {
-        throw new Error(`verbos: not a directory: ${current}`);
+        throw new Error(`webmcp-computer: not a directory: ${current}`);
       }
     }
   }
@@ -229,7 +229,7 @@ export class JustBashFileSystem implements IFileSystem {
       throw error;
     }
     if (targetStat.kind === "directory" && !options?.recursive && (await ls(target)).length > 0) {
-      throw new FileSystemError(`verbos: directory not empty: ${target}`, "ENOTEMPTY");
+      throw new FileSystemError(`webmcp-computer: directory not empty: ${target}`, "ENOTEMPTY");
     }
     await kernelRemove(target, this.source());
   }
@@ -243,10 +243,10 @@ export class JustBashFileSystem implements IFileSystem {
       return;
     }
     if (!options?.recursive) {
-      throw new FileSystemError(`verbos: is a directory: ${from}`, "EISDIR");
+      throw new FileSystemError(`webmcp-computer: is a directory: ${from}`, "EISDIR");
     }
     if (to === from || to.startsWith(`${from}/`)) {
-      throw new Error(`verbos: cannot copy ${from} into itself: ${to}`);
+      throw new Error(`webmcp-computer: cannot copy ${from} into itself: ${to}`);
     }
     if (await missing(to)) await kernelMkdir(to, this.source());
     for (const entry of await ls(from)) {
@@ -281,13 +281,13 @@ export class JustBashFileSystem implements IFileSystem {
   }
 
   async symlink(_target: string, linkPath: string): Promise<void> {
-    throw new Error(`verbos: symbolic links are not supported: ${kernelPathFromJustBash(linkPath)}`);
+    throw new Error(`webmcp-computer: symbolic links are not supported: ${kernelPathFromJustBash(linkPath)}`);
   }
 
   async link(existingPath: string, newPath: string): Promise<void> {
     const destination = kernelPathFromJustBash(newPath);
     if (await kernelExists(destination)) {
-      throw new FileSystemError(`verbos: file exists: ${destination}`, "EEXIST");
+      throw new FileSystemError(`webmcp-computer: file exists: ${destination}`, "EEXIST");
     }
     await writeFileBytes(
       destination,
@@ -297,7 +297,7 @@ export class JustBashFileSystem implements IFileSystem {
   }
 
   async readlink(path: string): Promise<string> {
-    throw new Error(`verbos: not a symbolic link: ${kernelPathFromJustBash(path)}`);
+    throw new Error(`webmcp-computer: not a symbolic link: ${kernelPathFromJustBash(path)}`);
   }
 
   async lstat(path: string): Promise<FsStat> {

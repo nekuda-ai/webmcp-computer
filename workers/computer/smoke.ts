@@ -12,8 +12,12 @@
 //
 // Usage: bun run smoke   (no network or Cloudflare account needed — DO + R2 are local)
 
+import { mintGatewayCapability } from "../../shared/gateway-capability";
+
 const PORT = 8799;
 const API = `http://127.0.0.1:${PORT}`;
+const ORIGIN = "http://127.0.0.1:5173";
+const GATEWAY_SECRET = "webmcp-computer-local-development-gateway-secret-do-not-use-in-production";
 
 let failures = 0;
 let checks = 0;
@@ -28,26 +32,36 @@ function check(name: string, ok: boolean, detail?: unknown): void {
   console.log(`  FAIL ${name}${detail === undefined ? "" : ` — ${JSON.stringify(detail)}`}`);
 }
 
-async function post(path: string, body: unknown): Promise<{ status: number; json: any }> {
+let capability: string | undefined;
+
+async function post(path: string, body: unknown): Promise<{ status: number; json: any; text: string }> {
   const response = await fetch(`${API}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      Origin: ORIGIN,
+      ...(capability === undefined ? {} : { Authorization: `Bearer ${capability}` }),
+    },
     body: JSON.stringify(body),
   });
+  const text = await response.text();
   let json: unknown;
   try {
-    json = await response.json();
+    json = JSON.parse(text);
   } catch {
     json = undefined;
   }
-  return { status: response.status, json };
+  return { status: response.status, json, text };
 }
 
 const encode = (text: string): string => Buffer.from(text).toString("base64");
 const decode = (data: string): string => Buffer.from(data, "base64").toString();
 
 const worker = Bun.spawn(
-  ["bunx", "wrangler", "dev", "--port", String(PORT), "--local"],
+  [
+    "bunx", "wrangler@4.128.0", "dev", "--port", String(PORT), "--local",
+    "--var", `GATEWAY_SIGNING_SECRET:${GATEWAY_SECRET}`,
+  ],
   { cwd: import.meta.dir, stdout: "pipe", stderr: "pipe" },
 );
 
@@ -65,7 +79,9 @@ async function waitForReady(timeoutMs: number): Promise<boolean> {
 }
 
 try {
-  if (!await waitForReady(60_000)) {
+  // Cold Docker pulls and first container-image builds can exceed one minute.
+  // This gate should fail on Worker readiness, not local image-cache warmth.
+  if (!await waitForReady(180_000)) {
     console.error("smoke: worker never became ready");
     process.exit(1);
   }
@@ -73,6 +89,16 @@ try {
   const ws = crypto.randomUUID().replaceAll("-", "");
   const fs = (body: unknown) => post(`/ws/${ws}/fs`, body);
   const text = "cloud kernel lives 🌍\n";
+
+  console.log("\nauthentication:");
+  check("missing capability rejected", (await fs({ op: "exists", path: "/" })).status === 401);
+  capability = await mintGatewayCapability({
+    secret: GATEWAY_SECRET,
+    subject: "local-smoke-subject",
+    workspace: ws,
+    origin: ORIGIN,
+    scopes: ["computer"],
+  });
 
   console.log("\nfilesystem (every op — each is a distinct RPC method):");
   check("write", (await fs({ op: "write", path: "/a.txt", data: encode(text) })).json?.ok === true);
@@ -94,6 +120,21 @@ try {
   );
   check("renamed file readable", decode((await fs({ op: "read", path: "/site/index.html" })).json?.data ?? "") === text);
   check("rm", (await fs({ op: "rm", path: "/site/index.html" })).json?.ok === true);
+
+  console.log("\ncontainer exec + durable sync:");
+  const executed = await post(`/ws/${ws}/exec`, {
+    command: "printf 'exec-ok' && printf 'synced from container\\n' > /workspace/from-exec.txt",
+    cwd: "/workspace",
+    timeoutMs: 120_000,
+  });
+  check(
+    "exec streams stdout and zero exit",
+    executed.status === 200 && executed.text.includes('event: stdout') &&
+      executed.text.includes('exec-ok') && executed.text.includes('"code":0'),
+    executed.text,
+  );
+  const synced = await fs({ op: "read", path: "/from-exec.txt" });
+  check("container write syncs to durable workspace", decode(synced.json?.data ?? "") === "synced from container\n", synced.json);
 
   console.log("\nerror contracts:");
   const missing = await fs({ op: "read", path: "/nope.txt" });
@@ -124,7 +165,7 @@ try {
   check("unscoped publish rejected", anon.status === 404, anon.status);
   const published = await post(`/ws/${ws}/publish`, {
     files: [
-      { path: "index.html", content: "<h1>built in VerbOS</h1>" },
+      { path: "index.html", content: "<h1>built in WebMCP Computer</h1>" },
       { path: "sub/index.html", content: "<h1>nested</h1>" },
     ],
   });
@@ -133,7 +174,7 @@ try {
   if (url) {
     const served = await fetch(url);
     const body = await served.text();
-    check("served content", served.status === 200 && body.includes("built in VerbOS"));
+    check("served content", served.status === 200 && body.includes("built in WebMCP Computer"));
     check("content-type", (served.headers.get("content-type") ?? "").includes("text/html"));
     check("nosniff", served.headers.get("x-content-type-options") === "nosniff");
     check("directory URL serves index", (await fetch(`${url}sub/`)).status === 200);

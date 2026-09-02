@@ -136,8 +136,8 @@ export function EditorApp({ process }: AppComponentProps) {
     try {
       const path = normalizePath(openPath.trim());
       const file = await stat(path);
-      if (file.kind !== "file") throw new Error(`verbos: is a directory: ${path}`);
-      if (!isTextFile(path)) throw new Error(`verbos: not a text file: ${path} (${file.size} bytes)`);
+      if (file.kind !== "file") throw new Error(`webmcp-computer: is a directory: ${path}`);
+      if (!isTextFile(path)) throw new Error(`webmcp-computer: not a text file: ${path} (${file.size} bytes)`);
       setProcessPath(process.pid, path);
       setOpenPath(path);
       setLoadError(false);
@@ -153,11 +153,11 @@ export function EditorApp({ process }: AppComponentProps) {
 
   const save = useCallback(async (autosave = false) => {
     if (loadError) {
-      setStatus("verbos: reload the file successfully before saving");
+      setStatus("webmcp-computer: reload the file successfully before saving");
       return;
     }
     if (!process.path) {
-      setStatus("verbos: open a file before saving");
+      setStatus("webmcp-computer: open a file before saving");
       return;
     }
     const path = process.path;
@@ -273,7 +273,7 @@ export function EditorApp({ process }: AppComponentProps) {
           <p>Enter a ~-rooted path, then open it.</p>
         </div>
       )}
-      <footer className={`app-status mono${status.startsWith("verbos:") ? " is-error" : ""}`}>
+      <footer className={`app-status mono${status.startsWith("webmcp-computer:") ? " is-error" : ""}`}>
         <span className="editor-save-state">
           <span className={`editor-dirty-dot${dirty ? " is-dirty" : ""}`} aria-hidden="true" />
           {loadError ? "ERROR" : conflict ? "CONFLICT" : dirty ? "UNSAVED" : "CLEAN"}

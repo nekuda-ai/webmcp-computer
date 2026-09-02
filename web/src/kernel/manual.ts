@@ -6,7 +6,7 @@ export type ManualTopic = (typeof MANUAL_TOPICS)[number];
 export function requireManualTopic(value: unknown): ManualTopic {
   if (typeof value !== "string" || !MANUAL_TOPICS.includes(value as ManualTopic)) {
     throw new Error(
-      `verbos: no manual topic '${String(value)}'; expected ${MANUAL_TOPICS.join(", ")}`,
+      `webmcp-computer: no manual topic '${String(value)}'; expected ${MANUAL_TOPICS.join(", ")}`,
     );
   }
   return value as ManualTopic;

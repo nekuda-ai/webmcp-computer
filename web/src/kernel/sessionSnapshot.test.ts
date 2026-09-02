@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { deserializeSession, serializeSession, type SessionSnapshot } from "./sessionSnapshot";
 
-describe("per-tab session snapshot", () => {
+describe("durable session snapshot", () => {
   test("round-trips process geometry, focus, minimized PIDs, app paths, and terminal cwd", () => {
     const snapshot: SessionSnapshot = {
       version: 1,

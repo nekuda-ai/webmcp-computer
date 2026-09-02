@@ -3,6 +3,6 @@ export function errorMessage(error: unknown): string {
 }
 
 export function requireFinite(value: number, name: string): number {
-  if (!Number.isFinite(value)) throw new Error(`verbos: ${name} must be a finite number`);
+  if (!Number.isFinite(value)) throw new Error(`webmcp-computer: ${name} must be a finite number`);
   return value;
 }

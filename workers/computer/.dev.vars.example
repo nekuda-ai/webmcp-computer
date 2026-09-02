@@ -1,0 +1,2 @@
+# Must exactly match Browser Worker and identity broker secret.
+GATEWAY_SIGNING_SECRET=generate-with-openssl-rand-base64-48

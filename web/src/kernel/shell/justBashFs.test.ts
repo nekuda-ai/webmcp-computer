@@ -28,7 +28,7 @@ describe("M8 just-bash filesystem adapter", () => {
     fs = new JustBashFileSystem(() => source);
   });
 
-  test("maps canonical POSIX home paths to VerbOS paths", () => {
+  test("maps canonical POSIX home paths to WebMCP Computer paths", () => {
     expect(kernelPathFromJustBash("/site/index.html")).toBe("~/site/index.html");
     expect(kernelPathFromJustBash("~/site/../notes/welcome.md")).toBe("~/notes/welcome.md");
     expect(justBashPathFromKernel("~/site/index.html")).toBe("/site/index.html");
@@ -70,7 +70,7 @@ describe("M8 just-bash filesystem adapter", () => {
 
   test("surfaces kernel missing-file and is-a-directory errors unchanged", async () => {
     await expect(fs.readFile("/site/missing.txt")).rejects.toThrow(
-      "verbos: no such file: ~/site/missing.txt",
+      "webmcp-computer: no such file: ~/site/missing.txt",
     );
     try {
       await fs.readFile("/site");
@@ -79,18 +79,18 @@ describe("M8 just-bash filesystem adapter", () => {
       expect(error).toBeInstanceOf(FileSystemError);
       expect(error).toEqual(expect.objectContaining({
         code: "EISDIR",
-        message: "verbos: is a directory: ~/site",
+        message: "webmcp-computer: is a directory: ~/site",
       }));
     }
   });
 
   test("refuses to mutate when execution source is unavailable", async () => {
     const unavailable = new JustBashFileSystem(() => {
-      throw new Error("verbos: shell execution source unavailable");
+      throw new Error("webmcp-computer: shell execution source unavailable");
     });
 
     await expect(unavailable.writeFile("/site/unattributed.txt", "x")).rejects.toThrow(
-      "verbos: shell execution source unavailable",
+      "webmcp-computer: shell execution source unavailable",
     );
     expect(await fs.exists("/site/unattributed.txt")).toBe(false);
   });
@@ -118,7 +118,7 @@ describe("M8 just-bash filesystem adapter", () => {
 
   test("passes kernel directory-parent and overwrite behavior through", async () => {
     await expect(fs.writeFile("/missing/file.txt", "x")).rejects.toThrow(
-      "verbos: no such directory: ~/missing",
+      "webmcp-computer: no such directory: ~/missing",
     );
     await writeFile("~/site/from.txt", "from", "system");
     await writeFile("~/site/to.txt", "to", "system");

@@ -2,6 +2,7 @@ import {
   ensureWorkspaceId,
   resolveComputerWorkerUrl,
 } from "./cloudFs";
+import { hostedAuthorization } from "./hostedSession";
 
 export type CloudExecRequest = {
   command: string;
@@ -24,6 +25,7 @@ export type CloudExecDependencies = {
   fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
   workerBaseUrl: string;
   workspaceId: string;
+  authorization?: () => Promise<{ Authorization: string }>;
 };
 
 export type CloudExecRunOptions = {
@@ -77,13 +79,14 @@ export function defaultCloudExecDependencies(): CloudExecDependencies {
     fetch: globalThis.fetch.bind(globalThis),
     workerBaseUrl: resolveComputerWorkerUrl(),
     workspaceId: ensureWorkspaceId(),
+    authorization: () => hostedAuthorization("computer"),
   };
 }
 
 export function cloudCwdFromHome(cwd: string): string {
   if (cwd === "~") return "/workspace";
   if (cwd.startsWith("~/")) return `/workspace/${cwd.slice(2)}`;
-  throw new Error("verbos: cloud can only run inside the home directory");
+  throw new Error("webmcp-computer: cloud can only run inside the home directory");
 }
 
 export function shellQuote(value: string): string {
@@ -93,7 +96,7 @@ export function shellQuote(value: string): string {
 
 function failure(reason: string): Error {
   const detail = reason.replace(/[\r\n]+/g, " ").trim() || "unknown error";
-  return new Error(`verbos: cloud exec failed: ${detail}`);
+  return new Error(`webmcp-computer: cloud exec failed: ${detail}`);
 }
 
 function requireExit(value: unknown): ExitEvent {
@@ -148,17 +151,18 @@ export async function executeCloudCommand(
 ): Promise<CloudExecResult> {
   let response: Response;
   try {
+    const authorization = await dependencies.authorization?.() ?? {};
     response = await dependencies.fetch(
       `${dependencies.workerBaseUrl.replace(/\/$/, "")}/ws/${dependencies.workspaceId}/exec`,
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...authorization },
         body: JSON.stringify(request),
         ...(options.signal === undefined ? {} : { signal: options.signal }),
       },
     );
   } catch (error) {
-    if (error instanceof Error && error.message.startsWith("verbos: cloud exec failed:")) throw error;
+    if (error instanceof Error && error.message.startsWith("webmcp-computer: cloud exec failed:")) throw error;
     throw failure(error instanceof Error ? error.message : String(error));
   }
   if (!response.ok) throw await responseError(response);
@@ -189,7 +193,7 @@ export async function executeCloudCommand(
       const message = frame.data !== null && typeof frame.data === "object" &&
           typeof (frame.data as { message?: unknown }).message === "string"
         ? (frame.data as { message: string }).message
-        : "verbos: cloud exec notice";
+        : "webmcp-computer: cloud exec notice";
       const line = `${message}\n`;
       appendCloudOutput(stderr, line);
       options.onStderr?.(line);
@@ -222,7 +226,7 @@ export async function executeCloudCommand(
     }
     if (buffer.trim() !== "") consume(buffer);
   } catch (error) {
-    if (error instanceof Error && error.message.startsWith("verbos: cloud exec failed:")) throw error;
+    if (error instanceof Error && error.message.startsWith("webmcp-computer: cloud exec failed:")) throw error;
     throw failure(error instanceof Error ? error.message : String(error));
   } finally {
     reader.releaseLock();

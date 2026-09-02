@@ -2,17 +2,17 @@
 
 ## Errors
 
-Every VerbOS runtime error starts `verbos: ` and says what actually failed, on the failing side.
+Every WebMCP Computer runtime error starts `webmcp-computer: ` and says what actually failed, on the failing side.
 Shell usage errors keep their command-native form (for example, `kill: invalid PID 'x'`) and
 return exit code 2. Runtime examples:
-`verbos: no such file: ~/x`, `verbos: no such directory: ~/site/css`, `verbos: is a
-directory: ~/desktop`, `verbos: path escapes home`, `verbos: not a text file: ~/a.png
-(12 bytes)`, `bash: missing-command: command not found`, `verbos: command timed out after
-30s`, `verbos: pid 1 is the screensaver; window pids start at 2`. Trust the message —
+`webmcp-computer: no such file: ~/x`, `webmcp-computer: no such directory: ~/site/css`, `webmcp-computer: is a
+directory: ~/desktop`, `webmcp-computer: path escapes home`, `webmcp-computer: not a text file: ~/a.png
+(12 bytes)`, `bash: missing-command: command not found`, `webmcp-computer: command timed out after
+30s`, `webmcp-computer: pid 1 is the screensaver; window pids start at 2`. Trust the message —
 it names the real cause, not a generic failure.
 
 WebMCP tool failures arrive as
-`{ content: [{ type: "text", text: "verbos: <cause>" }], isError: true }`. Treat
+`{ content: [{ type: "text", text: "webmcp-computer: <cause>" }], isError: true }`. Treat
 `isError: true` as failure; the text block carries the implementation's exact message.
 
 ## Truncation

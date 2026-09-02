@@ -3,9 +3,10 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "verbos-web",
+      "name": "webmcp-computer-web",
       "dependencies": {
-        "@nekuda/webmcp-sdk": "file:../vendor/webmcp-sdk",
+        "@nekuda/webmcp-sdk": "0.5.0",
+        "@opentelemetry/api-logs": "^0.222.0",
         "@xterm/xterm": "^6.0.0",
         "@zenfs/core": "^2.6.5",
         "@zenfs/dom": "^1.2.11",
@@ -22,6 +23,7 @@
         "@types/react": "^18.3.18",
         "@types/react-dom": "^18.3.5",
         "@vitejs/plugin-react": "^4.3.4",
+        "esbuild": "^0.21.5",
         "puppeteer-core": "^25.8.0",
         "typescript": "^5.7.2",
         "vite": "^5.4.14",
@@ -141,11 +143,15 @@
 
     "@napi-rs/lzma-linux-x64-gnu": ["@napi-rs/lzma-linux-x64-gnu@1.5.1", "", { "os": "linux", "cpu": "x64" }, "sha512-oTXEIha4SsuXdTA4Iyskj0kpdx2yVXdhd75c2v3xGrHFfVMsbhTPZU/nMPL4sWKo4pBHm3aucLaqGlF696dTyQ=="],
 
-    "@nekuda/webmcp-sdk": ["@nekuda/webmcp-sdk@file:../vendor/webmcp-sdk", {}],
+    "@nekuda/webmcp-sdk": ["@nekuda/webmcp-sdk@0.5.0", "", { "peerDependencies": { "@opentelemetry/api-logs": ">=0.50.0" }, "optionalPeers": ["@opentelemetry/api-logs"] }, "sha512-lWRjwIiaqVsKnr97T8JjyqSIjzCCxjBekzd3Jy4cpew/J0LxxZWCgL14+z1ojjDIBkfX99fV0qZvfj5vF3ZswA=="],
 
     "@nodable/entities": ["@nodable/entities@3.0.0", "", {}, "sha512-8L9xFeTYKhm49xfIypoe2W5wV1m/3Z58kT+7kR9A8OyFxcPduI4VmxaUMQyKYrRjUoLLSXv6EKKID5Tvj9cUVw=="],
 
     "@openai/sites-vite-plugin": ["@openai/sites-vite-plugin@0.2.0", "", { "peerDependencies": { "vite": "^8.0.0" } }, "sha512-4ThLMW9eaf2gd+SqBwHmqBONKBAbQ2BuOFev7mHq7Y2W5mm/rfVJOSjcgQIsY2PqdXxXNZ4Yd0+s0DlSUYehag=="],
+
+    "@opentelemetry/api": ["@opentelemetry/api@1.9.1", "", {}, "sha512-gLyJlPHPZYdAk1JENA9LeHejZe1Ti77/pTeFm/nMXmQH/HFZlcS/O2XJB+L8fkbrNSqhdtlvjBVjxwUYanNH5Q=="],
+
+    "@opentelemetry/api-logs": ["@opentelemetry/api-logs@0.222.0", "", { "dependencies": { "@opentelemetry/api": "^1.3.0" } }, "sha512-9mb1If+IF6u0ZVXkHQ6ogEae5HwA6ajIVUgpSDQyRASxft6BSXHvBvPooRle3yFN/fKnCdSOnuu0OC3PLcF6+g=="],
 
     "@puppeteer/browsers": ["@puppeteer/browsers@3.2.1", "", { "dependencies": { "modern-tar": "^0.8.0", "yargs": "^18.0.0" }, "peerDependencies": { "proxy-agent": ">=8.0.1", "yauzl": "^2.10.0 || ^3.4.0" }, "optionalPeers": ["proxy-agent", "yauzl"], "bin": { "browsers": "lib/main-cli.js" } }, "sha512-KDz+3qDRdBAlRlMjmKyj6dEs33YHTk/xRHEENSXq6TNnhgoU15ruSHtEBeVF6OZ9tBDY55Se4P0nFMNsipzU9A=="],
 

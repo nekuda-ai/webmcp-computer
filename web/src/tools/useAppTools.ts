@@ -15,7 +15,7 @@ export function useAppTools(pid: number, tools: readonly AnyWebMCPTool[]): void 
     const registration = registerAppTools(pid, tools);
     void registration.ready.then((results) => {
       if (shouldWarnAppToolRegistration(active, results)) {
-        console.warn(`VerbOS PID ${pid} WebMCP tool registration incomplete`, results);
+        console.warn(`WebMCP Computer PID ${pid} WebMCP tool registration incomplete`, results);
       }
     });
     return () => {

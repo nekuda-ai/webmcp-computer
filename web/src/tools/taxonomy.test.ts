@@ -13,7 +13,7 @@ import {
   registerSystemTools,
 } from "./registry";
 
-const VERBOS_TOOLS = [
+const WEBMCP_COMPUTER_TOOLS = [
   ...bootTools,
   ...editorTools,
   ...filesTools,
@@ -92,7 +92,7 @@ describe("tool invocation taxonomy", () => {
   beforeEach(resetKernelStore);
 
   test("pins every boot and dynamic tool to ask, act, or transact wire hints", async () => {
-    const tools = VERBOS_TOOLS;
+    const tools = WEBMCP_COMPUTER_TOOLS;
     expect(tools).toHaveLength(Object.keys(EXPECTED_CLASS).length);
     expect(new Set(tools.map(({ name }) => name)).size).toBe(tools.length);
 
@@ -136,7 +136,7 @@ describe("tool invocation taxonomy", () => {
       additionalProperties?: boolean;
     };
 
-    for (const tool of VERBOS_TOOLS) {
+    for (const tool of WEBMCP_COMPUTER_TOOLS) {
       const schema = tool.inputSchema as ObjectSchema;
       const properties = schema.properties ?? {};
       expect(schema.type, `${tool.name} inputSchema must be an object`).toBe("object");
@@ -152,12 +152,12 @@ describe("tool invocation taxonomy", () => {
 
   test("representative self-validating tools reject unknown keys", async () => {
     for (const name of ["app_list", "settings_get", "ps"]) {
-      const tool = VERBOS_TOOLS.find((candidate) => candidate.name === name) as
+      const tool = WEBMCP_COMPUTER_TOOLS.find((candidate) => candidate.name === name) as
         | AnyWebMCPTool
         | undefined;
       expect(tool, `${name} must exist`).toBeDefined();
       await expect(tool!.execute({ unexpected: true })).rejects.toThrow(
-        "verbos: input must be an empty object",
+        "webmcp-computer: input must be an empty object",
       );
     }
   });
@@ -166,7 +166,7 @@ describe("tool invocation taxonomy", () => {
     const visible = useKernelStore.getState().spawn("files");
     const minimized = useKernelStore.getState().spawn("editor");
     useKernelStore.getState().minimize(minimized.pid);
-    const appList = VERBOS_TOOLS.find(({ name }) => name === "app_list") as
+    const appList = WEBMCP_COMPUTER_TOOLS.find(({ name }) => name === "app_list") as
       | AnyWebMCPTool
       | undefined;
     expect(appList).toBeDefined();
@@ -190,7 +190,7 @@ describe("tool invocation taxonomy", () => {
         captured.push(tool);
       },
     };
-    const scope = createSiteToolRegistryScope(process.pid, "verbos://site/", {
+    const scope = createSiteToolRegistryScope(process.pid, "webmcp-computer://site/", {
       modelContext,
       telemetry: false,
     });

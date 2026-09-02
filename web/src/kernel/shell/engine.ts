@@ -67,10 +67,10 @@ type ShellRuntime = {
 };
 
 const runtimes = new WeakMap<ShellSession, Promise<ShellRuntime>>();
-const verbosCommandNames = new Set(commandRegistry.map(({ name }) => name));
+const webmcpComputerCommandNames = new Set(commandRegistry.map(({ name }) => name));
 const unavailableBrowserCommandNames = new Set(["tar", "yq", "xan", "sqlite3"]);
 const justBashCommandNames = getCommandNames().filter((name) =>
-  !verbosCommandNames.has(name) && !unavailableBrowserCommandNames.has(name)
+  !webmcpComputerCommandNames.has(name) && !unavailableBrowserCommandNames.has(name)
 ) as CommandName[];
 
 function withNewline(value: string): string {
@@ -144,9 +144,9 @@ function commandContext(
   };
 }
 
-function verbosCommand(runtime: ShellRuntime, name: string): Command {
+function webmcpComputerCommand(runtime: ShellRuntime, name: string): Command {
   const command = getShellCommand(name);
-  if (!command) throw new Error(`verbos: shell command '${name}' is not registered`);
+  if (!command) throw new Error(`webmcp-computer: shell command '${name}' is not registered`);
   return defineCommand(name, async (args, justBashContext) => {
     const showLocalHelp = name === "cloud"
       ? args[0] === "--help" || args[0] === "-h"
@@ -155,7 +155,7 @@ function verbosCommand(runtime: ShellRuntime, name: string): Command {
       return { stdout: renderCommandHelp(command), stderr: "", exitCode: 0 };
     }
     const context = commandContext(runtime, justBashContext.cwd, justBashContext.env);
-    if (!context) return commandError(new Error("verbos: shell execution context unavailable"));
+    if (!context) return commandError(new Error("webmcp-computer: shell execution context unavailable"));
     try {
       const result = await command.run(
         context,
@@ -165,7 +165,7 @@ function verbosCommand(runtime: ShellRuntime, name: string): Command {
       );
       if (result.clear) {
         const active = runtime.active;
-        if (!active) throw new Error("verbos: shell execution context unavailable");
+        if (!active) throw new Error("webmcp-computer: shell execution context unavailable");
         active.clear = true;
       }
       return {
@@ -205,14 +205,14 @@ function catCommand(): Command {
         // Bundled cat owns all non-directory errors and option behavior.
       }
     }
-    return context.origCommand?.(args) ?? commandError(new Error("verbos: cat unavailable"));
+    return context.origCommand?.(args) ?? commandError(new Error("webmcp-computer: cat unavailable"));
   });
 }
 
 function whichCommand(): Command {
   return defineCommand("which", async (args, context) => {
     if (args.includes("--help")) {
-      return context.origCommand?.(args) ?? commandError(new Error("verbos: which unavailable"));
+      return context.origCommand?.(args) ?? commandError(new Error("webmcp-computer: which unavailable"));
     }
 
     let showAll = false;
@@ -273,7 +273,7 @@ function envCommand(): Command {
     const status = context.env.get("?");
     context.env.delete("?");
     try {
-      return await context.origCommand?.(args) ?? commandError(new Error("verbos: env unavailable"));
+      return await context.origCommand?.(args) ?? commandError(new Error("webmcp-computer: env unavailable"));
     } finally {
       if (status !== undefined) context.env.set("?", status);
     }
@@ -281,20 +281,20 @@ function envCommand(): Command {
 }
 
 function helpCommand(): Command {
-  return defineCommand("verbos_help", async (args, context) => {
+  return defineCommand("os_help", async (args, context) => {
     if (args.length > 0) {
-      const verbos = getShellCommand(args[0] ?? "");
-      if (verbos && args.length === 1) {
-        return { stdout: renderCommandHelp(verbos), stderr: "", exitCode: 0 };
+      const command = getShellCommand(args[0] ?? "");
+      if (command && args.length === 1) {
+        return { stdout: renderCommandHelp(command), stderr: "", exitCode: 0 };
       }
       const builtin = await context.exec?.(`help ${args[0] ?? ""}`, { cwd: context.cwd });
       if (builtin?.exitCode === 0) return builtin;
       return context.exec?.(`${args[0] ?? ""} --help`, { cwd: context.cwd }) ??
-        commandError(new Error("verbos: help unavailable"));
+        commandError(new Error("webmcp-computer: help unavailable"));
     }
     const builtin = await context.exec?.("help", { cwd: context.cwd });
     const nativeNames = justBashCommandNames;
-    const verbosNames = commandRegistry.map(({ name }) => name);
+    const webmcpComputerNames = commandRegistry.map(({ name }) => name);
     return {
       stdout: [
         builtin?.stdout.trimEnd() ?? "just-bash shell builtins unavailable",
@@ -302,10 +302,10 @@ function helpCommand(): Command {
         `just-bash commands (${nativeNames.length}):`,
         `  ${nativeNames.join(" ")}`,
         "",
-        `VerbOS commands (${verbosNames.length}):`,
-        `  ${verbosNames.join(" ")}`,
+        `WebMCP Computer commands (${webmcpComputerNames.length}):`,
+        `  ${webmcpComputerNames.join(" ")}`,
         "",
-        "Run 'verbos_help [COMMAND]' for combined help; standalone 'help [COMMAND]' is its alias.",
+        "Run 'os_help [COMMAND]' for combined help; standalone 'help [COMMAND]' is its alias.",
         "Inside pipelines or subshells, 'help' is just-bash help. Run 'man TOPIC' for manuals.",
         "",
       ].join("\n"),
@@ -319,7 +319,7 @@ async function createRuntime(session: ShellSession): Promise<ShellRuntime> {
   let runtime: ShellRuntime | undefined;
   const fs = new JustBashFileSystem(() => {
     const source = runtime?.active?.source;
-    if (!source) throw new Error("verbos: shell execution source unavailable");
+    if (!source) throw new Error("webmcp-computer: shell execution source unavailable");
     return source;
   });
   const shellRuntime = {} as ShellRuntime;
@@ -332,7 +332,7 @@ async function createRuntime(session: ShellSession): Promise<ShellRuntime> {
     env: bashEnvironment(session),
     commands: justBashCommandNames,
     customCommands: [
-      ...commandRegistry.map(({ name }) => verbosCommand(shellRuntime, name)),
+      ...commandRegistry.map(({ name }) => webmcpComputerCommand(shellRuntime, name)),
       catCommand(),
       envCommand(),
       whichCommand(),
@@ -356,8 +356,8 @@ function executableSource(sourceText: string, previousExitCode: number): string 
   const command = !directHelp
     ? sourceText
     : directHelp[1] === undefined
-    ? "verbos_help"
-    : `verbos_help ${directHelp[1]}`;
+    ? "os_help"
+    : `os_help ${directHelp[1]}`;
   return `(exit ${previousExitCode}); ${command}`;
 }
 
@@ -373,7 +373,7 @@ export async function executeShell(
   if (sourceText.trim() === "") return { stdout: "", stderr: "", exitCode: 0 };
 
   const runtime = await runtimeFor(session);
-  if (runtime.active) throw new Error("verbos: shell session is already executing");
+  if (runtime.active) throw new Error("webmcp-computer: shell session is already executing");
 
   session.history.push(sourceText);
   if (session.history.length > 1_000) session.history.splice(0, session.history.length - 1_000);
@@ -418,7 +418,7 @@ export async function executeShell(
     });
     syncSession(session, result.env, result.exitCode);
     const active = runtime.active;
-    if (!active) throw new Error("verbos: shell execution context unavailable");
+    if (!active) throw new Error("webmcp-computer: shell execution context unavailable");
     const clear = active.clear;
     if (clear) options.onClear?.();
     if (result.stdout !== "") options.onStdout?.(result.stdout);

@@ -197,9 +197,9 @@ function inMemoryResults(needle: string): OSSearchResult[] {
       args: { command: `${command.name} --help` },
     });
   }
-  const verbosCommands = new Set(commandRegistry.map(({ name }) => name));
+  const webmcpComputerCommands = new Set(commandRegistry.map(({ name }) => name));
   for (const name of JUST_BASH_COMMAND_NAMES) {
-    if (verbosCommands.has(name)) continue;
+    if (webmcpComputerCommands.has(name)) continue;
     const detail = "Bundled just-bash command";
     const match = matchFor(name, detail, needle);
     if (!match) continue;
@@ -214,7 +214,7 @@ function inMemoryResults(needle: string): OSSearchResult[] {
     });
   }
   for (const name of DISCOVERABLE_TOOL_NAMES) {
-    const detail = "VerbOS tool; open its live manual page";
+    const detail = "WebMCP Computer tool; open its live manual page";
     const match = matchFor(name, "publish site public URL QR cloud execute container Linux command", needle);
     if (!match) continue;
     results.push({
@@ -240,10 +240,10 @@ export async function searchOSDetailed(
   fileSystem: OSSearchFileSystem = { ls, readFilePrefix },
 ): Promise<OSSearchOutput> {
   if (typeof query !== "string" || query.trim() === "") {
-    throw new Error("verbos: query must be a non-empty string");
+    throw new Error("webmcp-computer: query must be a non-empty string");
   }
   if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
-    throw new Error("verbos: limit must be an integer from 1 to 100");
+    throw new Error("webmcp-computer: limit must be an integer from 1 to 100");
   }
   const needle = query.trim().toLowerCase();
   const files = await fileResults(needle, fileSystem);

@@ -5,7 +5,7 @@ export type WorkerUrlResolutionOptions = {
   search?: string;
   storage?: Pick<Storage, "getItem">;
   envUrl?: string;
-  defaultUrl: string;
+  defaultUrl?: string;
   production?: boolean;
 };
 
@@ -14,10 +14,10 @@ function normalizeWorkerUrl(value: string, label: string): string {
   try {
     parsed = new URL(value);
   } catch {
-    throw new Error(`verbos: invalid ${label} Worker URL: ${value}`);
+    throw new Error(`webmcp-computer: invalid ${label} Worker URL: ${value}`);
   }
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new Error(`verbos: invalid ${label} Worker URL: ${value}`);
+    throw new Error(`webmcp-computer: invalid ${label} Worker URL: ${value}`);
   }
   return parsed.origin;
 }
@@ -58,5 +58,8 @@ export function resolveWorkerUrl(options: WorkerUrlResolutionOptions): string {
   }
 
   if (options.envUrl) return normalizeWorkerUrl(options.envUrl, options.label);
-  return normalizeWorkerUrl(options.defaultUrl, options.label);
+  if (options.defaultUrl) return normalizeWorkerUrl(options.defaultUrl, options.label);
+  throw new Error(
+    `webmcp-computer: no ${options.label} Worker URL is configured; set VITE_${options.label.toUpperCase()}_WORKER_URL at build time or pass ?${options.queryKey}=<loopback URL>`,
+  );
 }

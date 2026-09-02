@@ -253,6 +253,8 @@
 }
 
 .menu-bar__user,
+.menu-bar__machine,
+.menu-bar__lease,
 .agent-status,
 .menu-bar__fs,
 .menu-bar__cloud,
@@ -1518,6 +1520,8 @@ button.window-control--minimize:hover {
   right: 24px;
   bottom: 92px;
   display: flex;
+  max-width: min(520px, calc(100vw - 48px));
+  min-width: 0;
   align-items: center;
   gap: 9px;
   padding: 9px 14px;
@@ -1531,6 +1535,13 @@ button.window-control--minimize:hover {
   letter-spacing: 0.08em;
   opacity: 0;
   transition: opacity 220ms ease;
+}
+
+.agent-toast > .mono {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .agent-toast.is-visible {
@@ -1857,12 +1868,17 @@ button.window-control--minimize:hover {
 }
 
 .activity-log li {
+  display: -webkit-box;
+  max-width: 100%;
+  overflow: hidden;
   padding: 7px 0;
   border-top: 1px dashed var(--chrome-border);
   color: var(--muted);
   font-size: 9px;
   line-height: 1.45;
   overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .activity-log__empty {

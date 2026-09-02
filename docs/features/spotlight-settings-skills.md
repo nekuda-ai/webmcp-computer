@@ -1,4 +1,4 @@
-# Spotlight, Settings, and agent skills (M5)
+# Spotlight, Settings, and agent skills
 
 Goal: the layer that makes judges lean in. Whole-OS search the agent can use, settings the agent can flip, the machine's own manual seeded for the agent, and the polish moments (man pages, dmesg, Tool Monitor, tooltips everywhere).
 
@@ -26,9 +26,9 @@ Goal: the layer that makes judges lean in. Whole-OS search the agent can use, se
    bytes (both read the seeded files).
 
 1. **Spotlight** (`⌘K` / `Ctrl+K`): overlay searching the whole OS — file names + file contents (FS), apps, settings, running processes, shell commands. Every result row carries its verb chip (`fs_read · ~/site/index.html`, `app_open · settings`, `settings_set · theme`). Enter acts on the result (open file in editor, open app, focus window). Tool: `os_search {query, limit?}` returns the same ranked results as structured data — the agent's eyes over the whole OS.
-2. **Settings app** + tools: Appearance (theme light/dark, accent color from the 4 swatches, CRT scanlines on/off, syscall hints on/off), hostname (default `guest@verbos`, feeds prompt + sys_status). Persisted to FS (`~/.config/settings.json`) so it survives reload. Tools: `settings_get {}` → full settings, `settings_set {key, value}` with validated keys. Dark theme: dimmed wallpaper + stars per Details mock; all tokens flip via CSS custom properties.
+2. **Settings app** + tools: Appearance (theme light/dark, accent color from the 4 swatches, CRT scanlines on/off, syscall hints on/off), hostname (default `guest@webmcp-computer`, feeds prompt + sys_status). Persisted to FS (`~/.config/settings.json`) so it survives reload. Tools: `settings_get {}` → full settings, `settings_set {key, value}` with validated keys. Dark theme: dimmed wallpaper + stars per Details mock; all tokens flip via CSS custom properties.
 3. **Tool Monitor**: Settings tab (not own window) listing currently registered tools grouped by owner (system / per-app with PID), flagging `+N JUST REGISTERED` for 5s after a dynamic batch lands. Reads the tool registry's own state — no bridge needed.
-4. **man pages + dmesg polish**: `man <tool_name>` also works for tools (`man fs_read` renders `FS_READ(1) — VerbOS syscalls` from the tool's description + schema). `dmesg` output gets `[agent]`/`[human]` prefixes and relative timestamps.
+4. **man pages + dmesg polish**: `man <tool_name>` also works for tools (`man fs_read` renders `FS_READ(1) — WebMCP Computer syscalls` from the tool's description + schema). `dmesg` output gets `[agent]`/`[human]` prefixes and relative timestamps.
 5. **VerbHint everywhere**: sweep all interactive controls (dock icons, window dots, menubar items, Files rows, Settings controls, Spotlight rows) — every one shows its target-first verb chip on hover. One modifier-free hover with 600ms delay; at most one is visible. `verb_hints` defaults on and disables all wrappers when false.
 6. **Screensaver return**: after N minutes idle (settings key, default off in dev), screensaver returns; any tool call wakes + is processed (screensaver_wake implicit).
 

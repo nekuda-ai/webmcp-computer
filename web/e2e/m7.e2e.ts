@@ -3,7 +3,7 @@ import type { Frame, Page } from "puppeteer-core";
 import { BOOT_TOOL_NAMES } from "./coldBoot.e2e";
 import {
   executeWebMcpTool,
-  reloadVerbOS,
+  reloadWebMCPComputer,
   waitForFileSystemReady,
   waitForWebMcpTools,
   waitForWindow,
@@ -46,7 +46,7 @@ function appHtml(version: string): string {
       });
       document.getElementById("write").onclick = async () => {
         try {
-          const result = await window.verbos.callTool("fs_write", {
+          const result = await window.webmcpComputer.callTool("fs_write", {
             path: "~/site/from-agent-app.txt",
             content: "written by human click ${version}",
           });
@@ -57,7 +57,7 @@ function appHtml(version: string): string {
       };
       document.getElementById("denied").onclick = async () => {
         try {
-          await window.verbos.callTool("settings_set", { key: "crt", value: false });
+          await window.webmcpComputer.callTool("settings_set", { key: "crt", value: false });
           status.textContent = "denied call unexpectedly succeeded";
         } catch (error) {
           status.textContent = "denied " + String(error.message || error);
@@ -142,7 +142,7 @@ export async function agentMadeAppScenario(page: Page): Promise<void> {
   // term_exec opened a Terminal window above the app; raise the app before clicking it.
   await executeWebMcpTool(page, "window_focus", { pid: opened.pid });
   await firstFrame.click("#denied");
-  await waitForFrameText(firstFrame, "verbos: UI tool not granted: settings_set");
+  await waitForFrameText(firstFrame, "webmcp-computer: UI tool not granted: settings_set");
 
   await executeWebMcpTool(page, "fs_write", {
     path: opened.path,
@@ -159,7 +159,7 @@ export async function agentMadeAppScenario(page: Page): Promise<void> {
 
   await page.waitForFunction(
     (storageKey, pid) => {
-      const value = window.sessionStorage.getItem(storageKey);
+      const value = window.localStorage.getItem(storageKey);
       if (!value) return false;
       const snapshot = JSON.parse(value) as { processes?: Array<{ pid?: number; appId?: string }> };
       return snapshot.processes?.some(
@@ -171,7 +171,7 @@ export async function agentMadeAppScenario(page: Page): Promise<void> {
     opened.pid,
   );
 
-  await reloadVerbOS(page, BOOT_TOOL_NAMES);
+  await reloadWebMCPComputer(page, BOOT_TOOL_NAMES);
   await waitForWindow(page, "App", opened.pid);
   const restoredFrame = await waitForUiFrame(page, "version two", secondFrame);
   await waitForWebMcpTools(page, [...BOOT_TOOL_NAMES, "site_agent_app_echo"]);
@@ -183,5 +183,5 @@ export async function agentMadeAppScenario(page: Page): Promise<void> {
   // The restored session brings the Terminal back too; raise the app before clicking it.
   await executeWebMcpTool(page, "window_focus", { pid: opened.pid });
   await restoredFrame.click("#write");
-  await waitForFrameText(restoredFrame, "verbos: UI tool not granted: fs_write");
+  await waitForFrameText(restoredFrame, "webmcp-computer: UI tool not granted: fs_write");
 }

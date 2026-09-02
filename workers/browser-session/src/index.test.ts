@@ -5,7 +5,9 @@ const SESSION_ID = "123e4567-e89b-42d3-a456-426614174000";
 
 function env(createSuccess = true, actionSuccess = true): Env {
   return {
-    CF_API_TOKEN: "test-token",
+    CF_ACCOUNT_ID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    BROWSER_RENDERING_API_TOKEN: "test-token",
+    GATEWAY_SIGNING_SECRET: "test-only-gateway-secret-with-at-least-32-characters",
     SESSION_RATE: { async limit() { return { success: createSuccess }; } },
     SESSION_ACTION_RATE: { async limit() { return { success: actionSuccess }; } },
   };
@@ -28,7 +30,22 @@ function injectedFetch(responses: Array<Response>) {
     if (!response) throw new Error("test: unexpected upstream fetch");
     return response;
   };
-  return { calls, fetch: fetcher as typeof fetch };
+  return {
+    calls,
+    fetch: fetcher as typeof fetch,
+    async authenticate() {
+      return {
+        audience: "verbos-cloudflare" as const,
+        expiresAt: 2_000,
+        issuedAt: 1_000,
+        origin: "https://app.test",
+        scopes: ["browser" as const],
+        subject: "subject-1",
+        version: 1 as const,
+        workspace: "0123456789abcdef0123456789abcdef",
+      };
+    },
+  };
 }
 
 describe("browser session worker", () => {
@@ -40,7 +57,7 @@ describe("browser session worker", () => {
     const response = await handleRequest(
       new Request("https://worker.test/session", {
         method: "POST",
-        headers: { "CF-Connecting-IP": "192.0.2.1" },
+        headers: { "CF-Connecting-IP": "192.0.2.1", Origin: "https://app.test" },
         body: JSON.stringify({ url: "https://example.com/path" }),
       }),
       env(),
@@ -48,18 +65,54 @@ describe("browser session worker", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(response.headers.get("Access-Control-Allow-Origin")).toBe("*");
+    expect(response.headers.get("Access-Control-Allow-Origin")).toBe("https://app.test");
     expect(await response.json() as Record<string, unknown>).toEqual({
       sessionId: SESSION_ID,
       liveViewUrl: target().devtoolsFrontendUrl,
       tabWsUrl: target().webSocketDebuggerUrl,
       targetId: "target-1",
-      keepAliveMs: 300_000,
+      keepAliveMs: 900_000,
     });
     expect(upstream.calls).toHaveLength(2);
-    expect(upstream.calls[0]?.input).toContain("keep_alive=300000&lab=true");
+    expect(upstream.calls[0]?.input).toContain("keep_alive=900000&lab=true");
     expect(upstream.calls[0]?.init?.headers).toEqual({ Authorization: "Bearer test-token" });
     expect(upstream.calls[1]?.input).toContain("json/new?url=https%3A%2F%2Fexample.com%2Fpath");
+  });
+
+  test("accepts the hosted demo legacy Browser Run secret during migration", async () => {
+    const upstream = injectedFetch([
+      Response.json({ sessionId: SESSION_ID }),
+      Response.json(target()),
+    ]);
+    const legacyEnv = env();
+    legacyEnv.BROWSER_RENDERING_API_TOKEN = undefined;
+    legacyEnv.CF_API_TOKEN = "legacy-test-token";
+
+    const response = await handleRequest(
+      new Request("https://worker.test/session", { method: "POST" }),
+      legacyEnv,
+      upstream,
+    );
+
+    expect(response.status).toBe(200);
+    expect(upstream.calls[0]?.init?.headers).toEqual({ Authorization: "Bearer legacy-test-token" });
+    expect(upstream.calls[1]?.init?.headers).toEqual({ Authorization: "Bearer legacy-test-token" });
+  });
+
+  test("fails closed when neither Browser Run secret is configured", async () => {
+    const upstream = injectedFetch([]);
+    const missingTokenEnv = env();
+    missingTokenEnv.BROWSER_RENDERING_API_TOKEN = undefined;
+
+    const response = await handleRequest(
+      new Request("https://worker.test/session", { method: "POST" }),
+      missingTokenEnv,
+      upstream,
+    );
+
+    expect(response.status).toBe(502);
+    expect(await response.json() as unknown).toEqual({ error: "browser rendering API token is not configured" });
+    expect(upstream.calls).toEqual([]);
   });
 
   test("rejects non-http URLs before upstream", async () => {
@@ -149,15 +202,16 @@ describe("browser session worker", () => {
     );
     expect(missing.status).toBe(404);
     expect(await missing.json() as Record<string, unknown>).toEqual({ error: "not found" });
-    expect(missing.headers.get("Access-Control-Allow-Origin")).toBe("*");
+    expect(missing.headers.get("Access-Control-Allow-Origin")).toBeNull();
 
     const preflight = await handleRequest(
-      new Request("https://worker.test/session", { method: "OPTIONS" }),
+      new Request("https://worker.test/session", { method: "OPTIONS", headers: { Origin: "https://app.test" } }),
       env(),
       upstream,
     );
     expect(preflight.status).toBe(204);
     expect(preflight.headers.get("Access-Control-Allow-Methods")).toContain("POST");
+    expect(preflight.headers.get("Access-Control-Allow-Headers")).toContain("Authorization");
   });
 
   test("passes upstream status with a one-line error", async () => {
@@ -189,17 +243,30 @@ describe("browser session worker", () => {
 
   test("turns thrown upstream failures into a CORS JSON 502", async () => {
     const response = await handleRequest(
-      new Request("https://worker.test/session", { method: "POST" }),
+      new Request("https://worker.test/session", { method: "POST", headers: { Origin: "https://app.test" } }),
       env(),
       {
+        ...injectedFetch([]),
         fetch: (async () => {
           throw new Error("upstream exploded");
         }) as unknown as typeof fetch,
       },
     );
     expect(response.status).toBe(502);
-    expect(response.headers.get("Access-Control-Allow-Origin")).toBe("*");
+    expect(response.headers.get("Access-Control-Allow-Origin")).toBe("https://app.test");
     expect(await response.json() as Record<string, unknown>).toEqual({ error: "upstream exploded" });
+  });
+
+  test("rejects missing capability before rate limits or upstream", async () => {
+    const response = await handleRequest(
+      new Request("https://worker.test/session", {
+        method: "POST",
+        headers: { Origin: "https://app.test" },
+      }),
+      env(),
+    );
+    expect(response.status).toBe(401);
+    expect(await response.json() as unknown).toEqual({ error: "unauthorized" });
   });
 
   test("cleans up a created session when tab creation or payload validation fails", async () => {

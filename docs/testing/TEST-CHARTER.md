@@ -1,4 +1,4 @@
-# VerbOS test charter
+# WebMCP Computer test charter
 
 Two suites, one philosophy: **every test asserts a behavior a user or agent depends on.**
 No snapshot dumps, no testing implementation details, no mocks beyond the three sanctioned
@@ -21,7 +21,7 @@ seams below. A test that cannot fail when the behavior breaks is worse than no t
    tool's `execute` directly is forbidden for tool calls; `evaluate` is fine for DOM
    assertions and for human-side simulation (typing, clicking).
    Browser e2e uses a real page `WebSocket` to a local fake Browser Run service; this is
-   the external-service seam, not a new seam into VerbOS internals.
+   the external-service seam, not a new seam into WebMCP Computer internals.
 
 ## E2E mechanics (discover, don't guess)
 
@@ -31,10 +31,10 @@ seams below. A test that cannot fail when the behavior breaks is worse than no t
   `list_webmcp_tools` / `execute_webmcp_tool`. If replicating is disproportionate, the
   sanctioned fallback is spawning `chrome-devtools-mcp` itself as a child MCP server over
   stdio and driving those two tools — that is literally the judge path.
-- Chrome binary: `VERBOS_CHROME` env var, defaulting to the system Chrome. Launch with
+- Chrome binary: `WEBMCP_COMPUTER_CHROME` env var, defaulting to the system Chrome. Launch with
   whatever flag the WebMCP surface needs (discover empirically: launch, probe
   `document.modelContext !== undefined`, iterate). **If the surface is absent the suite
-  FAILS with a message naming `VERBOS_CHROME` and the required Chrome — it never skips
+  FAILS with a message naming `WEBMCP_COMPUTER_CHROME` and the required Chrome — it never skips
   silently.** A green e2e run must mean "an agent can drive this OS in this browser."
 - One shared fixture: boot server + browser once per run; each test gets a fresh page
   (fresh OPFS via a unique `--user-data-dir` per run; state leakage between tests is a bug

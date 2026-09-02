@@ -1,9 +1,9 @@
-# Site tools — served sites register WebMCP tools (M6.5)
+# Site tools — served sites register WebMCP tools
 
 Product ruling (2026-08-26, overriding M6 item 9's paragraph): served content MUST be
 able to register WebMCP tools. The threat model that forbade it was wrong — the agent
 authoring the site already has full browser control through its bridge; there is no
-privilege to escalate. This is the showcase: the agent builds a site inside VerbOS and
+privilege to escalate. This is the showcase: the agent builds a site inside WebMCP Computer and
 the site itself joins the tool surface.
 
 ## Design
@@ -30,9 +30,9 @@ content reaches the surface over the existing token-validated postMessage channe
    rather than per-tool entries.
 4. **Execution path.** Agent calls `site_*` → host postMessages the call (id, input)
    into the frame → shim runs the handler → result back → host resolves. 10s timeout
-   (`verbos: site tool timed out: <name>`), thrown/rejected handlers convert to the
+   (`webmcp-computer: site tool timed out: <name>`), thrown/rejected handlers convert to the
    standard isError transport, results size-capped 256KB like everything else. Cap 16
-   registered site tools per preview (`verbos: site tool limit reached`).
+   registered site tools per preview (`webmcp-computer: site tool limit reached`).
 5. **Visible trace (rule 4).** Site tool calls toast like any agent action
    (`AGENT RAN: site_book_night · preview`) and tint nothing outside the preview.
 6. **Demo fixture + manual.** The Aurora Trails e2e/demo fixture registers
@@ -40,7 +40,7 @@ content reaches the surface over the existing token-validated postMessage channe
    calls the site's own tool → visible effect in the page. preview.md REWRITES the M6
    "served content cannot register tools" paragraph into the new contract (how to
    register from a served page, the `site_` prefix, the caps, the untrusted label) —
-   written for the visiting agent audience. REFERENCE.md notes the facade is VerbOS's,
+   written for the visiting agent audience. REFERENCE.md notes the facade is WebMCP Computer's,
    not Chrome's, inside the frame.
 
 ## Out of scope

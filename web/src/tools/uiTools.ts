@@ -45,7 +45,7 @@ function requireName(value: unknown): string {
     !/^[a-z0-9][a-z0-9-_]*$/i.test(value)
   ) {
     throw new Error(
-      `verbos: invalid UI app name '${String(value)}'; expected 1-40 letters, numbers, hyphens, or underscores starting with a letter or number`,
+      `webmcp-computer: invalid UI app name '${String(value)}'; expected 1-40 letters, numbers, hyphens, or underscores starting with a letter or number`,
     );
   }
   return value;
@@ -59,7 +59,7 @@ function requireAllowTools(value: unknown, name: string): string[] {
     value.some((tool) => typeof tool !== "string")
   ) {
     throw new Error(
-      `verbos: allowTools for '${name}' must be an array of at most ${MAX_UI_GRANT_TOOLS} tool names`,
+      `webmcp-computer: allowTools for '${name}' must be an array of at most ${MAX_UI_GRANT_TOOLS} tool names`,
     );
   }
   return value;
@@ -80,15 +80,15 @@ async function ensureAppsDirectory(): Promise<void> {
     return;
   }
   const target = await stat("~/apps");
-  if (target.kind !== "directory") throw new Error("verbos: not a directory: ~/apps");
+  if (target.kind !== "directory") throw new Error("webmcp-computer: not a directory: ~/apps");
 }
 
 export const uiOpenTool = defineTool<UiOpenInput>({
-  stableKey: "verbos.ui_open",
+  stableKey: "webmcp_computer.ui_open",
   name: "ui_open",
   title: "Open agent-made app",
   description:
-    "Create or open an agent-made HTML app in a visible VerbOS window. Pass exactly one of html or an existing ~-rooted .html path; inline HTML is written to ~/apps/<name>.html and remains live-editable by the human. The app runs in an opaque allow-scripts sandbox with no same-origin or popup access. Its HTML may publish site_* WebMCP tools through document.modelContext. allowTools defaults to an empty inward grant and may expose active non-transact OS tools; transact tools, site_* tools, unknown tools, and ui_open are always excluded. Returns PID, file path, applied rect, and the granted tool names.",
+    "Create or open an agent-made HTML app in a visible WebMCP Computer window. Pass exactly one of html or an existing ~-rooted .html path; inline HTML is written to ~/apps/<name>.html and remains live-editable by the human. The app runs in an opaque allow-scripts sandbox with no same-origin or popup access. Its HTML may publish site_* WebMCP tools through document.modelContext. allowTools defaults to an empty inward grant and may expose active non-transact OS tools; transact tools, site_* tools, unknown tools, and ui_open are always excluded. Returns PID, file path, applied rect, and the granted tool names.",
   inputSchema: {
     type: "object",
     properties: {
@@ -152,12 +152,12 @@ export const uiOpenTool = defineTool<UiOpenInput>({
         const hasPath = rawPath !== undefined;
         if (hasHtml === hasPath) {
           throw new Error(
-            `verbos: ui_open for '${name}' requires exactly one of html or path`,
+            `webmcp-computer: ui_open for '${name}' requires exactly one of html or path`,
           );
         }
         const allowTools = requireAllowTools(rawAllowTools, name);
         if (rawFocus !== undefined && typeof rawFocus !== "boolean") {
-          throw new Error("verbos: focus must be a boolean");
+          throw new Error("webmcp-computer: focus must be a boolean");
         }
         const placement: Partial<WindowRect> = {};
         if (rawX !== undefined) placement.x = requireFinite(rawX, "x");
@@ -168,12 +168,12 @@ export const uiOpenTool = defineTool<UiOpenInput>({
         let path: string;
         if (rawHtml !== undefined) {
           if (typeof rawHtml !== "string") {
-            throw new Error(`verbos: html for '${name}' must be a string`);
+            throw new Error(`webmcp-computer: html for '${name}' must be a string`);
           }
           const bytes = new TextEncoder().encode(rawHtml).byteLength;
           if (bytes > MAX_UI_HTML_BYTES) {
             throw new Error(
-              `verbos: html too large for '${name}': ${bytes} bytes exceeds ${MAX_UI_HTML_BYTES}`,
+              `webmcp-computer: html too large for '${name}': ${bytes} bytes exceeds ${MAX_UI_HTML_BYTES}`,
             );
           }
           await ensureAppsDirectory();
@@ -181,14 +181,14 @@ export const uiOpenTool = defineTool<UiOpenInput>({
           await writeFile(path, rawHtml, "agent");
         } else {
           if (typeof rawPath !== "string") {
-            throw new Error(`verbos: path for '${name}' must be a string`);
+            throw new Error(`webmcp-computer: path for '${name}' must be a string`);
           }
           path = normalizePath(rawPath);
           if (!path.toLowerCase().endsWith(".html")) {
-            throw new Error(`verbos: UI app path must end in .html: ${path}`);
+            throw new Error(`webmcp-computer: UI app path must end in .html: ${path}`);
           }
           const target = await stat(path);
-          if (target.kind !== "file") throw new Error(`verbos: is a directory: ${path}`);
+          if (target.kind !== "file") throw new Error(`webmcp-computer: is a directory: ${path}`);
         }
 
         const process = useKernelStore.getState().spawn("ui", {

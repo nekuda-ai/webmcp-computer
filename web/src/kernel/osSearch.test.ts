@@ -56,14 +56,14 @@ describe("M5 OS search", () => {
             modifiedAt: 0,
           }];
         }
-        throw new Error(`verbos: permission denied: ${path}`);
+        throw new Error(`webmcp-computer: permission denied: ${path}`);
       },
       async readFilePrefix() {
         throw new Error("test: unexpected read");
       },
     });
 
-    expect(output.warnings).toEqual(["verbos: permission denied: ~/blocked"]);
+    expect(output.warnings).toEqual(["webmcp-computer: permission denied: ~/blocked"]);
     expect(output.results).toEqual([]);
   });
 

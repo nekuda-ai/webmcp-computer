@@ -159,7 +159,7 @@ describe("Preview site modelContext facade", () => {
       kind: "site-tool-result",
       callId: "call-large",
       ok: false,
-      error: "verbos: site tool result too large: site_large",
+      error: "webmcp-computer: site tool result too large: site_large",
     });
   });
 });

@@ -64,7 +64,7 @@ export type FileSystemBackend = "cloud" | "opfs" | "memory";
 export const THEMES = ["light", "dark"] as const;
 export const ACCENT_COLORS = ["#2e9ff3", "#4f7cf7", "#00b8a9", "#ff7a59"] as const;
 
-export type VerbOSSettings = {
+export type WebMCPComputerSettings = {
   theme: (typeof THEMES)[number];
   accent: (typeof ACCENT_COLORS)[number];
   crt: boolean;
@@ -74,12 +74,12 @@ export type VerbOSSettings = {
   cloud_kernel: boolean;
 };
 
-export const DEFAULT_SETTINGS: VerbOSSettings = {
+export const DEFAULT_SETTINGS: WebMCPComputerSettings = {
   theme: "light",
   accent: "#2e9ff3",
   crt: true,
   verb_hints: true,
-  hostname: "guest@verbos",
+  hostname: "guest@webmcp-computer",
   screensaver_minutes: 0,
   cloud_kernel: false,
 };

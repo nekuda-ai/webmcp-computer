@@ -8,8 +8,8 @@ Same bytes, live in both directions.
 ## Paths
 
 Always `~`-rooted: `~/desktop/brief.md`, `~/site/index.html`. There is nothing outside
-`~`. Non-home paths are rejected with `verbos: path must start with ~/`; traversal that
-escapes `~` is rejected with `verbos: path escapes home`.
+`~`. Non-home paths are rejected with `webmcp-computer: path must start with ~/`; traversal that
+escapes `~` is rejected with `webmcp-computer: path escapes home`.
 
 ## Tools
 

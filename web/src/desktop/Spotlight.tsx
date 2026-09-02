@@ -123,7 +123,7 @@ export function Spotlight() {
           <input
             ref={inputRef}
             value={query}
-            aria-label="Search VerbOS"
+            aria-label="Search WebMCP Computer"
             placeholder="Search files, apps, settings, processes, commands"
             onChange={(event) => setQuery(event.target.value)}
             onKeyDown={(event) => {

@@ -45,7 +45,7 @@ describe("M5 manual and search tools", () => {
 
   test("man tool page renders current registry description and schema", async () => {
     const shell = await executeShell("man fs_read", createShellSession(), kernelProcessContext);
-    expect(shell.stdout).toStartWith("FS_READ(1) — VerbOS syscalls\n");
+    expect(shell.stdout).toStartWith("FS_READ(1) — WebMCP Computer syscalls\n");
     expect(shell.stdout).toContain(tool("fs_read").description);
     expect(shell.stdout).toContain('"required": [');
     expect(shell.stdout).toContain('"path"');

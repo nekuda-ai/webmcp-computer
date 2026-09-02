@@ -1,8 +1,8 @@
 # Terminal & shell
 
-The Terminal runs `just-bash` entirely in the browser against the shared VerbOS
+The Terminal runs `just-bash` entirely in the browser against the shared WebMCP Computer
 filesystem. Your commands are TYPED VISIBLY into the terminal, character by character,
-on an accent-tinted row with a `codex@verbos` prompt. The human sees the same output and
+on an accent-tinted row with a `codex@webmcp-computer` prompt. The human sees the same output and
 can use the same window. Each Terminal has its own session: cwd, exported environment,
 exit status, and history persist between human and agent commands.
 
@@ -34,16 +34,16 @@ Bundled commands include:
 - Archives, checksums, and encodings: `base64 gzip gunzip md5sum sha1sum sha256sum`.
 - Shell utilities: `alias bash date env export history seq sh sleep timeout which`.
 
-VerbOS adds `open`, `serve`, `cloud`, `ps`, `kill`, `dmesg`, `uname`, `whoami`, `hostname`,
-`clear`, shared `history`, `man`, and `verbos_help`. Run `verbos_help` to list both bundled
-and VerbOS commands. A standalone top-level `help` or `help COMMAND` is an alias for
-`verbos_help`; inside a pipeline or subshell, `help` is just-bash's native builtin and does
-not include VerbOS commands. Run `COMMAND --help` for command usage and
-`man <topic|tool|OS-command>` for VerbOS manuals.
+WebMCP Computer adds `open`, `serve`, `cloud`, `ps`, `kill`, `dmesg`, `uname`, `whoami`, `hostname`,
+`clear`, shared `history`, `man`, and `os_help`. Run `os_help` to list both bundled
+and WebMCP Computer commands. A standalone top-level `help` or `help COMMAND` is an alias for
+`os_help`; inside a pipeline or subshell, `help` is just-bash's native builtin and does
+not include WebMCP Computer commands. Run `COMMAND --help` for command usage and
+`man <topic|tool|OS-command>` for WebMCP Computer manuals.
 
 ## Paths and writes
 
-VerbOS tools use `~` paths. Bash has one POSIX root: kernel `~` is `/`, so `pwd` at
+WebMCP Computer tools use `~` paths. Bash has one POSIX root: kernel `~` is `/`, so `pwd` at
 home prints `/`, `/site/x` is `~/site/x`, and no path exists above that root.
 Redirects, appends, copies, moves, and command-created files all go
 through the kernel with human/agent attribution, so Files, Editor, Preview live reload,
@@ -63,8 +63,8 @@ without `cloud` stay local and offline.
 
 - `jq` and `awk` can process files created through `fs_write` immediately.
 - `dmesg` prints the OS event log — everything you and the human did, attributed.
-- `open <app-or-path>` opens VerbOS windows; `serve <directory>` opens live Preview.
+- `open <app-or-path>` opens WebMCP Computer windows; `serve <directory>` opens live Preview.
 - Long agent commands accelerate visible typing (ceiling about 4s), but every character
   still appears.
-- A command exceeding its timeout rejects with `verbos: command timed out after Ns`.
+- A command exceeding its timeout rejects with `webmcp-computer: command timed out after Ns`.
   Output produced before timeout stays visible; the human can also press Ctrl+C.

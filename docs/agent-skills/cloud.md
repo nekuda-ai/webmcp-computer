@@ -1,6 +1,6 @@
 # Cloud kernel & publishing
 
-VerbOS boots local-first. By default, home lives in browser OPFS (or memory when OPFS is
+WebMCP Computer boots local-first. By default, home lives in browser OPFS (or memory when OPFS is
 unavailable). `cloud_kernel` opts this browser into a durable Cloudflare Computer
 workspace. Terminal, Files, Editor, Preview, and every `fs_*` tool keep the same
 contracts; only where home bytes live changes.
@@ -13,16 +13,16 @@ contracts; only where home bytes live changes.
   and the menu bar shows `CLOUD`.
 - Set it to `false`, wait for the result, then reload to return to `local (opfs)` or
   `local (memory)`.
-- Cloud mode starts with a fresh home. VerbOS does not copy local files into it, and
+- Cloud mode starts with a fresh home. WebMCP Computer does not copy local files into it, and
   switching back reveals the unchanged local home. Move wanted text explicitly.
-- If cloud mount fails, VerbOS visibly warns and continues on local storage. Boot never
+- If cloud mount fails, WebMCP Computer visibly warns and continues on local storage. Boot never
   depends on the preview SDK or network.
 - If the browser cannot persist the boot mirror, `settings_set` leaves the settings file
-  unchanged and returns `verbos: cloud_kernel boot mirror is unavailable` or
-  `verbos: could not persist cloud_kernel boot mirror: <reason>`.
+  unchanged and returns `webmcp-computer: cloud_kernel boot mirror is unavailable` or
+  `webmcp-computer: could not persist cloud_kernel boot mirror: <reason>`.
 
 Workspace ID is a browser-held capability. There is no account or handoff UI. Do not
-copy `localStorage["verbos.workspace"]` into notes, sites, logs, or messages.
+copy `localStorage["webmcp_computer.workspace"]` into notes, sites, logs, or messages.
 
 ## Execute in the cloud container
 
@@ -74,7 +74,7 @@ enforcement owns this retention window; the app does not delete them itself. The
 QR code so the human can open the same site on a phone. The URL and expiry also land in the
 `os_publish` `dmesg` trace.
 
-Common failures name the cause: `verbos: publish path is not a directory: <path>`,
-`verbos: os_publish rejects non-text file: <path>`, cap errors, or
-`verbos: site publish failed: <Worker reason>`. `.verbos-site` is reserved and cannot be
+Common failures name the cause: `webmcp-computer: publish path is not a directory: <path>`,
+`webmcp-computer: os_publish rejects non-text file: <path>`, cap errors, or
+`webmcp-computer: site publish failed: <Worker reason>`. `.webmcp-computer-site` is reserved and cannot be
 included in a published tree.

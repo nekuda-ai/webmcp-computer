@@ -1,0 +1,4 @@
+# Copy to .dev.vars. Never commit real values.
+CF_ACCOUNT_ID=your-32-character-cloudflare-account-id
+BROWSER_RENDERING_API_TOKEN=your-browser-rendering-edit-token
+GATEWAY_SIGNING_SECRET=generate-with-openssl-rand-base64-48

@@ -32,7 +32,7 @@ export async function browserScenario(page: Page, fake: FakeBrowserRun): Promise
   });
   expect(opened).toEqual(expect.objectContaining({
     url: "https://start.test/",
-    keepAliveMs: 300_000,
+    keepAliveMs: 900_000,
     reused: false,
   }));
   await waitForWindow(page, "Browser", opened.pid);

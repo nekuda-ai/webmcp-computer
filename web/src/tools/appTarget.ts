@@ -5,12 +5,12 @@ export function resolveAppTarget(appId: AppId, rawPid?: unknown): ProcessRecord 
   const processes = useKernelStore.getState().processes;
   if (rawPid !== undefined) {
     if (!Number.isInteger(rawPid) || (rawPid as number) < 2) {
-      throw new Error("verbos: pid must be an integer PID starting at 2");
+      throw new Error("webmcp-computer: pid must be an integer PID starting at 2");
     }
     const process = processes.find(({ pid }) => pid === rawPid);
-    if (!process) throw new Error(`verbos: process PID ${String(rawPid)} not found`);
+    if (!process) throw new Error(`webmcp-computer: process PID ${String(rawPid)} not found`);
     if (process.appId !== appId) {
-      throw new Error(`verbos: process PID ${String(rawPid)} is not ${appId}`);
+      throw new Error(`webmcp-computer: process PID ${String(rawPid)} is not ${appId}`);
     }
     return process;
   }
@@ -18,7 +18,7 @@ export function resolveAppTarget(appId: AppId, rawPid?: unknown): ProcessRecord 
   const process = processes
     .filter((candidate) => candidate.appId === appId)
     .sort((left, right) => right.zIndex - left.zIndex)[0];
-  if (!process) throw new Error(`verbos: no ${appId} window is open`);
+  if (!process) throw new Error(`webmcp-computer: no ${appId} window is open`);
   return process;
 }
 

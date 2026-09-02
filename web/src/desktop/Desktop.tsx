@@ -16,7 +16,7 @@ import { openHumanApp } from "./humanActions";
 import { nextUntitledName } from "./untitledName";
 
 function isFileExistsError(error: unknown): boolean {
-  return errorMessage(error).startsWith("verbos: file exists:");
+  return errorMessage(error).startsWith("webmcp-computer: file exists:");
 }
 
 export async function createUntitledEntry(kind: "file" | "directory"): Promise<void> {
@@ -140,7 +140,7 @@ export function Desktop() {
       <Dock />
       <Spotlight />
       <ContextMenu />
-      <span className="desktop__signature mono">V.01 —— VERBOS // ONE MACHINE, TWO USERS</span>
+      <span className="desktop__signature mono">V.01 —— WEBMCP COMPUTER // ONE MACHINE, TWO USERS</span>
       <div className="desktop__scanlines" aria-hidden="true" />
       <div className="desktop__vignette" aria-hidden="true" />
     </main>

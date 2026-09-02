@@ -1,4 +1,4 @@
-# Session restore, desktop presence, window-contract parity (M6)
+# Session restore, desktop presence, window-contract parity
 
 User-driven round (2026-08-26 feedback). Theme: the OS should feel persistent and
 inhabited, and everything a human can do to a window, an agent can do through the
@@ -7,14 +7,15 @@ contract. BRIEF rules bind throughout — especially 3 (every control has a verb
 
 ## Scope, in priority order
 
-1. **Per-tab session restore.** Refreshing a tab restores that tab's exact desktop:
+1. **Browser-installation session restore.** Refreshing or reopening the browser restores the machine's exact desktop:
    open apps, window rects, z-order, focused window, Editor's open file, Notes
    selection, terminal cwd (fresh shell session in the restored window — scrollback is
-   NOT restored; the session genuinely ended). Persist to `sessionStorage` (per-tab by
-   nature) on every kernel window/process mutation (debounced); restore at boot after
-   FS ready, skipping the screensaver when restoring a non-empty session. FS + settings
-   already persist via OPFS — this is the window/process table. Multi-tab mirrored
-   state is OUT of scope (recorded as future work). e2e: open 3 apps, move one, reload
+   NOT restored; the session genuinely ended). Persist to `localStorage` on every
+   kernel window/process mutation (debounced); restore at boot after FS ready, skipping
+   the screensaver when restoring a non-empty session. FS + settings already persist
+   via OPFS — this is the window/process table. Live multi-tab synchronization is OUT
+   of scope; machine ownership still prevents two tabs from acting as the machine at
+   once. e2e: open 3 apps, move one, reload
    → same rects/z/focus; unit: serializer round-trip.
 2. **One window chrome, consistent corners + icons.** The terminal (xterm canvas) pokes
    square corners outside the rounded window — the shared `Window` component owns
@@ -62,7 +63,7 @@ contract. BRIEF rules bind throughout — especially 3 (every control has a verb
 
 ## Out of scope
 
-Cross-tab mirrored window state; served-content tool registration; full Activity
+Cross-device session recovery; live cross-tab window synchronization; served-content tool registration; full Activity
 Monitor app; scrollback restoration.
 
 ## Acceptance

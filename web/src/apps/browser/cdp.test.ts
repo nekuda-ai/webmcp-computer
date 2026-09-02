@@ -36,14 +36,14 @@ describe("CdpClient", () => {
     const timeoutSocket = new FakeSocket();
     const timeoutClient = new CdpClient(timeoutSocket, { commandTimeoutMs: 5 });
     await expect(timeoutClient.send("Page.slow")).rejects.toThrow(
-      "verbos: browser command timed out: Page.slow",
+      "webmcp-computer: browser command timed out: Page.slow",
     );
 
     const closeSocket = new FakeSocket();
     const closeClient = new CdpClient(closeSocket);
     const pending = closeClient.send("Page.pending");
     closeSocket.close();
-    await expect(pending).rejects.toThrow("verbos: browser connection closed");
+    await expect(pending).rejects.toThrow("webmcp-computer: browser connection closed");
   });
 
   test("prefixes every evaluate operation with its marker", async () => {
@@ -56,12 +56,12 @@ describe("CdpClient", () => {
         id: number;
         params: { expression: string };
       };
-      expect(sent.params.expression.startsWith(`/*verbos:${operation}*/`)).toBe(true);
+      expect(sent.params.expression.startsWith(`/*webmcp-computer:${operation}*/`)).toBe(true);
       socket.receive({ id: sent.id, result: { result: { value: 2 } } });
       expect(await result).toBe(2);
     }
     await expect(client.send("Runtime.evaluate", { expression: "1 + 1" })).rejects.toThrow(
-      "verbos: browser evaluate expression is missing its operation marker",
+      "webmcp-computer: browser evaluate expression is missing its operation marker",
     );
   });
 
@@ -91,12 +91,12 @@ describe("CdpClient", () => {
     expect(await event).toEqual({ timestamp: 42 });
   });
 
-  test("reports missing serialized evaluate values with verbos voice", async () => {
+  test("reports missing serialized evaluate values with webmcp-computer voice", async () => {
     const socket = new FakeSocket();
     const client = new CdpClient(socket);
     const evaluated = client.evaluate("read", "undefined");
     const sent = JSON.parse(socket.sent.at(-1) ?? "") as { id: number };
     socket.receive({ id: sent.id, result: { result: {} } });
-    await expect(evaluated).rejects.toThrow("verbos: browser returned no value for read");
+    await expect(evaluated).rejects.toThrow("webmcp-computer: browser returned no value for read");
   });
 });

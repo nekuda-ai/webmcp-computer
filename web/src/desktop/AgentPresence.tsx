@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useKernelStore } from "../kernel/store";
 import type { WindowRect } from "../kernel/types";
-import { formatVerbCall } from "./verbPresentation";
+import { formatEventSummary, TOAST_SUMMARY_MAX_CHARS } from "./verbPresentation";
 import { qrSvg } from "../shared/qr";
 
 export const AGENT_CURSOR_IDLE_MS = 8_000;
@@ -109,9 +109,7 @@ export function AgentPresence() {
 
   if (!event) return null;
   const failed = event.ok === false;
-  const label = failed
-    ? event.reason === undefined ? event.verb : `${event.verb} · ${event.reason}`
-    : formatVerbCall(event.verb, event.args);
+  const label = formatEventSummary(event, TOAST_SUMMARY_MAX_CHARS);
   const publishedUrl = event.verb === "os_publish" && event.ok === true &&
       typeof event.args.url === "string"
     ? event.args.url

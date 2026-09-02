@@ -3,7 +3,7 @@ import type { Page } from "puppeteer-core";
 import { BOOT_TOOL_NAMES } from "./coldBoot.e2e";
 import {
   executeWebMcpTool,
-  reloadVerbOS,
+  reloadWebMCPComputer,
   waitForText,
   waitForFileSystemReady,
   waitForWebMcpToolGone,
@@ -42,10 +42,10 @@ export async function spotlightHoverPrecedenceScenario(page: Page): Promise<void
   await page.keyboard.press("k");
   await page.keyboard.up("Control");
   const input = await page.waitForSelector(
-    '.spotlight__search input[aria-label="Search VerbOS"]',
+    '.spotlight__search input[aria-label="Search WebMCP Computer"]',
     { visible: true },
   );
-  if (!input) throw new Error("VerbOS e2e Spotlight input not found");
+  if (!input) throw new Error("WebMCP Computer e2e Spotlight input not found");
   await input.type("aurora");
   await page.waitForFunction(
     () => (document.querySelector(".spotlight__results")?.textContent ?? "").includes("brief.md"),
@@ -139,7 +139,7 @@ export async function m5Scenario(page: Page): Promise<void> {
     size: "cover",
   });
 
-  await reloadVerbOS(page, BOOT_TOOL_NAMES);
+  await reloadWebMCPComputer(page, BOOT_TOOL_NAMES);
   await page.waitForFunction(() => document.documentElement.dataset.theme === "dark");
   expect((await executeWebMcpTool<Settings>(page, "settings_get")).theme).toBe("dark");
 
@@ -179,10 +179,10 @@ export async function m5Scenario(page: Page): Promise<void> {
   await page.keyboard.up("Control");
   await page.waitForSelector(".spotlight", { visible: true });
   const spotlightInput = await page.waitForSelector(
-    '.spotlight__search input[aria-label="Search VerbOS"]',
+    '.spotlight__search input[aria-label="Search WebMCP Computer"]',
     { visible: true },
   );
-  if (!spotlightInput) throw new Error("VerbOS e2e Spotlight input not found");
+  if (!spotlightInput) throw new Error("WebMCP Computer e2e Spotlight input not found");
   await spotlightInput.type("aurora");
   await page.waitForFunction(
     () => document.querySelector<HTMLInputElement>('.spotlight__search input')?.value === "aurora",
@@ -190,7 +190,7 @@ export async function m5Scenario(page: Page): Promise<void> {
   await page.waitForFunction(
     () => {
       const text = document.querySelector(".spotlight__results")?.textContent ?? "";
-      return text.includes("brief.md") || text.includes("verbos:");
+      return text.includes("brief.md") || text.includes("webmcp-computer:");
     },
   );
   const spotlightText = await page.$eval(
@@ -208,7 +208,7 @@ export async function m5Scenario(page: Page): Promise<void> {
   const manPage = await executeWebMcpTool<ExecResult>(page, "term_exec", {
     command: "man fs_read",
   });
-  expect(manPage.stdout).toStartWith("FS_READ(1) — VerbOS syscalls\n");
+  expect(manPage.stdout).toStartWith("FS_READ(1) — WebMCP Computer syscalls\n");
 
   const settingsWindow = await executeWebMcpTool<OpenResult>(page, "app_open", {
     appId: "settings",
@@ -224,7 +224,7 @@ export async function m5Scenario(page: Page): Promise<void> {
     ".window-shell--settings .settings-segmented button:last-child",
     { visible: true },
   );
-  if (!darkButton) throw new Error("VerbOS e2e dark theme button not found");
+  if (!darkButton) throw new Error("WebMCP Computer e2e dark theme button not found");
   await darkButton.hover();
   await page.waitForSelector('.verb-hint__tip.is-ready[data-placement]', { visible: true });
   const hintGeometry = await page.evaluate(() => {
@@ -311,10 +311,10 @@ export async function m5Scenario(page: Page): Promise<void> {
   await page.keyboard.press("k");
   await page.keyboard.up("Control");
   const fileSearch = await page.waitForSelector(
-    '.spotlight__search input[aria-label="Search VerbOS"]',
+    '.spotlight__search input[aria-label="Search WebMCP Computer"]',
     { visible: true },
   );
-  if (!fileSearch) throw new Error("VerbOS e2e file search input not found");
+  if (!fileSearch) throw new Error("WebMCP Computer e2e file search input not found");
   await fileSearch.type("brief.md");
   await waitForText(page, ".spotlight__results", "brief.md");
   await page.keyboard.press("Enter");

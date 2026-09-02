@@ -1,14 +1,16 @@
-const ACCOUNT_ID = "cf3d5b1eddd4c74d217780cdb7e55d07";
-const KEEP_ALIVE_MS = 300_000;
-const API_ROOT =
-  `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/browser-rendering/devtools/browser`;
+import {
+  bearerGatewayCapability,
+  verifyGatewayCapability,
+  type GatewayCapabilityClaims,
+} from "../../../shared/gateway-capability";
+
+const KEEP_ALIVE_MS = 900_000;
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const CORS_HEADERS = {
-  "Access-Control-Allow-Headers": "Content-Type",
+  "Access-Control-Allow-Headers": "Authorization, Content-Type",
   "Access-Control-Allow-Methods": "POST, DELETE, OPTIONS",
-  "Access-Control-Allow-Origin": "*",
 } as const;
 
 export type RateLimitBinding = {
@@ -16,13 +18,22 @@ export type RateLimitBinding = {
 };
 
 export type Env = {
-  CF_API_TOKEN: string;
+  CF_ACCOUNT_ID: string;
+  BROWSER_RENDERING_API_TOKEN?: string;
+  CF_API_TOKEN?: string;
+  GATEWAY_SIGNING_SECRET: string;
   SESSION_RATE: RateLimitBinding;
   SESSION_ACTION_RATE: RateLimitBinding;
 };
 
+function apiRoot(env: Env): string {
+  if (!/^[0-9a-f]{32}$/i.test(env.CF_ACCOUNT_ID)) throw new Error("invalid Cloudflare account ID");
+  return `https://api.cloudflare.com/client/v4/accounts/${env.CF_ACCOUNT_ID}/browser-rendering/devtools/browser`;
+}
+
 export type WorkerDependencies = {
   fetch(input: RequestInfo, init?: RequestInit): Promise<Response>;
+  authenticate(request: Request, env: Env): Promise<GatewayCapabilityClaims>;
 };
 
 type SessionTarget = {
@@ -41,10 +52,18 @@ type SessionResponse = {
   keepAliveMs: number;
 };
 
-function json(body: unknown, status = 200): Response {
+function corsHeaders(request: Request): HeadersInit {
+  const origin = request.headers.get("Origin");
+  return {
+    ...CORS_HEADERS,
+    ...(origin === null ? {} : { "Access-Control-Allow-Origin": origin, Vary: "Origin" }),
+  };
+}
+
+function json(request: Request, body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+    headers: { "Content-Type": "application/json", ...corsHeaders(request) },
   });
 }
 
@@ -54,6 +73,12 @@ function oneLine(value: unknown): string {
 
 function bearer(token: string): HeadersInit {
   return { Authorization: `Bearer ${token}` };
+}
+
+function browserRenderingApiToken(env: Env): string {
+  const token = env.BROWSER_RENDERING_API_TOKEN ?? env.CF_API_TOKEN;
+  if (!token) throw new Error("browser rendering API token is not configured");
+  return token;
 }
 
 function validHttpUrl(value: unknown): string {
@@ -70,7 +95,7 @@ function validHttpUrl(value: unknown): string {
   return parsed.href;
 }
 
-async function upstreamError(response: Response): Promise<Response> {
+async function upstreamError(request: Request, response: Response): Promise<Response> {
   let message = `browser service returned ${response.status}`;
   try {
     const payload = await response.json() as {
@@ -83,7 +108,7 @@ async function upstreamError(response: Response): Promise<Response> {
   } catch {
     // Keep status-derived message when upstream did not return JSON.
   }
-  return json({ error: message }, response.status);
+  return json(request, { error: message }, response.status);
 }
 
 function sessionPayload(sessionId: string, target: SessionTarget): SessionResponse {
@@ -115,8 +140,8 @@ async function closeUpstreamSession(
 ): Promise<void> {
   try {
     await dependencies.fetch(
-      `${API_ROOT}/${encodeURIComponent(sessionId)}`,
-      { method: "DELETE", headers: bearer(env.CF_API_TOKEN) },
+      `${apiRoot(env)}/${encodeURIComponent(sessionId)}`,
+      { method: "DELETE", headers: bearer(browserRenderingApiToken(env)) },
     );
   } catch {
     // keep_alive remains the cost-control backstop when best-effort cleanup fails.
@@ -146,119 +171,154 @@ async function createSession(
   env: Env,
   dependencies: WorkerDependencies,
 ): Promise<Response> {
-  const clientIp = request.headers.get("CF-Connecting-IP") ?? "unknown";
-  const rate = await env.SESSION_RATE.limit({ key: clientIp });
-  if (!rate.success) return json({ error: "rate limited" }, 429);
-
   let url: string;
   try {
     url = await parseOptionalUrl(request);
   } catch (error) {
-    return json({ error: oneLine(error instanceof Error ? error.message : error) }, 400);
+    return json(request, { error: oneLine(error instanceof Error ? error.message : error) }, 400);
   }
 
   const created = await dependencies.fetch(
-    `${API_ROOT}?keep_alive=${KEEP_ALIVE_MS}&lab=true`,
-    { method: "POST", headers: bearer(env.CF_API_TOKEN) },
+    `${apiRoot(env)}?keep_alive=${KEEP_ALIVE_MS}&lab=true`,
+    { method: "POST", headers: bearer(browserRenderingApiToken(env)) },
   );
-  if (!created.ok) return await upstreamError(created);
+  if (!created.ok) return await upstreamError(request, created);
   const createdBody = await created.json() as { sessionId?: unknown };
   if (typeof createdBody.sessionId !== "string") {
-    return json({ error: "browser service returned an invalid session" }, 502);
+    return json(request, { error: "browser service returned an invalid session" }, 502);
   }
 
   try {
     const targetResponse = await dependencies.fetch(
-      `${API_ROOT}/${encodeURIComponent(createdBody.sessionId)}/json/new?url=${encodeURIComponent(url)}`,
-      { method: "PUT", headers: bearer(env.CF_API_TOKEN) },
+      `${apiRoot(env)}/${encodeURIComponent(createdBody.sessionId)}/json/new?url=${encodeURIComponent(url)}`,
+      { method: "PUT", headers: bearer(browserRenderingApiToken(env)) },
     );
     if (!targetResponse.ok) {
       await closeUpstreamSession(createdBody.sessionId, env, dependencies);
-      return await upstreamError(targetResponse);
+      return await upstreamError(request, targetResponse);
     }
     const target = await targetResponse.json() as SessionTarget;
-    return json(sessionPayload(createdBody.sessionId, target));
+    return json(request, sessionPayload(createdBody.sessionId, target));
   } catch (error) {
     await closeUpstreamSession(createdBody.sessionId, env, dependencies);
-    return json({ error: oneLine(error instanceof Error ? error.message : error) }, 502);
+    return json(request, { error: oneLine(error instanceof Error ? error.message : error) }, 502);
   }
 }
 
 async function refreshSession(
+  request: Request,
   sessionId: string,
   env: Env,
   dependencies: WorkerDependencies,
 ): Promise<Response> {
   const response = await dependencies.fetch(
-    `${API_ROOT}/${encodeURIComponent(sessionId)}/json/list`,
-    { headers: bearer(env.CF_API_TOKEN) },
+    `${apiRoot(env)}/${encodeURIComponent(sessionId)}/json/list`,
+    { headers: bearer(browserRenderingApiToken(env)) },
   );
-  if (!response.ok) return await upstreamError(response);
+  if (!response.ok) return await upstreamError(request, response);
   try {
     const targets = await response.json() as SessionTarget[];
     const target = targets.find(({ type }) => type === "page") ?? targets[0];
     if (!target) throw new Error("browser service returned no page target");
-    return json(sessionPayload(sessionId, target));
+    return json(request, sessionPayload(sessionId, target));
   } catch (error) {
-    return json({ error: oneLine(error instanceof Error ? error.message : error) }, 502);
+    return json(request, { error: oneLine(error instanceof Error ? error.message : error) }, 502);
   }
 }
 
 async function deleteSession(
+  request: Request,
   sessionId: string,
   env: Env,
   dependencies: WorkerDependencies,
 ): Promise<Response> {
   const response = await dependencies.fetch(
-    `${API_ROOT}/${encodeURIComponent(sessionId)}`,
-    { method: "DELETE", headers: bearer(env.CF_API_TOKEN) },
+    `${apiRoot(env)}/${encodeURIComponent(sessionId)}`,
+    { method: "DELETE", headers: bearer(browserRenderingApiToken(env)) },
   );
-  if (!response.ok) return await upstreamError(response);
+  if (!response.ok) return await upstreamError(request, response);
   try {
     const payload = await response.json() as { status?: unknown };
-    return json({ status: typeof payload.status === "string" ? payload.status : "closed" });
+    return json(request, { status: typeof payload.status === "string" ? payload.status : "closed" });
   } catch {
-    return json({ status: "closed" });
+    return json(request, { status: "closed" });
   }
 }
+
+export async function authenticateBrowserRequest(
+  request: Request,
+  env: Env,
+): Promise<GatewayCapabilityClaims> {
+  return await verifyGatewayCapability(bearerGatewayCapability(request), {
+    secret: env.GATEWAY_SIGNING_SECRET,
+    scope: "browser",
+    origin: request.headers.get("Origin"),
+  });
+}
+
+const defaultDependencies: WorkerDependencies = {
+  fetch: (...args) => fetch(...args),
+  authenticate: authenticateBrowserRequest,
+};
 
 export async function handleRequest(
   request: Request,
   env: Env,
   // Workers rejects an unbound global fetch with "Illegal invocation".
-  dependencies: WorkerDependencies = { fetch: (...args) => fetch(...args) },
+  dependencies: WorkerDependencies = defaultDependencies,
 ): Promise<Response> {
   try {
-    if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS_HEADERS });
+    if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders(request) });
 
     const { pathname } = new URL(request.url);
     if (request.method === "POST" && pathname === "/session") {
+      let claims: GatewayCapabilityClaims;
+      try {
+        claims = await dependencies.authenticate(request, env);
+      } catch {
+        return json(request, { error: "unauthorized" }, 401);
+      }
+      const clientIp = request.headers.get("CF-Connecting-IP") ?? "unknown";
+      const rate = await env.SESSION_RATE.limit({ key: `${claims.subject}:${clientIp}` });
+      if (!rate.success) return json(request, { error: "rate limited" }, 429);
       return await createSession(request, env, dependencies);
     }
 
     const refreshMatch = /^\/session\/([^/]+)\/refresh$/.exec(pathname);
     if (request.method === "POST" && refreshMatch) {
       const sessionId = refreshMatch[1] ?? "";
-      if (!UUID_PATTERN.test(sessionId)) return json({ error: "invalid session id" }, 400);
+      if (!UUID_PATTERN.test(sessionId)) return json(request, { error: "invalid session id" }, 400);
+      let claims: GatewayCapabilityClaims;
+      try {
+        claims = await dependencies.authenticate(request, env);
+      } catch {
+        return json(request, { error: "unauthorized" }, 401);
+      }
       const clientIp = request.headers.get("CF-Connecting-IP") ?? "unknown";
-      const rate = await env.SESSION_ACTION_RATE.limit({ key: clientIp });
-      if (!rate.success) return json({ error: "rate limited" }, 429);
-      return await refreshSession(sessionId, env, dependencies);
+      const rate = await env.SESSION_ACTION_RATE.limit({ key: `${claims.subject}:${clientIp}` });
+      if (!rate.success) return json(request, { error: "rate limited" }, 429);
+      return await refreshSession(request, sessionId, env, dependencies);
     }
 
     const deleteMatch = /^\/session\/([^/]+)$/.exec(pathname);
     if (request.method === "DELETE" && deleteMatch) {
       const sessionId = deleteMatch[1] ?? "";
-      if (!UUID_PATTERN.test(sessionId)) return json({ error: "invalid session id" }, 400);
+      if (!UUID_PATTERN.test(sessionId)) return json(request, { error: "invalid session id" }, 400);
+      let claims: GatewayCapabilityClaims;
+      try {
+        claims = await dependencies.authenticate(request, env);
+      } catch {
+        return json(request, { error: "unauthorized" }, 401);
+      }
       const clientIp = request.headers.get("CF-Connecting-IP") ?? "unknown";
-      const rate = await env.SESSION_ACTION_RATE.limit({ key: clientIp });
-      if (!rate.success) return json({ error: "rate limited" }, 429);
-      return await deleteSession(sessionId, env, dependencies);
+      const rate = await env.SESSION_ACTION_RATE.limit({ key: `${claims.subject}:${clientIp}` });
+      if (!rate.success) return json(request, { error: "rate limited" }, 429);
+      return await deleteSession(request, sessionId, env, dependencies);
     }
 
-    return json({ error: "not found" }, 404);
+    return json(request, { error: "not found" }, 404);
   } catch (error) {
-    return json({ error: oneLine(error instanceof Error ? error.message : error) }, 502);
+    return json(request, { error: oneLine(error instanceof Error ? error.message : error) }, 502);
   }
 }
 

@@ -10,10 +10,15 @@ import {
 import { dirname } from "@zenfs/core/path";
 import { resolveWorkerUrl } from "../shared/workerUrl";
 import { MAX_FS_BATCH_OPERATIONS } from "../../../workers/computer/src/protocol";
+import {
+  hostedAuthorization,
+  hostedSessionSnapshot,
+  hostedWorkerUrl,
+  hostedWorkspaceId,
+} from "./hostedSession";
 
-export const PRODUCTION_COMPUTER_WORKER_URL = "https://verbos-computer.nekuda.workers.dev";
-export const CLOUD_KERNEL_STORAGE_KEY = "verbos.cloud_kernel";
-export const WORKSPACE_STORAGE_KEY = "verbos.workspace";
+export const CLOUD_KERNEL_STORAGE_KEY = "webmcp_computer.cloud_kernel";
+export const WORKSPACE_STORAGE_KEY = "webmcp_computer.workspace";
 
 const WORKSPACE_ID = /^[0-9a-f]{32}$/;
 
@@ -32,6 +37,7 @@ export type CloudFsDependencies = {
   fetch: typeof fetch;
   workerBaseUrl: string;
   workspaceId: string;
+  authorization?: () => Promise<{ Authorization: string }>;
   requestTimeoutMs?: number;
 };
 
@@ -96,6 +102,7 @@ export function ensureWorkspaceId(
   storage: StorageWriter | undefined = defaultStorage(),
   random?: (array: Uint8Array) => Uint8Array,
 ): string {
+  if (hostedSessionSnapshot().status === "active") return hostedWorkspaceId();
   const stored = storage?.getItem(WORKSPACE_STORAGE_KEY);
   if (stored && WORKSPACE_ID.test(stored)) return stored;
   const workspaceId = mintWorkspaceId(random);
@@ -106,11 +113,12 @@ export function ensureWorkspaceId(
 export function resolveComputerWorkerUrl(
   options: ComputerWorkerResolutionOptions = {},
 ): string {
+  if (hostedSessionSnapshot().status === "active") return hostedWorkerUrl("computer");
   return resolveWorkerUrl({
     queryKey: "computer_worker",
-    storageKey: "verbos.computer_worker",
+    storageKey: "webmcp_computer.computer_worker",
     label: "computer",
-    defaultUrl: options.defaultUrl ?? PRODUCTION_COMPUTER_WORKER_URL,
+    ...(options.defaultUrl === undefined ? {} : { defaultUrl: options.defaultUrl }),
     envUrl: options.envUrl ?? import.meta.env.VITE_COMPUTER_WORKER_URL,
     ...(options.search === undefined ? {} : { search: options.search }),
     ...(options.storage === undefined ? {} : { storage: options.storage }),
@@ -138,7 +146,7 @@ function base64ToBytes(value: string): Uint8Array {
 
 function asResponse(value: unknown, path: string): FsResponse {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    throw coded("verbos: computer Worker returned an invalid filesystem response", "EIO", path);
+    throw coded("webmcp-computer: computer Worker returned an invalid filesystem response", "EIO", path);
   }
   return value as FsResponse;
 }
@@ -148,7 +156,7 @@ export class CloudFsClient {
 
   constructor(dependencies: CloudFsDependencies) {
     if (!WORKSPACE_ID.test(dependencies.workspaceId)) {
-      throw new Error("verbos: invalid cloud workspace id");
+      throw new Error("webmcp-computer: invalid cloud workspace id");
     }
     this.#dependencies = dependencies;
   }
@@ -157,11 +165,12 @@ export class CloudFsClient {
     const timeoutMs = this.#dependencies.requestTimeoutMs ?? CLOUD_FS_REQUEST_TIMEOUT_MS;
     let response: Response;
     try {
+      const authorization = await this.#dependencies.authorization?.() ?? {};
       response = await this.#dependencies.fetch(
         `${this.#dependencies.workerBaseUrl}/ws/${this.#dependencies.workspaceId}/fs${path}`,
         {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...authorization },
           body: JSON.stringify(body),
           signal: AbortSignal.timeout(timeoutMs),
         },
@@ -171,7 +180,7 @@ export class CloudFsClient {
         error !== null && typeof error === "object" &&
         ["AbortError", "TimeoutError"].includes(String((error as { name?: unknown }).name))
       ) {
-        throw coded(`verbos: cloud filesystem request timed out after ${timeoutMs}ms`, "ETIMEDOUT");
+        throw coded(`webmcp-computer: cloud filesystem request timed out after ${timeoutMs}ms`, "ETIMEDOUT");
       }
       throw error;
     }
@@ -200,7 +209,7 @@ export class CloudFsClient {
   async batch(operations: readonly CloudFsOperation[]): Promise<FsResponse[]> {
     const value = await this.#post("/batch", operations);
     if (!Array.isArray(value) || value.length !== operations.length) {
-      throw coded("verbos: computer Worker returned an invalid batch response", "EIO");
+      throw coded("webmcp-computer: computer Worker returned an invalid batch response", "EIO");
     }
     return value.map((entry, index) => asResponse(entry, operations[index]?.path ?? "/"));
   }
@@ -246,7 +255,7 @@ const CloudFileSystemBase = Async(IndexFS);
 
 export class CloudFileSystem extends CloudFileSystemBase {
   readonly #client: CloudFsClient;
-  _sync = InMemory.create({ label: "verbos-cloud-cache" });
+  _sync = InMemory.create({ label: "webmcp-computer-cloud-cache" });
 
   constructor(client: CloudFsClient) {
     super(0x636c6f75, "cloudfs");
@@ -260,7 +269,7 @@ export class CloudFileSystem extends CloudFileSystemBase {
     ]);
     if (root[0]?.error) throw coded(root[0].error, root[0].code, "/");
     if (!root[0]?.stat || !root[0].stat.isDirectory || !Array.isArray(root[1]?.entries)) {
-      throw coded("verbos: cloud workspace returned an invalid root", "EIO", "/");
+      throw coded("webmcp-computer: cloud workspace returned an invalid root", "EIO", "/");
     }
     this.index.set("/", inodeFromRemote(root[0].stat));
 

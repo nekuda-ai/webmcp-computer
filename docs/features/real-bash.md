@@ -1,9 +1,9 @@
-# Real bash terminal — just-bash on the VerbOS filesystem (M8, NEK-835)
+# Real bash terminal — just-bash on the WebMCP Computer filesystem
 
 ## Goal
 
 The Terminal stops being a simulation. `just-bash` (Vercel Labs, pure-TS bash) runs
-fully in the browser against the real VerbOS filesystem, giving the human and the agent
+fully in the browser against the real WebMCP Computer filesystem, giving the human and the agent
 ~100 real commands (grep, awk, sed, jq, sort, head, tar…), pipes, redirects, subshells,
 and variables — while every write still flows through the kernel so conflict detection,
 watch-driven live reload (Preview, ui apps), and source attribution keep working.
@@ -49,10 +49,10 @@ becomes genuinely powerful (jq over files the agent just wrote, grep across ~/no
   kernel write path **with the execution's source** ("human" | "agent") so conflict
   bars, watch events, and traces behave exactly as before. The adapter is
   per-execution-bound to a source (factory takes the source, or context threads it).
-- Path mapping: VerbOS paths are `~`-rooted; just-bash cwd is POSIX. Map `~` ↔ `/home/user`
+- Path mapping: WebMCP Computer paths are `~`-rooted; just-bash cwd is POSIX. Map `~` ↔ `/home/user`
   (or whatever just-bash defaults to) consistently in the adapter and in prompt display;
   pick the minimal mapping that keeps existing `~`-rooted outputs stable.
-- Binary/size guards from `kernel/fs` still apply (M5 pins). Errors surface with the
+- Binary/size guards from `kernel/fs` still apply (kernel pins). Errors surface with the
   kernel's message text where tests pin them.
 
 ### OS verbs as shell commands
@@ -95,7 +95,7 @@ Unit:
 - Adapter tests: `IFileSystem` conformance over the in-memory backend (read/write/
   stat/readdir/mkdir/rm/append, missing-file error text, is-a-directory error text,
   binary guard passthrough).
-- Regression pins that reference shell behavior (M2/M3-style error texts) reviewed:
+- Regression pins that reference shell behavior (early error texts) reviewed:
   keep kernel-level pins intact; shell-level texts may change with the engine.
 
 E2E:

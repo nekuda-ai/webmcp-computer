@@ -1,9 +1,9 @@
 import { MAX_FS_BATCH_OPERATIONS, PUBLISHED_SITE_RETENTION_DAYS } from "./protocol";
+import type { GatewayCapabilityClaims } from "../../../shared/gateway-capability";
 
 const CORS_HEADERS = {
-  "Access-Control-Allow-Headers": "Content-Type",
+  "Access-Control-Allow-Headers": "Authorization, Content-Type",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-  "Access-Control-Allow-Origin": "*",
 } as const;
 
 const WORKSPACE_ID = /^[0-9a-f]{32}$/;
@@ -36,6 +36,7 @@ export type SiteStore = {
 };
 
 export type HandlerEnv = {
+  GATEWAY_SIGNING_SECRET: string;
   SITES: SiteStore;
   EXEC_RATE: RateLimitBinding;
   PUBLISH_RATE: RateLimitBinding;
@@ -97,6 +98,7 @@ export type WorkspaceExecHandle = ReadableStream<WorkspaceExecEvent> & {
 };
 
 export type WorkerDependencies = {
+  authenticate(request: Request, env: HandlerEnv, workspaceId: string): Promise<GatewayCapabilityClaims>;
   openWorkspace(wsid: string, env: HandlerEnv): Promise<WorkspaceHandle>;
   randomSlug(): string;
 };
@@ -117,6 +119,16 @@ function json(body: unknown, status = 200): Response {
     status,
     headers: { "Content-Type": "application/json", ...CORS_HEADERS },
   });
+}
+
+function withCors(response: Response, request: Request, publicResource = false): Response {
+  const origin = request.headers.get("Origin");
+  if (publicResource) response.headers.set("Access-Control-Allow-Origin", "*");
+  else if (origin !== null) {
+    response.headers.set("Access-Control-Allow-Origin", origin);
+    response.headers.append("Vary", "Origin");
+  }
+  return response;
 }
 
 function oneLine(value: unknown): string {
@@ -330,13 +342,13 @@ async function preflightRename(
   const destination = await fs.statOrNull(to);
   if (!destination) return;
   if (source.isDirectory && !destination.isDirectory) {
-    throw coded(`verbos: not a directory: ${from}`, "ENOTDIR");
+    throw coded(`webmcp-computer: not a directory: ${from}`, "ENOTDIR");
   }
   if (!source.isDirectory && destination.isDirectory) {
-    throw coded(`verbos: is a directory: ${from}`, "EISDIR");
+    throw coded(`webmcp-computer: is a directory: ${from}`, "EISDIR");
   }
   if (source.isDirectory && (await fs.readdir(to)).length > 0) {
-    throw coded(`verbos: directory not empty: ${to}`, "ENOTEMPTY");
+    throw coded(`webmcp-computer: directory not empty: ${to}`, "ENOTEMPTY");
   }
 }
 
@@ -391,6 +403,7 @@ async function workspaceResponse(
   dependencies: WorkerDependencies,
   wsid: string,
   batch: boolean,
+  rateKey: string,
 ): Promise<Response> {
   let parsed: unknown;
   try {
@@ -418,11 +431,8 @@ async function workspaceResponse(
 
   const mutationCount = operations.filter(mutates).length;
   if (mutationCount > 0) {
-    const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
-    for (let index = 0; index < mutationCount; index += 1) {
-      const rate = await env.WORKSPACE_WRITE_RATE.limit({ key: ip });
-      if (!rate.success) return json({ error: "rate limited" }, 429);
-    }
+    const rate = await env.WORKSPACE_WRITE_RATE.limit({ key: rateKey });
+    if (!rate.success) return json({ error: "rate limited" }, 429);
   }
 
   try {
@@ -478,8 +488,8 @@ function parsePublishFiles(value: unknown): { files: PublishFile[]; bytes: numbe
       throw coded("publish file contains unknown fields", "EINVAL");
     }
     const path = requireRelativePath(file.path);
-    if (path === ".verbos-site") {
-      throw coded("verbos: publish path is reserved: .verbos-site", "EINVAL");
+    if (path === ".webmcp-computer-site") {
+      throw coded("webmcp-computer: publish path is reserved: .webmcp-computer-site", "EINVAL");
     }
     if (seen.has(path)) throw coded(`duplicate publish path: ${path}`, "EEXIST");
     seen.add(path);
@@ -497,7 +507,7 @@ async function allocateSiteId(store: SiteStore, randomSlug: () => string): Promi
   for (let attempt = 0; attempt < 8; attempt += 1) {
     const id = randomSlug();
     if (!SITE_ID.test(id)) throw coded("slug generator returned an invalid id", "EIO");
-    if (await store.get(`sites/${id}/.verbos-site`) === null) return id;
+    if (await store.get(`sites/${id}/.webmcp-computer-site`) === null) return id;
   }
   throw coded("could not allocate a unique site id", "EEXIST");
 }
@@ -506,9 +516,9 @@ async function publishResponse(
   request: Request,
   env: HandlerEnv,
   dependencies: WorkerDependencies,
+  rateKey: string,
 ): Promise<Response> {
-  const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
-  const rate = await env.PUBLISH_RATE.limit({ key: ip });
+  const rate = await env.PUBLISH_RATE.limit({ key: rateKey });
   if (!rate.success) return json({ error: "rate limited" }, 429);
 
   let value: unknown;
@@ -520,7 +530,7 @@ async function publishResponse(
   try {
     const { files } = parsePublishFiles(value);
     const id = await allocateSiteId(env.SITES, dependencies.randomSlug);
-    await env.SITES.put(`sites/${id}/.verbos-site`, id);
+    await env.SITES.put(`sites/${id}/.webmcp-computer-site`, id);
     for (const file of files) {
       await env.SITES.put(`sites/${id}/${file.path}`, file.content, {
         httpMetadata: { contentType: contentType(file.path) },
@@ -545,6 +555,7 @@ async function execResponse(
   env: HandlerEnv,
   dependencies: WorkerDependencies,
   wsid: string,
+  rateKey: string,
 ): Promise<Response> {
   let parsed: unknown;
   try {
@@ -560,8 +571,7 @@ async function execResponse(
     return errorResponse(error, 400);
   }
 
-  const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
-  const rate = await env.EXEC_RATE.limit({ key: ip });
+  const rate = await env.EXEC_RATE.limit({ key: rateKey });
   if (!rate.success) return json({ error: "rate limited" }, 429);
 
   const body = new ReadableStream<Uint8Array>({
@@ -594,7 +604,7 @@ async function execResponse(
               if (outputBytes + chunkBytes > MAX_EXEC_OUTPUT_BYTES) {
                 outputTruncated = true;
                 streamController.enqueue(sseFrame("notice", {
-                  message: "verbos: cloud output truncated after 2 MB",
+                  message: "webmcp-computer: cloud output truncated after 2 MB",
                 }));
                 return;
               }
@@ -661,7 +671,7 @@ async function siteResponse(request: Request, env: HandlerEnv, id: string, rawPa
     try {
       path = requireRelativePath(candidate);
     } catch {
-      throw coded("verbos: site path must be normalized, relative, and cannot contain '..'", "EINVAL");
+      throw coded("webmcp-computer: site path must be normalized, relative, and cannot contain '..'", "EINVAL");
     }
   } catch (error) {
     return new Response(oneLine(error instanceof Error ? error.message : error), {
@@ -701,35 +711,59 @@ export async function handleRequest(
 ): Promise<Response> {
   try {
     if (request.method === "OPTIONS") {
-      return new Response(null, { status: 204, headers: CORS_HEADERS });
+      return withCors(new Response(null, { status: 204, headers: CORS_HEADERS }), request);
     }
     const { pathname } = new URL(request.url);
     const exec = /^\/ws\/([^/]+)\/exec$/.exec(pathname);
     if (request.method === "POST" && exec) {
       const wsid = exec[1] ?? "";
-      if (!WORKSPACE_ID.test(wsid)) return json({ error: "invalid workspace id", code: "EINVAL" }, 400);
-      return await execResponse(request, env, dependencies, wsid);
+      if (!WORKSPACE_ID.test(wsid)) return withCors(json({ error: "invalid workspace id", code: "EINVAL" }, 400), request);
+      let claims: GatewayCapabilityClaims;
+      try {
+        claims = await dependencies.authenticate(request, env, wsid);
+      } catch {
+        return withCors(json({ error: "unauthorized" }, 401), request);
+      }
+      const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
+      return withCors(await execResponse(request, env, dependencies, wsid, `${claims.subject}:${ip}`), request);
     }
     const publish = /^\/ws\/([^/]+)\/publish$/.exec(pathname);
     if (request.method === "POST" && publish) {
       const wsid = publish[1] ?? "";
-      if (!WORKSPACE_ID.test(wsid)) return json({ error: "invalid workspace id", code: "EINVAL" }, 400);
-      return await publishResponse(request, env, dependencies);
+      if (!WORKSPACE_ID.test(wsid)) return withCors(json({ error: "invalid workspace id", code: "EINVAL" }, 400), request);
+      let claims: GatewayCapabilityClaims;
+      try {
+        claims = await dependencies.authenticate(request, env, wsid);
+      } catch {
+        return withCors(json({ error: "unauthorized" }, 401), request);
+      }
+      const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
+      return withCors(await publishResponse(request, env, dependencies, `${claims.subject}:${ip}`), request);
     }
     const workspace = /^\/ws\/([^/]+)\/fs(\/batch)?$/.exec(pathname);
     if (request.method === "POST" && workspace) {
       const wsid = workspace[1] ?? "";
-      if (!WORKSPACE_ID.test(wsid)) return json({ error: "invalid workspace id", code: "EINVAL" }, 400);
-      return await workspaceResponse(request, env, dependencies, wsid, workspace[2] === "/batch");
+      if (!WORKSPACE_ID.test(wsid)) return withCors(json({ error: "invalid workspace id", code: "EINVAL" }, 400), request);
+      let claims: GatewayCapabilityClaims;
+      try {
+        claims = await dependencies.authenticate(request, env, wsid);
+      } catch {
+        return withCors(json({ error: "unauthorized" }, 401), request);
+      }
+      const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
+      return withCors(
+        await workspaceResponse(request, env, dependencies, wsid, workspace[2] === "/batch", `${claims.subject}:${ip}`),
+        request,
+      );
     }
     const site = /^\/s\/([^/]+)\/?(.*)$/.exec(pathname);
     if (request.method === "GET" && site) {
       const id = site[1] ?? "";
-      if (!SITE_ID.test(id)) return new Response("not found", { status: 404, headers: CORS_HEADERS });
-      return await siteResponse(request, env, id, site[2] ?? "");
+      if (!SITE_ID.test(id)) return withCors(new Response("not found", { status: 404, headers: CORS_HEADERS }), request, true);
+      return withCors(await siteResponse(request, env, id, site[2] ?? ""), request, true);
     }
-    return json({ error: "not found" }, 404);
+    return withCors(json({ error: "not found" }, 404), request);
   } catch (error) {
-    return json({ error: oneLine(error instanceof Error ? error.message : error) }, 502);
+    return withCors(json({ error: oneLine(error instanceof Error ? error.message : error) }, 502), request);
   }
 }

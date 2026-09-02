@@ -176,7 +176,7 @@ function setAppToolRegistryGroup(key: string, pid: number, batch: AppToolBatch):
   const existing = state.toolRegistryGroups.find((group) => group.id === id);
   if (batch.registeredNames.length === 0 && (existing?.tools.length ?? 0) > 0) {
     if (import.meta.env.DEV) {
-      console.warn(`VerbOS PID ${pid} ignored an empty duplicate WebMCP registration result`);
+      console.warn(`WebMCP Computer PID ${pid} ignored an empty duplicate WebMCP registration result`);
     }
     return;
   }
@@ -241,10 +241,10 @@ export function registerAppTools(
   options: RegisterToolsOptions = {},
 ): ToolRegistration {
   if (!Number.isInteger(pid) || pid < 2) {
-    throw new Error("verbos: app tool registration requires an integer PID starting at 2");
+    throw new Error("webmcp-computer: app tool registration requires an integer PID starting at 2");
   }
   if (!useKernelStore.getState().processes.some((process) => process.pid === pid)) {
-    throw new Error(`verbos: cannot register tools for missing process PID ${pid}`);
+    throw new Error(`webmcp-computer: cannot register tools for missing process PID ${pid}`);
   }
 
   const key = batchKey(tools);
@@ -293,7 +293,7 @@ export function registerAppTools(
     participant = { controller: new AbortController(), references: 1 };
     batch.participants.set(pid, participant);
     const process = useKernelStore.getState().processes.find((entry) => entry.pid === pid);
-    if (!process) throw new Error(`verbos: cannot register tools for missing process PID ${pid}`);
+    if (!process) throw new Error(`webmcp-computer: cannot register tools for missing process PID ${pid}`);
     setAppToolRegistryGroup(key, pid, batch);
   }
 
@@ -351,10 +351,10 @@ export function createSiteToolRegistryScope(
   options: SiteToolRegistryOptions = {},
 ): SiteToolRegistryScope {
   if (!Number.isInteger(pid) || pid < 2) {
-    throw new Error("verbos: site tool registration requires an integer PID starting at 2");
+    throw new Error("webmcp-computer: site tool registration requires an integer PID starting at 2");
   }
   if (!useKernelStore.getState().processes.some((process) => process.pid === pid)) {
-    throw new Error(`verbos: cannot register site tools for missing process PID ${pid}`);
+    throw new Error(`webmcp-computer: cannot register site tools for missing process PID ${pid}`);
   }
 
   const {
@@ -396,7 +396,7 @@ export function createSiteToolRegistryScope(
     entry.registration.unregister();
     for (const [controller, callName] of activeCalls) {
       if (callName !== name) continue;
-      controller.abort(new Error(`verbos: site tool unavailable: ${name}`));
+      controller.abort(new Error(`webmcp-computer: site tool unavailable: ${name}`));
       activeCalls.delete(controller);
     }
     syncRegistryState();
@@ -419,35 +419,35 @@ export function createSiteToolRegistryScope(
 
   return {
     async register(descriptor, execute) {
-      if (disposed) throw new Error("verbos: site tool scope is closed");
+      if (disposed) throw new Error("webmcp-computer: site tool scope is closed");
       if (!descriptor.name.startsWith(SITE_TOOL_PREFIX)) {
-        throw new Error(`verbos: site tool name must start with ${SITE_TOOL_PREFIX}`);
+        throw new Error(`webmcp-computer: site tool name must start with ${SITE_TOOL_PREFIX}`);
       }
       if (descriptor.name.length === SITE_TOOL_PREFIX.length) {
         throw new Error(
-          `verbos: site tool name must include at least one character after ${SITE_TOOL_PREFIX}`,
+          `webmcp-computer: site tool name must include at least one character after ${SITE_TOOL_PREFIX}`,
         );
       }
       if (entries.has(descriptor.name)) {
-        throw new Error(`verbos: site tool already registered: ${descriptor.name}`);
+        throw new Error(`webmcp-computer: site tool already registered: ${descriptor.name}`);
       }
       if (entries.size >= MAX_SITE_TOOLS) {
-        throw new Error("verbos: site tool limit reached");
+        throw new Error("webmcp-computer: site tool limit reached");
       }
 
       const name = descriptor.name;
       const descriptionBytes = new TextEncoder().encode(descriptor.description).byteLength;
       if (descriptionBytes > MAX_SITE_TOOL_DESCRIPTION_BYTES) {
-        throw new Error(`verbos: site tool description too large: ${name}`);
+        throw new Error(`webmcp-computer: site tool description too large: ${name}`);
       }
       if (
         descriptor.inputSchema !== undefined &&
         siteToolInputSchemaBytes(descriptor.inputSchema) > MAX_SITE_TOOL_INPUT_SCHEMA_BYTES
       ) {
-        throw new Error(`verbos: site tool inputSchema too large: ${name}`);
+        throw new Error(`webmcp-computer: site tool inputSchema too large: ${name}`);
       }
       const tool = defineTool({
-        stableKey: `verbos.site_${pid}_${nextStableKey++}`,
+        stableKey: `webmcp_computer.site_${pid}_${nextStableKey++}`,
         name,
         ...(descriptor.title === undefined ? {} : { title: descriptor.title }),
         description: descriptor.description,
@@ -461,7 +461,7 @@ export function createSiteToolRegistryScope(
             let timeout: ReturnType<typeof setTimeout> | undefined;
             const timedOut = new Promise<never>((_resolve, reject) => {
               timeout = setTimeout(() => {
-                const error = new Error(`verbos: site tool timed out: ${name}`);
+                const error = new Error(`webmcp-computer: site tool timed out: ${name}`);
                 controller.abort(error);
                 reject(error);
               }, executionTimeoutMs);
@@ -472,7 +472,7 @@ export function createSiteToolRegistryScope(
                 timedOut,
               ]);
               if (siteToolResultBytes(result) > MAX_SITE_TOOL_RESULT_BYTES) {
-                throw new Error(`verbos: site tool result too large: ${name}`);
+                throw new Error(`webmcp-computer: site tool result too large: ${name}`);
               }
               return result;
             } finally {
@@ -491,13 +491,13 @@ export function createSiteToolRegistryScope(
       const result = (await registration.ready)[0];
       if (entries.get(name) !== entry) {
         registration.unregister();
-        throw new Error(`verbos: site tool registration aborted: ${name}`);
+        throw new Error(`webmcp-computer: site tool registration aborted: ${name}`);
       }
       if (result?.state !== "registered") {
         entries.delete(name);
         registration.unregister();
         const detail = result?.error instanceof Error ? `: ${result.error.message}` : "";
-        throw new Error(`verbos: site tool registration failed: ${name}${detail}`);
+        throw new Error(`webmcp-computer: site tool registration failed: ${name}${detail}`);
       }
       entry.registered = true;
       syncRegistryState();

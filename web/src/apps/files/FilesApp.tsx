@@ -104,7 +104,7 @@ export function FilesApp({ process }: AppComponentProps) {
       return;
     }
     if (!isTextFile(entry.path)) {
-      setStatus(`verbos: unsupported text format: ${entry.path}`);
+      setStatus(`webmcp-computer: unsupported text format: ${entry.path}`);
       return;
     }
     const editor = spawn("editor", { path: entry.path });
@@ -160,7 +160,7 @@ export function FilesApp({ process }: AppComponentProps) {
       await navigator.clipboard.writeText(entry.path);
       setStatus(`Copied ${entry.path}`);
     } catch (error) {
-      setStatus(`verbos: clipboard unavailable: ${errorMessage(error)}`);
+      setStatus(`webmcp-computer: clipboard unavailable: ${errorMessage(error)}`);
     }
   };
 
@@ -360,7 +360,7 @@ export function FilesApp({ process }: AppComponentProps) {
           <p className="app-empty mono">EMPTY DIRECTORY</p>
         ) : null}
       </div>
-      <footer className={`app-status mono${status.startsWith("verbos:") ? " is-error" : ""}`}>
+      <footer className={`app-status mono${status.startsWith("webmcp-computer:") ? " is-error" : ""}`}>
         {status || `${entries.length} ITEM${entries.length === 1 ? "" : "S"}`}
       </footer>
     </section>

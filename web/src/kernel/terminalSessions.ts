@@ -127,7 +127,7 @@ export class TerminalSessionController {
     await new Promise<void>((resolve, reject) => {
       const timeout = window.setTimeout(() => {
         this.readyWaiters.delete(ready);
-        reject(new Error(`verbos: terminal PID ${this.pid} did not become visible`));
+        reject(new Error(`webmcp-computer: terminal PID ${this.pid} did not become visible`));
       }, 2_000);
       const ready = () => {
         window.clearTimeout(timeout);
@@ -252,13 +252,13 @@ export class TerminalSessionController {
         if (
           activeRun.reason && (
             text === "bash: execution aborted\n" ||
-            (activeRun.reason === "interrupt" && text.startsWith("verbos: cloud exec failed:"))
+            (activeRun.reason === "interrupt" && text.startsWith("webmcp-computer: cloud exec failed:"))
           )
         ) return;
         this.appendLines(...transcriptLines(text, tone));
         this.emit({ type: "output", text, tone });
       };
-      if (!shellExecutor) throw new Error("verbos: terminal shell is not loaded");
+      if (!shellExecutor) throw new Error("webmcp-computer: terminal shell is not loaded");
       const result = await shellExecutor(command, this.shell, kernelProcessContext, {
         source,
         signal: activeRun.controller.signal,
@@ -278,7 +278,7 @@ export class TerminalSessionController {
         },
       });
       if (activeRun.reason === "timeout") {
-        throw new Error(`verbos: command timed out after ${(options.timeoutMs ?? 0) / 1_000}s`);
+        throw new Error(`webmcp-computer: command timed out after ${(options.timeoutMs ?? 0) / 1_000}s`);
       }
       if (activeRun.reason === "interrupt") {
         this.shell.lastExitCode = 130;
