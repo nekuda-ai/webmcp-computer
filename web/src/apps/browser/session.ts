@@ -2,7 +2,7 @@ import { CdpClient, waitForWebSocketOpen, type BrowserWebSocket } from "./cdp";
 import { resolveWorkerUrl } from "../../shared/workerUrl";
 
 export const PRODUCTION_BROWSER_WORKER_URL =
-  "https://verbos-browser-session.nekuda.workers.dev";
+  "https://verbos-browser-session.idan-cf3.workers.dev";
 
 export type BrowserSessionDescriptor = {
   sessionId: string;

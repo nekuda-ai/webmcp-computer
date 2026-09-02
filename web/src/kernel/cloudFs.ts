@@ -11,7 +11,7 @@ import { dirname } from "@zenfs/core/path";
 import { resolveWorkerUrl } from "../shared/workerUrl";
 import { MAX_FS_BATCH_OPERATIONS } from "../../../workers/computer/src/protocol";
 
-export const PRODUCTION_COMPUTER_WORKER_URL = "https://verbos-computer.nekuda.workers.dev";
+export const PRODUCTION_COMPUTER_WORKER_URL = "https://verbos-computer.idan-cf3.workers.dev";
 export const CLOUD_KERNEL_STORAGE_KEY = "verbos.cloud_kernel";
 export const WORKSPACE_STORAGE_KEY = "verbos.workspace";
 
