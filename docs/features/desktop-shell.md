@@ -4,7 +4,7 @@ Goal: a running VerbOS desktop at `bun run dev` (in `web/`) where an agent can a
 
 ## Scope
 
-1. **Scaffold** `web/` with Vite + React 18 + TypeScript strict. Package manager: bun. Dependency on the SDK: `"@nekuda/webmcp-sdk": "file:../vendor/webmcp-sdk"`. Runtime deps allowed: `react`, `react-dom`, `react-rnd`, `zustand`. Nothing else without a reason in the commit message.
+1. **Scaffold** `web/` with Vite + React 18 + TypeScript strict. Package manager: bun. Dependency on the SDK: `"@nekuda/webmcp-sdk": "0.5.0"` from npm. Runtime deps allowed: `react`, `react-dom`, `react-rnd`, `zustand`. Nothing else without a reason in the commit message.
 2. **Design tokens** in `src/styles/tokens.css` (CSS custom properties for the full palette/typography/chrome spec in BRIEF.md), Google Fonts loaded in `index.html`.
 3. **Kernel** (`src/kernel/`): zustand store with process table (`pid`, `appId`, `windowRect`, `zIndex`, `focused`), spawn/kill/focus/move/resize actions, plus an OS event log (`osEvent(source, verb, args)`) capped at 500 entries.
 4. **Window manager** (`src/desktop/`): `Desktop` (background per design), `Window` (custom chrome per design, react-rnd drag/resize wired to kernel), `MenuBar`, `Dock` (apps with inline SVG icons), `VerbHint` tooltip wrapper.
