@@ -29,14 +29,21 @@ the Browser window is open and disappear when it closes.
 
 ## Session lifetime and recovery
 
-Browser Run keeps an idle session for fifteen minutes. WebMCP Computer attempts one capability
-refresh after a WebSocket disconnect. If that fails, the window shows `SESSION ENDED`;
-call `browser_open` or press `NEW SESSION` for a fresh browser. Closing the window sends
-a best-effort close immediately, with the idle timeout as cost-control backstop.
-The remote viewport follows the Browser window's live-view content box after a short
-resize debounce, capped at 2048 pixels per side.
+Each machine gets at most 2 hours of remote Chrome time per 24-hour budget window.
+WebMCP Computer sends a heartbeat every 60 seconds only while the tab is visible and the
+human has interacted recently. The Browser Session Worker owns the lease and deletes Chrome
+after 5 minutes without a heartbeat; Browser Run's 10-minute inactivity timeout is the final
+backstop. Opening Browser again starts a new Chrome at the last remembered http(s)
+origin/path; URL credentials, query, and fragment are deliberately discarded.
 
-Common errors are `webmcp-computer: browser session unavailable: <reason>`,
+WebMCP Computer attempts one capability refresh after a WebSocket disconnect. If that
+fails, the window shows `SESSION ENDED`; call `browser_open` or press `NEW SESSION` for a
+fresh browser. Closing the window requests immediate deletion. The remote viewport follows
+the Browser window's live-view content box after a short resize debounce, capped at 2048
+pixels per side.
+
+Budget, idle, ownership, and capacity errors say whether to reopen or when to retry.
+Other common errors are `webmcp-computer: browser session unavailable: <reason>`,
 `webmcp-computer: browser selector not found: <selector>`,
 `webmcp-computer: this browser session has no WebMCP support`, and
 `webmcp-computer: browser text exceeds 4 KB cap`.

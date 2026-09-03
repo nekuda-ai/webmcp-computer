@@ -1,9 +1,24 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
+  MACHINE_CONFLICT_REASON,
   MACHINE_LOCK,
+  MACHINE_TAKEN_OVER_REASON,
+  machineConflictReason,
   resetMachineOwnershipForTests,
   startMachineOwnership,
+  subscribeMachineConflictReason,
+  takeOverMachine,
 } from "./machineLock";
+
+function abortError(): Error {
+  const error = new Error("Lock broken by another request with the 'steal' option.");
+  error.name = "AbortError";
+  return error;
+}
+
+async function settle(): Promise<void> {
+  for (let i = 0; i < 4; i += 1) await Promise.resolve();
+}
 import { resetKernelStore, useKernelStore } from "./store";
 
 describe("WebMCP Computer machine ownership", () => {
@@ -75,6 +90,99 @@ describe("WebMCP Computer machine ownership", () => {
 
     expect(conflictStates).not.toContain(true);
     expect(useKernelStore.getState().machineConflict).toBe(false);
+  });
+
+  test("take over steals the lock and clears the conflict in the blocked tab", async () => {
+    const requests: LockOptions[] = [];
+    const locks = {
+      async request<T>(_name: string, options: LockOptions, callback: LockGrantedCallback<T>): Promise<T> {
+        requests.push(options);
+        if (options.ifAvailable) return await callback(null);
+        if (options.steal) return await callback({ name: MACHINE_LOCK, mode: "exclusive" } as Lock);
+        return await new Promise<T>(() => {});
+      },
+    } as unknown as LockManager;
+
+    startMachineOwnership(locks, { findPeer: async () => true, close() {} });
+    await settle();
+    expect(useKernelStore.getState().machineConflict).toBe(true);
+    expect(machineConflictReason()).toBe(MACHINE_CONFLICT_REASON);
+
+    void takeOverMachine();
+    await settle();
+
+    expect(requests.at(-1)).toEqual({ mode: "exclusive", steal: true });
+    expect(useKernelStore.getState().machineConflict).toBe(false);
+  });
+
+  test("take over is a no-op while this tab owns the machine", async () => {
+    const requests: LockOptions[] = [];
+    const locks = {
+      async request<T>(name: string, options: LockOptions, callback: LockGrantedCallback<T>): Promise<T> {
+        requests.push(options);
+        return await callback({ name, mode: "exclusive" } as Lock);
+      },
+    } as unknown as LockManager;
+
+    startMachineOwnership(locks, { findPeer: async () => false, close() {} });
+    await settle();
+    await takeOverMachine();
+    expect(requests).toEqual([{ ifAvailable: true, mode: "exclusive" }]);
+  });
+
+  test("an owner whose lock is stolen becomes blocked with a take-over reason", async () => {
+    let breakLock: (error: Error) => void = () => {};
+    const locks = {
+      async request<T>(name: string, options: LockOptions, callback: LockGrantedCallback<T>): Promise<T> {
+        if (!options.ifAvailable) return await new Promise<T>(() => {});
+        const held = callback({ name, mode: "exclusive" } as Lock);
+        return await new Promise<T>((_resolve, reject) => {
+          breakLock = reject;
+          void held;
+        });
+      },
+    } as unknown as LockManager;
+    const reasons: string[] = [];
+    const unsubscribe = subscribeMachineConflictReason(() => reasons.push(machineConflictReason()));
+
+    startMachineOwnership(locks, { findPeer: async () => false, close() {} });
+    await settle();
+    expect(useKernelStore.getState().machineConflict).toBe(false);
+
+    breakLock(abortError());
+    await settle();
+    unsubscribe();
+
+    expect(useKernelStore.getState().machineConflict).toBe(true);
+    expect(machineConflictReason()).toBe(MACHINE_TAKEN_OVER_REASON);
+    expect(reasons).toEqual([MACHINE_TAKEN_OVER_REASON]);
+  });
+
+  test("a tab that took over can itself be taken over again", async () => {
+    let breakSteal: (error: Error) => void = () => {};
+    const locks = {
+      async request<T>(name: string, options: LockOptions, callback: LockGrantedCallback<T>): Promise<T> {
+        if (options.ifAvailable) return await callback(null);
+        if (options.steal) {
+          void callback({ name, mode: "exclusive" } as Lock);
+          return await new Promise<T>((_resolve, reject) => {
+            breakSteal = reject;
+          });
+        }
+        return await new Promise<T>(() => {});
+      },
+    } as unknown as LockManager;
+
+    startMachineOwnership(locks, { findPeer: async () => true, close() {} });
+    await settle();
+    void takeOverMachine();
+    await settle();
+    expect(useKernelStore.getState().machineConflict).toBe(false);
+
+    breakSteal(abortError());
+    await settle();
+    expect(useKernelStore.getState().machineConflict).toBe(true);
+    expect(machineConflictReason()).toBe(MACHINE_TAKEN_OVER_REASON);
   });
 
   test("ignores a stale lock holder that does not answer the tab-presence probe", async () => {

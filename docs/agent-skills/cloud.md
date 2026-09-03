@@ -49,8 +49,16 @@ container egress can expose workspace bytes and incur billed work. Inspect the c
 
 Cold execution usually takes about 4 seconds while the container boots and mounts the
 workspace; warm execution is normally sub-second. Timeout defaults to 5 minutes and caps
-at 10 minutes. Ctrl-C disconnects the local stream so the shell does not hang, but it
-does not cancel the remote process; that process can continue until its timeout.
+at 10 minutes. One command may run per workspace at a time. Each machine gets at most
+2 hours of container runtime per 24-hour budget window. The server destroys the container
+5 minutes after the last command finishes, and the next command restarts it transparently;
+workspace files persist in the Durable Object. Ctrl-C disconnects the local stream so the
+shell does not hang, but it does not cancel the remote process; that process can continue
+until its timeout.
+
+Budget and capacity refusals explain when to retry. Write, exec, and publish actions are
+rate-limited both per signed subject + IP and per IP, so clearing browser state cannot
+multiply that address's per-minute allowance.
 
 Regular files sync both directions. Packages installed into `node_modules` work inside
 the live container but do not appear through Files, Editor, or `fs_*`. A container
@@ -68,11 +76,13 @@ Publishing uses the same browser-held workspace capability at
 `POST /ws/{wsid}/publish`; local mode mints and reuses one only for this scoped request.
 
 This is a **transact** tool: uploaded bytes become public to anyone with the returned
-URL. Inspect the tree first. Published files are deleted after 30 days. R2 bucket lifecycle
-enforcement owns this retention window; the app does not delete them itself. The result is
-`{url, expiresInDays, files, bytes}`. A visible toast shows the URL, retention window, and
-QR code so the human can open the same site on a phone. The URL and expiry also land in the
-`os_publish` `dmesg` trace.
+URL. Inspect the tree first. Published files are deleted after 30 days and served from the
+Computer Worker's separate `workers.dev` origin with `X-Robots-Tag: noindex` and a CSP
+sandbox. R2 bucket lifecycle enforcement owns this retention window; the app does not delete
+them itself. A small manifest records a pseudonymous publisher subject and IP hash for abuse
+response. The result is `{url, expiresInDays, files, bytes}`. A visible toast shows the URL,
+retention window, and QR code so the human can open the same site on a phone. The URL and
+expiry also land in the `os_publish` `dmesg` trace.
 
 Common failures name the cause: `webmcp-computer: publish path is not a directory: <path>`,
 `webmcp-computer: os_publish rejects non-text file: <path>`, cap errors, or

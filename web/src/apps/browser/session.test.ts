@@ -1,13 +1,17 @@
 import { afterEach, describe, expect, jest, spyOn, test } from "bun:test";
 import {
+  BROWSER_LAST_URL_KEY,
   browserSessionState,
   closeBrowserSession,
   createBrowserSession,
   ensureBrowserSession,
+  rememberBrowserUrl,
+  rememberedBrowserUrl,
   resetBrowserSessionForTests,
   resolveBrowserWorkerUrl,
   viewportForContainer,
   type BrowserSessionDependencies,
+  type BrowserUrlStorage,
 } from "./session";
 import type { BrowserWebSocket } from "./cdp";
 
@@ -30,7 +34,15 @@ class FakeSocket extends EventTarget implements BrowserWebSocket {
         result: { devtoolsFrontendUrl: this.liveViewUrl },
       }));
     }
+    if (request.method === "Runtime.evaluate") {
+      queueMicrotask(() => this.receive({
+        id: request.id,
+        result: { result: { value: this.pageUrl } },
+      }));
+    }
   }
+
+  pageUrl = "https://example.com/current";
 
   close(): void {
     if (this.readyState === WebSocket.CLOSED) return;
@@ -53,7 +65,49 @@ function descriptor() {
   };
 }
 
-function setup(responses: Response[], liveViewUrl?: string): {
+function memoryStorage(initial: Record<string, string> = {}): BrowserUrlStorage & { data: Map<string, string> } {
+  const data = new Map(Object.entries(initial));
+  return {
+    data,
+    getItem: (key) => data.get(key) ?? null,
+    setItem: (key, value) => void data.set(key, value),
+  };
+}
+
+type FakeTimers = {
+  intervals: Array<{ callback: () => void; ms: number }>;
+  cleared: unknown[];
+  tick(): Promise<void>;
+};
+
+function fakeTimers(): FakeTimers & Pick<BrowserSessionDependencies, "setInterval" | "clearInterval"> {
+  const intervals: FakeTimers["intervals"] = [];
+  const cleared: unknown[] = [];
+  return {
+    intervals,
+    cleared,
+    setInterval(callback, ms) {
+      const handle = { callback, ms };
+      intervals.push(handle);
+      return handle;
+    },
+    clearInterval(handle) {
+      cleared.push(handle);
+      const index = intervals.indexOf(handle as FakeTimers["intervals"][number]);
+      if (index >= 0) intervals.splice(index, 1);
+    },
+    async tick() {
+      for (const { callback } of [...intervals]) callback();
+      for (let i = 0; i < 6; i += 1) await Promise.resolve();
+    },
+  };
+}
+
+function setup(
+  responses: Response[],
+  liveViewUrl?: string,
+  extra: Partial<BrowserSessionDependencies> = {},
+): {
   calls: Array<{ url: string; init?: RequestInit }>;
   dependencies: BrowserSessionDependencies;
   sockets: FakeSocket[];
@@ -77,6 +131,7 @@ function setup(responses: Response[], liveViewUrl?: string): {
         return socket;
       },
       commandTimeoutMs: 50,
+      ...extra,
     },
   };
 }
@@ -330,6 +385,217 @@ describe("browser session", () => {
     expect(browserSessionState()).toEqual({
       status: "ended",
       reason: "session must be started again after reload",
+    });
+  });
+
+  test("accepts and exposes idleTimeoutMs and budget when the Worker sends them", async () => {
+    const budget = { remainingMs: 1_000, usedMs: 2_000, windowResetsAt: 3_000 };
+    const fake = setup([
+      Response.json({ ...descriptor(), idleTimeoutMs: 300_000, budget }),
+      Response.json({ status: "closed" }),
+    ]);
+    const session = await createBrowserSession(fake.dependencies);
+    expect(session.idleTimeoutMs).toBe(300_000);
+    expect(session.budget).toEqual(budget);
+    await session.close();
+
+    const legacy = setup([Response.json(descriptor()), Response.json({ status: "closed" })]);
+    const legacySession = await createBrowserSession(legacy.dependencies);
+    expect(legacySession.idleTimeoutMs).toBeUndefined();
+    expect(legacySession.budget).toBeUndefined();
+    await legacySession.close();
+  });
+
+  test("explains an exhausted browser budget when the Worker refuses a new session", async () => {
+    const fake = setup([
+      Response.json(
+        { error: "budget exhausted", code: "EBUDGET", retryAfterMs: 65 * 60_000 },
+        { status: 429 },
+      ),
+    ]);
+    await expect(createBrowserSession(fake.dependencies)).rejects.toThrow(
+      "browser time budget (2 h per 24 h) is used up; resets in 1 h 5 min",
+    );
+    const capacity = setup([Response.json({ error: "no slots", code: "ECAPACITY" }, { status: 503 })]);
+    await expect(createBrowserSession(capacity.dependencies)).rejects.toThrow(
+      "browser service is at capacity right now; try again in a minute",
+    );
+  });
+
+  describe("heartbeat", () => {
+    test("posts a heartbeat and one CDP evaluate each tick while the human is active", async () => {
+      const timers = fakeTimers();
+      const storage = memoryStorage();
+      let active = true;
+      const fake = setup([
+        Response.json(descriptor()),
+        Response.json({ idleTimeoutMs: 300_000, budget: { remainingMs: 10, usedMs: 5, windowResetsAt: 99 } }),
+        Response.json({ status: "closed" }),
+      ], undefined, { ...timers, isActive: () => active, storage });
+      const session = await createBrowserSession(fake.dependencies);
+      expect(timers.intervals).toHaveLength(1);
+      expect(timers.intervals[0]?.ms).toBe(60_000);
+
+      await timers.tick();
+      expect(fake.calls[1]).toEqual({
+        url: `http://worker.test/session/${SESSION_ID}/heartbeat`,
+        init: expect.objectContaining({ method: "POST" }),
+      });
+      expect(fake.sockets[0]?.sent[1]?.method).toBe("Runtime.evaluate");
+      expect(fake.sockets[0]?.sent[1]?.params.expression).toBe("/*webmcp-computer:heartbeat*/location.href");
+      expect(session.budget).toEqual({ remainingMs: 10, usedMs: 5, windowResetsAt: 99 });
+      expect(storage.data.get(BROWSER_LAST_URL_KEY)).toBe("https://example.com/current");
+
+      active = false;
+      await timers.tick();
+      expect(fake.calls).toHaveLength(2);
+      expect(fake.sockets[0]?.sent).toHaveLength(2);
+      expect(session.state.status).toBe("live");
+
+      await session.close();
+      expect(timers.intervals).toHaveLength(0);
+      expect(timers.cleared).toHaveLength(1);
+    });
+
+    test("heartbeats immediately when activity resumes near the idle deadline", async () => {
+      const timers = fakeTimers();
+      let now = 0;
+      let activity = () => {};
+      let unsubscribed = false;
+      const fake = setup([
+        Response.json(descriptor()),
+        Response.json({ idleTimeoutMs: 300_000 }),
+        Response.json({ status: "closed" }),
+      ], undefined, {
+        ...timers,
+        now: () => now,
+        isActive: () => true,
+        subscribeActivity(callback) {
+          activity = callback;
+          return () => { unsubscribed = true; };
+        },
+      });
+      const session = await createBrowserSession(fake.dependencies);
+      now = 60_000;
+      activity();
+      for (let i = 0; i < 6; i += 1) await Promise.resolve();
+      expect(fake.calls[1]?.url).toEndWith(`/session/${SESSION_ID}/heartbeat`);
+
+      // Ordinary activity inside the cadence is throttled.
+      now = 60_001;
+      activity();
+      for (let i = 0; i < 3; i += 1) await Promise.resolve();
+      expect(fake.calls).toHaveLength(2);
+      await session.close();
+      expect(unsubscribed).toBe(true);
+    });
+
+    test("ends the session with an idle explanation when the Worker answers EIDLE", async () => {
+      const timers = fakeTimers();
+      const fake = setup([
+        Response.json(descriptor()),
+        Response.json({ error: "session released", code: "EIDLE" }, { status: 404 }),
+        Response.json({ status: "closed" }),
+      ], undefined, { ...timers, isActive: () => true });
+      const session = await createBrowserSession(fake.dependencies);
+      await timers.tick();
+      expect(session.state).toEqual({
+        status: "ended",
+        reason: "browser stopped after 5 minutes of inactivity; open it again to continue",
+      });
+      expect(timers.intervals).toHaveLength(0);
+      expect(fake.calls.filter(({ url }) => url.endsWith("/refresh"))).toHaveLength(0);
+      await session.close();
+    });
+
+    test("ends the session with the budget reset time when the Worker answers EBUDGET", async () => {
+      const timers = fakeTimers();
+      const fake = setup([
+        Response.json(descriptor()),
+        Response.json({ error: "budget", code: "EBUDGET", retryAfterMs: 2 * 60 * 60_000 + 30_000 }, { status: 429 }),
+        Response.json({ status: "closed" }),
+      ], undefined, { ...timers, isActive: () => true });
+      const session = await createBrowserSession(fake.dependencies);
+      await timers.tick();
+      expect(session.state).toEqual({
+        status: "ended",
+        reason: "browser time budget (2 h per 24 h) is used up; resets in 2 h 1 min",
+      });
+      await session.close();
+    });
+
+    test("keeps the session live across a transient heartbeat failure", async () => {
+      const timers = fakeTimers();
+      const fake = setup([
+        Response.json(descriptor()),
+        Response.json({ error: "upstream hiccup" }, { status: 502 }),
+        Response.json({ status: "closed" }),
+      ], undefined, { ...timers, isActive: () => true });
+      const session = await createBrowserSession(fake.dependencies);
+      await timers.tick();
+      expect(session.state.status).toBe("live");
+      await session.close();
+    });
+
+    test("restarts the heartbeat after a refresh reconnect", async () => {
+      const timers = fakeTimers();
+      const fake = setup([
+        Response.json(descriptor()),
+        Response.json(descriptor()),
+        Response.json({ status: "closed" }),
+      ], undefined, { ...timers, isActive: () => true });
+      const session = await createBrowserSession(fake.dependencies);
+      const first = timers.intervals[0];
+      const reconnected = new Promise<void>((resolve) => {
+        const unsubscribe = session.subscribe((state) => {
+          if (state.status === "live" && fake.sockets.length === 2) {
+            unsubscribe();
+            resolve();
+          }
+        });
+      });
+      fake.sockets[0]?.close();
+      await reconnected;
+      expect(timers.cleared).toContain(first);
+      expect(timers.intervals).toHaveLength(1);
+      expect(timers.intervals[0]).not.toBe(first);
+      await session.close();
+    });
+  });
+
+  describe("last URL", () => {
+    test("remembers only sanitized http(s) URLs", () => {
+      const storage = memoryStorage();
+      rememberBrowserUrl("https://user:pass@example.com/a?token=secret#callback", storage);
+      expect(rememberedBrowserUrl(storage)).toBe("https://example.com/a");
+      expect(storage.data.get(BROWSER_LAST_URL_KEY)).toBe("https://example.com/a");
+      rememberBrowserUrl("javascript:alert(1)", storage);
+      rememberBrowserUrl("about:blank", storage);
+      rememberBrowserUrl(42, storage);
+      expect(rememberedBrowserUrl(storage)).toBe("https://example.com/a");
+      expect(rememberedBrowserUrl(memoryStorage({ [BROWSER_LAST_URL_KEY]: "data:text/html,x" }))).toBeUndefined();
+      expect(rememberedBrowserUrl(memoryStorage())).toBeUndefined();
+      expect(rememberedBrowserUrl(undefined)).toBeUndefined();
+    });
+
+    test("ensureBrowserSession resumes at the remembered URL when none is supplied", async () => {
+      const storage = memoryStorage({ [BROWSER_LAST_URL_KEY]: "https://example.com/resume" });
+      const fake = setup([Response.json(descriptor()), Response.json({ status: "closed" })], undefined, { storage });
+      await ensureBrowserSession(undefined, fake.dependencies);
+      expect(fake.calls[0]?.init?.body).toBe(JSON.stringify({ url: "https://example.com/resume" }));
+      await closeBrowserSession();
+
+      const explicit = setup([Response.json(descriptor()), Response.json({ status: "closed" })], undefined, { storage });
+      await ensureBrowserSession("https://example.com/explicit", explicit.dependencies);
+      expect(explicit.calls[0]?.init?.body).toBe(JSON.stringify({ url: "https://example.com/explicit" }));
+      await closeBrowserSession();
+
+      const fresh = setup([Response.json(descriptor()), Response.json({ status: "closed" })], undefined, {
+        storage: memoryStorage(),
+      });
+      await ensureBrowserSession(undefined, fresh.dependencies);
+      expect(fresh.calls[0]?.init?.body).toBe(JSON.stringify({ url: "https://webmcp.com/" }));
+      await closeBrowserSession();
     });
   });
 

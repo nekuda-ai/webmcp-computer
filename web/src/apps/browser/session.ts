@@ -5,8 +5,20 @@ import {
   hostedSessionSnapshot,
   hostedWorkerUrl,
 } from "../../kernel/hostedSession";
+import {
+  describeLimitError,
+  isHumanActive,
+  limitErrorFromPayload,
+  subscribeHumanActivity,
+} from "../../kernel/activity";
+import {
+  BROWSER_HEARTBEAT_MS,
+  type BudgetSnapshot,
+  type LimitError,
+} from "../../../../shared/session-limits";
 
 export const BROWSER_HOME_URL = "https://webmcp.com/";
+export const BROWSER_LAST_URL_KEY = "webmcp_computer.browser.last_url";
 
 export type BrowserSessionDescriptor = {
   sessionId: string;
@@ -14,7 +26,12 @@ export type BrowserSessionDescriptor = {
   tabWsUrl: string;
   targetId: string;
   keepAliveMs: number;
+  /** Server releases the session after this long without a heartbeat. */
+  idleTimeoutMs?: number;
+  budget?: BudgetSnapshot;
 };
+
+export type BrowserUrlStorage = Pick<Storage, "getItem" | "setItem">;
 
 export type BrowserSessionState =
   | { status: "connecting" }
@@ -33,11 +50,23 @@ export type BrowserSessionDependencies = {
   workerBaseUrl: string;
   authorization?: () => Promise<{ Authorization: string }>;
   commandTimeoutMs?: number;
+  /** Heartbeat cadence; defaults to BROWSER_HEARTBEAT_MS. */
+  heartbeatMs?: number;
+  /** Whether a human is present; heartbeats are skipped when false. Defaults to isHumanActive(). */
+  isActive?: () => boolean;
+  now?: () => number;
+  subscribeActivity?: (callback: () => void) => () => void;
+  setInterval?: (callback: () => void, ms: number) => unknown;
+  clearInterval?: (handle: unknown) => void;
+  /** Where the last remote URL is remembered; defaults to localStorage. */
+  storage?: BrowserUrlStorage;
 };
 
 export type BrowserSession = {
   readonly cdp: CdpClient;
   readonly keepAliveMs: number;
+  readonly idleTimeoutMs: number | undefined;
+  readonly budget: BudgetSnapshot | undefined;
   readonly sessionId: string;
   readonly state: BrowserSessionState;
   close(options?: { keepalive?: boolean; reason?: string }): Promise<void>;
@@ -54,6 +83,18 @@ export type BrowserWorkerResolutionOptions = {
 };
 
 type WorkerErrorBody = { error?: unknown };
+
+export class BrowserWorkerError extends Error {
+  readonly status: number;
+  readonly limit: LimitError | undefined;
+
+  constructor(message: string, status: number, limit?: LimitError) {
+    super(message);
+    this.name = "BrowserWorkerError";
+    this.status = status;
+    this.limit = limit;
+  }
+}
 
 const VIEWPORT_DEBOUNCE_MS = 300;
 
@@ -111,13 +152,74 @@ export function resolveBrowserWorkerUrl(
   });
 }
 
+function defaultStorage(): BrowserUrlStorage | undefined {
+  try {
+    return typeof localStorage === "undefined" ? undefined : localStorage;
+  } catch {
+    return undefined;
+  }
+}
+
 function defaultDependencies(): BrowserSessionDependencies {
+  const storage = defaultStorage();
   return {
     fetch: globalThis.fetch.bind(globalThis),
     createWebSocket: (url) => new WebSocket(url),
     workerBaseUrl: resolveBrowserWorkerUrl(),
     authorization: () => hostedAuthorization("browser"),
+    ...(storage === undefined ? {} : { storage }),
   };
+}
+
+function httpUrlOrUndefined(value: unknown): string | undefined {
+  try {
+    return requireHttpUrl(value, "invalid");
+  } catch {
+    return undefined;
+  }
+}
+
+/** Keep useful navigation state without persisting query, fragment, or URL credentials. */
+function restorableBrowserUrl(value: unknown): string | undefined {
+  const valid = httpUrlOrUndefined(value);
+  if (valid === undefined) return undefined;
+  const url = new URL(valid);
+  url.username = "";
+  url.password = "";
+  url.search = "";
+  url.hash = "";
+  return url.href;
+}
+
+/** Remember a sanitized URL so a later session can resume without retaining URL secrets. */
+export function rememberBrowserUrl(url: unknown, storage: BrowserUrlStorage | undefined = defaultStorage()): void {
+  const valid = restorableBrowserUrl(url);
+  if (valid === undefined || !storage) return;
+  try {
+    storage.setItem(BROWSER_LAST_URL_KEY, valid);
+  } catch {
+    // Storage quota or privacy mode; resuming at the last URL is best-effort.
+  }
+}
+
+export function rememberedBrowserUrl(storage: BrowserUrlStorage | undefined = defaultStorage()): string | undefined {
+  if (!storage) return undefined;
+  try {
+    return restorableBrowserUrl(storage.getItem(BROWSER_LAST_URL_KEY));
+  } catch {
+    return undefined;
+  }
+}
+
+function budgetSnapshot(value: unknown): BudgetSnapshot | undefined {
+  if (value === null || typeof value !== "object") return undefined;
+  const { remainingMs, usedMs, windowResetsAt } = value as Partial<BudgetSnapshot>;
+  if (
+    typeof remainingMs !== "number" || typeof usedMs !== "number" || typeof windowResetsAt !== "number"
+  ) {
+    return undefined;
+  }
+  return { remainingMs, usedMs, windowResetsAt };
 }
 
 function validateDescriptor(value: unknown): BrowserSessionDescriptor {
@@ -134,20 +236,26 @@ function validateDescriptor(value: unknown): BrowserSessionDescriptor {
   ) {
     throw new Error("browser Worker returned an invalid session");
   }
+  const budget = budgetSnapshot(descriptor.budget);
   return {
-    ...(descriptor as BrowserSessionDescriptor),
+    sessionId: descriptor.sessionId,
     liveViewUrl: requireHttpUrl(
       descriptor.liveViewUrl,
       "webmcp-computer: browser Worker returned an invalid live view URL",
     ),
+    tabWsUrl: descriptor.tabWsUrl,
+    targetId: descriptor.targetId,
+    keepAliveMs: descriptor.keepAliveMs,
+    ...(typeof descriptor.idleTimeoutMs === "number" ? { idleTimeoutMs: descriptor.idleTimeoutMs } : {}),
+    ...(budget === undefined ? {} : { budget }),
   };
 }
 
-async function workerRequest(
+async function workerFetch(
   dependencies: BrowserSessionDependencies,
   path: string,
   init: RequestInit,
-): Promise<BrowserSessionDescriptor> {
+): Promise<unknown> {
   const headers = new Headers(init.headers);
   if (dependencies.authorization) {
     const authorization = await dependencies.authorization();
@@ -161,12 +269,34 @@ async function workerRequest(
     payload = undefined;
   }
   if (!response.ok) {
+    const limit = limitErrorFromPayload(payload);
+    if (limit) throw new BrowserWorkerError(describeLimitError(limit, "browser"), response.status, limit);
     const reason = payload && typeof payload === "object"
       ? (payload as WorkerErrorBody).error
       : undefined;
-    throw new Error(typeof reason === "string" ? reason : `Worker returned ${response.status}`);
+    throw new BrowserWorkerError(
+      typeof reason === "string" ? reason : `Worker returned ${response.status}`,
+      response.status,
+    );
   }
-  return validateDescriptor(payload);
+  return payload;
+}
+
+async function workerRequest(
+  dependencies: BrowserSessionDependencies,
+  path: string,
+  init: RequestInit,
+): Promise<BrowserSessionDescriptor> {
+  return validateDescriptor(await workerFetch(dependencies, path, init));
+}
+
+/** Whether a heartbeat failure means the server no longer holds our session. */
+function heartbeatEndsSession(error: unknown): string | undefined {
+  if (!(error instanceof BrowserWorkerError)) return undefined;
+  const code = error.limit?.code;
+  if (code === "EIDLE" || code === "EBUDGET" || code === "EOWNER") return error.message;
+  if (error.status === 404 || error.status === 403) return error.message;
+  return undefined;
 }
 
 class BrowserSessionImpl implements BrowserSession {
@@ -182,10 +312,22 @@ class BrowserSessionImpl implements BrowserSession {
   #viewportTimeout: ReturnType<typeof setTimeout> | undefined;
   #lastViewport: string | undefined;
   #viewportWarned = false;
+  #heartbeat: unknown;
+  #heartbeatInFlight = false;
+  #lastHeartbeatAt = 0;
+  #unsubscribeActivity: (() => void) | undefined;
 
   constructor(descriptor: BrowserSessionDescriptor, dependencies: BrowserSessionDependencies) {
     this.#descriptor = descriptor;
     this.#dependencies = dependencies;
+  }
+
+  get budget(): BudgetSnapshot | undefined {
+    return this.#descriptor.budget;
+  }
+
+  get idleTimeoutMs(): number | undefined {
+    return this.#descriptor.idleTimeoutMs;
   }
 
   get cdp(): CdpClient {
@@ -249,6 +391,71 @@ class BrowserSessionImpl implements BrowserSession {
     this.#viewportTimeout = undefined;
   }
 
+  #startHeartbeat(): void {
+    this.#stopHeartbeat();
+    const cadence = this.#dependencies.heartbeatMs ?? BROWSER_HEARTBEAT_MS;
+    const now = this.#dependencies.now ?? Date.now;
+    this.#lastHeartbeatAt = now();
+    const schedule = this.#dependencies.setInterval ?? ((callback, ms) => setInterval(callback, ms));
+    this.#heartbeat = schedule(() => void this.#beat(), cadence);
+    const subscribe = this.#dependencies.subscribeActivity ?? subscribeHumanActivity;
+    this.#unsubscribeActivity = subscribe(() => {
+      // Returning to a visible tab near the idle deadline cannot wait for the next fixed
+      // interval. Throttle ordinary clicks so they do not consume the action rate limit.
+      if (now() - this.#lastHeartbeatAt >= cadence) void this.#beat();
+    });
+  }
+
+  #stopHeartbeat(): void {
+    if (this.#heartbeat !== undefined) {
+      const cancel = this.#dependencies.clearInterval ??
+        ((handle) => clearInterval(handle as ReturnType<typeof setInterval>));
+      cancel(this.#heartbeat);
+      this.#heartbeat = undefined;
+    }
+    this.#unsubscribeActivity?.();
+    this.#unsubscribeActivity = undefined;
+  }
+
+  // Every tick while a human is present: tell the Worker we are still here (its idle
+  // timer is what deletes the remote Chrome) and send one cheap CDP command so Browser
+  // Run's own inactivity timer stays alive too. The evaluate doubles as our source of
+  // truth for the URL the human is on, so a later session can resume there.
+  async #beat(): Promise<void> {
+    if (this.#heartbeatInFlight || this.#closed || this.#state.status !== "live") return;
+    const isActive = this.#dependencies.isActive ?? isHumanActive;
+    if (!isActive()) return;
+    this.#heartbeatInFlight = true;
+    const now = this.#dependencies.now ?? Date.now;
+    this.#lastHeartbeatAt = now();
+    const generation = this.#generation;
+    try {
+      const cdp = this.#cdp;
+      if (cdp) {
+        void cdp.evaluate<string>("heartbeat", "location.href").then(
+          (url) => rememberBrowserUrl(url, this.#dependencies.storage),
+          () => undefined,
+        );
+      }
+      const payload = await workerFetch(
+        this.#dependencies,
+        `/session/${encodeURIComponent(this.sessionId)}/heartbeat`,
+        { method: "POST" },
+      );
+      if (generation !== this.#generation || this.#closed) return;
+      const budget = payload && typeof payload === "object"
+        ? budgetSnapshot((payload as { budget?: unknown }).budget)
+        : undefined;
+      if (budget) this.#descriptor = { ...this.#descriptor, budget };
+    } catch (error) {
+      if (generation !== this.#generation || this.#closed) return;
+      const reason = heartbeatEndsSession(error);
+      if (reason !== undefined) this.#end(reason);
+    } finally {
+      this.#heartbeatInFlight = false;
+    }
+  }
+
   #publish(state: BrowserSessionState): void {
     this.#state = state;
     for (const listener of this.#listeners) listener(state);
@@ -294,6 +501,7 @@ class BrowserSessionImpl implements BrowserSession {
       targetId: descriptor.targetId,
       keepAliveMs: descriptor.keepAliveMs,
     });
+    this.#startHeartbeat();
   }
 
   async #recover(reason: string): Promise<void> {
@@ -305,6 +513,7 @@ class BrowserSessionImpl implements BrowserSession {
     this.#refreshAttempted = true;
     this.#recovering = true;
     this.#cancelViewportResize();
+    this.#stopHeartbeat();
     this.#publish({ status: "connecting" });
     try {
       const descriptor = await workerRequest(
@@ -325,6 +534,7 @@ class BrowserSessionImpl implements BrowserSession {
   #end(reason: string): void {
     if (this.#state.status === "ended") return;
     this.#cancelViewportResize();
+    this.#stopHeartbeat();
     this.#generation += 1;
     this.#cdp?.close();
     this.#cdp = undefined;
@@ -335,6 +545,7 @@ class BrowserSessionImpl implements BrowserSession {
     if (this.#closed) return;
     this.#closed = true;
     this.#cancelViewportResize();
+    this.#stopHeartbeat();
     this.#generation += 1;
     this.#cdp?.close();
     this.#cdp = undefined;
@@ -412,7 +623,7 @@ export async function ensureBrowserSession(
     await stale.close({ reason: "replaced by a new session" });
   }
   publishRuntime({ status: "connecting" });
-  pendingSession = createBrowserSession(dependencies, url)
+  pendingSession = createBrowserSession(dependencies, url ?? rememberedBrowserUrl(dependencies.storage))
     .then((session) => {
       activeUnsubscribe?.();
       activeSession = session;

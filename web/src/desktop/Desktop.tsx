@@ -1,6 +1,11 @@
-import { useEffect } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
 import { getApp } from "../apps/registry";
 import { createFile, joinPath, ls, mkdir } from "../kernel/fs";
+import {
+  machineConflictReason,
+  subscribeMachineConflictReason,
+  takeOverMachine,
+} from "../kernel/machineLock";
 import { useKernelStore } from "../kernel/store";
 import type { ProcessRecord } from "../kernel/types";
 import { errorMessage } from "../shared";
@@ -67,7 +72,9 @@ export function Desktop() {
   const fileSystemWarnings = useKernelStore((state) => state.fileSystemWarnings);
   const fileSystemStatus = useKernelStore((state) => state.fileSystemStatus);
   const machineConflict = useKernelStore((state) => state.machineConflict);
+  const conflictReason = useSyncExternalStore(subscribeMachineConflictReason, machineConflictReason);
   const clampWindows = useKernelStore((state) => state.clampWindows);
+  const interactiveRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const reclamp = () => clampWindows(window.innerWidth, window.innerHeight);
@@ -76,70 +83,92 @@ export function Desktop() {
     return () => window.removeEventListener("resize", reclamp);
   }, [clampWindows]);
 
+  useEffect(() => {
+    if (interactiveRef.current) interactiveRef.current.inert = machineConflict;
+    if (machineConflict && document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+  }, [machineConflict]);
+
   return (
     <main className="desktop">
       <div className="desktop__wallpaper" aria-hidden="true" />
       <div className="desktop__stars" aria-hidden="true" />
       <div className="desktop__mist" aria-hidden="true" />
       <div className="desktop__grain" aria-hidden="true" />
-      <MenuBar />
+      {machineConflict ? <div className="machine-blocker" aria-hidden="true" /> : null}
       {!machineConflict && fileSystemWarnings.length === 0 ? null : (
         <div
           className={`machine-banner mono${fileSystemWarnings.length > 0 ? " machine-banner--error" : ""}`}
           role={fileSystemWarnings.length > 0 ? "alert" : "status"}
         >
-          {machineConflict ? "machine already running in another tab" : null}
+          {machineConflict ? (
+            <>
+              {conflictReason}
+              {" · "}
+              <button
+                type="button"
+                className="machine-banner__action mono"
+                onClick={() => void takeOverMachine()}
+              >
+                Take over
+              </button>
+            </>
+          ) : null}
           {machineConflict && fileSystemWarnings.length > 0 ? " · " : null}
           {fileSystemWarnings.length > 0 ? `FILESYSTEM: ${fileSystemWarnings.join(" · ")}` : null}
         </div>
       )}
-      <section
-        className="desktop__workarea"
-        aria-label="Desktop"
-        onContextMenu={(event) => {
-          if (event.target !== event.currentTarget) return;
-          showContextMenu(event, {
-            label: "Desktop",
-            items: [
-              {
-                label: "New file…",
-                verb: "fs_write",
-                arg: "~/desktop/untitled",
-                disabled: fileSystemStatus !== "ready",
-                onSelect: () => { void createUntitledEntry("file"); },
-              },
-              {
-                label: "New folder…",
-                verb: "fs_mkdir",
-                arg: "~/desktop/untitled",
-                disabled: fileSystemStatus !== "ready",
-                onSelect: () => { void createUntitledEntry("directory"); },
-              },
-              { type: "separator" },
-              {
-                label: "Open Terminal",
-                verb: "app_open",
-                arg: "terminal",
-                onSelect: () => { openHumanApp("terminal"); },
-              },
-              {
-                label: "Open Settings",
-                verb: "app_open",
-                arg: "settings",
-                onSelect: () => { openHumanApp("settings"); },
-              },
-            ],
-          });
-        }}
-      >
-        <DesktopIcons />
-        <StickyNotes />
-        <DesktopWindows processes={processes} minimizedPids={minimizedPids} />
-        <AgentPresence />
-      </section>
-      <Dock />
-      <Spotlight />
-      <ContextMenu />
+      <div ref={interactiveRef} className="desktop__interactive" aria-hidden={machineConflict || undefined}>
+        <MenuBar />
+        <section
+          className="desktop__workarea"
+          aria-label="Desktop"
+          onContextMenu={(event) => {
+            if (event.target !== event.currentTarget) return;
+            showContextMenu(event, {
+              label: "Desktop",
+              items: [
+                {
+                  label: "New file…",
+                  verb: "fs_write",
+                  arg: "~/desktop/untitled",
+                  disabled: fileSystemStatus !== "ready",
+                  onSelect: () => { void createUntitledEntry("file"); },
+                },
+                {
+                  label: "New folder…",
+                  verb: "fs_mkdir",
+                  arg: "~/desktop/untitled",
+                  disabled: fileSystemStatus !== "ready",
+                  onSelect: () => { void createUntitledEntry("directory"); },
+                },
+                { type: "separator" },
+                {
+                  label: "Open Terminal",
+                  verb: "app_open",
+                  arg: "terminal",
+                  onSelect: () => { openHumanApp("terminal"); },
+                },
+                {
+                  label: "Open Settings",
+                  verb: "app_open",
+                  arg: "settings",
+                  onSelect: () => { openHumanApp("settings"); },
+                },
+              ],
+            });
+          }}
+        >
+          <DesktopIcons />
+          <StickyNotes />
+          <DesktopWindows processes={processes} minimizedPids={minimizedPids} />
+          <AgentPresence />
+        </section>
+        <Dock />
+        <Spotlight />
+        <ContextMenu />
+      </div>
       <span className="desktop__signature mono">V.01 —— WEBMCP COMPUTER // ONE MACHINE, TWO USERS</span>
       <div className="desktop__scanlines" aria-hidden="true" />
       <div className="desktop__vignette" aria-hidden="true" />

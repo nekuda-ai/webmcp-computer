@@ -5,6 +5,11 @@ inhabited, and everything a human can do to a window, an agent can do through th
 contract. BRIEF rules bind throughout — especially 3 (every control has a verb), 4
 (visible traces), and 6 (manual ships with the machine).
 
+> **Scale-readiness amendment:** Web Locks still prevents two tabs from operating the same
+> machine simultaneously, but a blocked tab now offers **Take over**. Stealing the lock
+> immediately blocks the previous owner with an explicit message rather than leaving two
+> active tabs.
+
 ## Scope, in priority order
 
 1. **Browser-installation session restore.** Refreshing or reopening the browser restores the machine's exact desktop:

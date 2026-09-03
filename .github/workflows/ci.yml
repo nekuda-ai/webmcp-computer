@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  BUN_VERSION: "1.3"
+
+jobs:
+  web:
+    name: web (test, typecheck, build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Cache Bun
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-web-${{ hashFiles('web/bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-web-
+      - run: bun install --frozen-lockfile
+      - name: Test
+        run: bun test src server
+      - name: Typecheck
+        run: bunx tsc --noEmit
+      - name: Build
+        run: bun run build
+
+  computer:
+    name: workers/computer (test, typecheck)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: workers/computer
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Cache Bun
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-computer-${{ hashFiles('workers/computer/bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-computer-
+      - run: bun install --frozen-lockfile
+      - name: Test
+        run: bun test src
+      - name: Typecheck
+        run: bunx tsc --noEmit
+
+  browser-session:
+    name: workers/browser-session (test, typecheck)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: workers/browser-session
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Cache Bun
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-browser-session-${{ hashFiles('workers/browser-session/bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-browser-session-
+      - run: bun install --frozen-lockfile
+      - name: Test
+        run: bun test src
+      - name: Typecheck
+        run: bunx tsc --noEmit

@@ -7,7 +7,8 @@ export type CdpEvaluateOperation =
   | "click"
   | "type"
   | "site_tools"
-  | "site_call";
+  | "site_call"
+  | "heartbeat";
 
 type CdpError = {
   code?: number;
@@ -34,7 +35,7 @@ export type CdpClientOptions = {
 };
 
 const DEFAULT_COMMAND_TIMEOUT_MS = 10_000;
-const EVALUATE_MARKER = /^\/\*webmcp-computer:(identity|read|click|type|site_tools|site_call)\*\//;
+const EVALUATE_MARKER = /^\/\*webmcp-computer:(identity|read|click|type|site_tools|site_call|heartbeat)\*\//;
 
 function errorMessage(value: unknown): string {
   return value instanceof Error ? value.message : String(value);

@@ -18,6 +18,8 @@ import {
   verifyGatewayCapability,
   type GatewayCapabilityClaims,
 } from "../../../shared/gateway-capability";
+import { CLOUD_BUDGET_MS, CLOUD_IDLE_MS } from "../../../shared/session-limits";
+import { AlarmSlots } from "./alarms";
 import {
   handleRequest,
   type HandlerEnv,
@@ -25,9 +27,11 @@ import {
   type WorkspaceExecHandle,
   type WorkspaceFileSystem,
   type WorkspaceHandle,
+  type WorkspaceLease,
 } from "./handler";
+import { RUNTIME_LEASE_ALARM, RuntimeLease } from "./runtimeLease";
 import { randomSlug } from "./slug";
-import { DurableSyncRetryScheduler } from "./syncRetry";
+import { DurableSyncRetryScheduler, settleSyncRetryAlarm, syncRetryAlarmSlot } from "./syncRetry";
 
 export { WorkspaceProxy } from "@cloudflare/computer";
 
@@ -44,7 +48,7 @@ class ContainerBase extends withWorkspaceContainer(class extends DurableObject<E
   });
 }
 
-function workspaceOptions(self: InstanceType<typeof ContainerBase>): WorkspaceOptions {
+function workspaceOptions(self: InstanceType<typeof ContainerBase>, alarms: AlarmSlots): WorkspaceOptions {
   // @cloudflare/computer 0.2.1 and current workers-types carry structurally
   // equivalent SQL generics that TypeScript cannot unify across package copies.
   const { ctx } = self as unknown as { ctx: DurableObjectState };
@@ -54,7 +58,7 @@ function workspaceOptions(self: InstanceType<typeof ContainerBase>): WorkspaceOp
     storage: ctx.storage as unknown as DurableObjectStorageLike,
     backends: [self.backend],
     observer: createCloudflareObserver({ tracing }),
-    retryScheduler: new DurableSyncRetryScheduler(ctx.storage),
+    retryScheduler: new DurableSyncRetryScheduler(ctx.storage, alarms),
     retry: {
       initialDelayMs: 2_000,
       maxDelayMs: 60_000,
@@ -64,29 +68,84 @@ function workspaceOptions(self: InstanceType<typeof ContainerBase>): WorkspaceOp
 }
 
 export class WebMCPComputerWorkspace extends ContainerBase {
-  readonly workspace = new Workspace(workspaceOptions(this));
+  readonly alarms = new AlarmSlots(this.ctx.storage);
+  readonly lease = new RuntimeLease(this.ctx.storage, this.alarms, {
+    budgetMs: CLOUD_BUDGET_MS,
+    idleMs: CLOUD_IDLE_MS,
+  });
+  readonly workspace = new Workspace(workspaceOptions(this, this.alarms));
+  #leaseOperation: Promise<void> = Promise.resolve();
+
+  #withLease<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.#leaseOperation.then(operation, operation);
+    this.#leaseOperation = result.then(() => undefined, () => undefined);
+    return result;
+  }
 
   async __getWorkspaceStub(): Promise<WorkspaceStub> {
     await this.workspace.ready();
     return this.workspace.stub();
   }
 
+  // Lease RPC surface used by the Worker before/after every exec.
+  acquireRuntimeLease(busyForMs: number): ReturnType<WorkspaceLease["acquire"]> {
+    return this.#withLease(() => this.lease.acquire(busyForMs));
+  }
+
+  runtimeLeaseStarted(): ReturnType<WorkspaceLease["started"]> {
+    return this.#withLease(() => this.lease.started());
+  }
+
+  releaseRuntimeLease(): ReturnType<WorkspaceLease["release"]> {
+    return this.#withLease(() => this.lease.release());
+  }
+
+  abandonRuntimeLease(): ReturnType<WorkspaceLease["abandon"]> {
+    return this.#withLease(() => this.lease.abandon());
+  }
+
+  runtimeBudget(): ReturnType<RuntimeLease["budget"]> {
+    return this.#withLease(() => this.lease.budget());
+  }
+
   override async fetch(request: Request): Promise<Response> {
     return await this.backend.handleFetch(request);
   }
 
+  // SIGKILL rather than SIGTERM: the platform otherwise waits up to 15 minutes for the
+  // process to exit, and we would pay for every one of them. The next exec relaunches;
+  // the filesystem is authoritative in this DO, so nothing durable is lost.
+  async #stopContainer(): Promise<void> {
+    const container = this.ctx.container;
+    if (!container?.running) return;
+    await container.destroy();
+  }
+
   override async alarm(alarmInfo?: { retryCount: number; isRetry: boolean }): Promise<void> {
-    try {
-      const result = await this.workspace.retryPendingSync(this.backend.id);
-      console.log("WebMCP Computer workspace sync retry", JSON.stringify(result));
-    } catch (error) {
-      if ((alarmInfo?.retryCount ?? 0) >= 5) {
-        await this.ctx.storage.setAlarm(Date.now() + 30_000);
-        console.error("WebMCP Computer workspace sync retry rescheduled", error);
-        return;
-      }
-      throw error;
+    const now = Date.now();
+    const due = new Set(await this.alarms.due(now));
+
+    if (due.has(RUNTIME_LEASE_ALARM)) {
+      const outcome = await this.#withLease(() => this.lease.onAlarm(() => this.#stopContainer()));
+      if (outcome !== "kept") console.log("WebMCP Computer runtime lease", JSON.stringify({ outcome }));
     }
+
+    if (due.has(syncRetryAlarmSlot(this.backend.id))) {
+      try {
+        const result = await this.workspace.retryPendingSync(this.backend.id);
+        await settleSyncRetryAlarm(this.alarms, this.backend.id, result.status);
+        console.log("WebMCP Computer workspace sync retry", JSON.stringify(result));
+      } catch (error) {
+        if ((alarmInfo?.retryCount ?? 0) >= 5) {
+          await this.alarms.set(syncRetryAlarmSlot(this.backend.id), Date.now() + 30_000);
+          console.error("WebMCP Computer workspace sync retry rescheduled", error);
+          return;
+        }
+        throw error;
+      }
+    }
+
+    await this.alarms.rearm();
   }
 }
 
@@ -133,13 +192,19 @@ const dependencies: WorkerDependencies = {
   async openWorkspace(wsid, env) {
     const workerEnv = env as Env;
     const id = workerEnv.WORKSPACES.idFromName(wsid);
+    const stub = workerEnv.WORKSPACES.get(id);
     // Match Computer's container example exactly: getWorkspace calls the
     // withWorkspace-installed accessor on this DO stub, so fs and runtime share
     // the single Workspace configured with ContainerBase.backend.
-    const client = await getWorkspace(
-      workerEnv.WORKSPACES.get(id) as unknown as Parameters<typeof getWorkspace>[0],
-    );
-    return handlerWorkspace(client);
+    const client = await getWorkspace(stub as unknown as Parameters<typeof getWorkspace>[0]);
+    const handle = handlerWorkspace(client);
+    handle.lease = {
+      acquire: (busyForMs) => stub.acquireRuntimeLease(busyForMs),
+      started: () => stub.runtimeLeaseStarted(),
+      release: () => stub.releaseRuntimeLease(),
+      abandon: () => stub.abandonRuntimeLease(),
+    };
+    return handle;
   },
   randomSlug,
 };

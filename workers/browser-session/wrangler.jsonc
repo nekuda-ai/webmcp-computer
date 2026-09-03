@@ -3,23 +3,54 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-09-01",
   "workers_dev": true,
+  "routes": [{ "pattern": "browser.webmcp.com", "custom_domain": true }],
   "secrets": {
-    "required": ["CF_ACCOUNT_ID", "GATEWAY_SIGNING_SECRET"]
+    "required": ["CF_ACCOUNT_ID", "BROWSER_RENDERING_API_TOKEN", "GATEWAY_SIGNING_SECRET"]
   },
+  // One BrowserLeaseObject per machine: holds at most one remote Chrome, charges the
+  // machine's daily budget, and deletes the Chrome server-side when heartbeats stop
+  // (shared/session-limits.ts).
+  "durable_objects": {
+    "bindings": [
+      { "name": "LEASES", "class_name": "BrowserLeaseObject" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["BrowserLeaseObject"] }
+  ],
+  // *_RATE keys on signed subject + IP; *_RATE_IP keys on IP alone, because a subject is
+  // free to mint by clearing cookies while an IP is not.
   "ratelimits": [
-    {
-      "name": "SESSION_RATE",
-      "namespace_id": "1001",
-      "simple": { "limit": 4, "period": 60 }
-    },
-    {
-      "name": "SESSION_ACTION_RATE",
-      "namespace_id": "1002",
-      "simple": { "limit": 30, "period": 60 }
-    }
+    { "name": "SESSION_RATE", "namespace_id": "1001", "simple": { "limit": 4, "period": 60 } },
+    { "name": "SESSION_RATE_IP", "namespace_id": "1003", "simple": { "limit": 4, "period": 60 } },
+    { "name": "SESSION_ACTION_RATE", "namespace_id": "1002", "simple": { "limit": 30, "period": 60 } },
+    { "name": "SESSION_ACTION_RATE_IP", "namespace_id": "1004", "simple": { "limit": 30, "period": 60 } }
   ],
   "observability": {
     "enabled": true,
     "head_sampling_rate": 1
+  },
+  "env": {
+    "staging": {
+      "routes": [{ "pattern": "browser-staging.webmcp.com", "custom_domain": true }],
+      "secrets": {
+        "required": ["CF_ACCOUNT_ID", "BROWSER_RENDERING_API_TOKEN", "GATEWAY_SIGNING_SECRET"]
+      },
+      "durable_objects": {
+        "bindings": [
+          { "name": "LEASES", "class_name": "BrowserLeaseObject" }
+        ]
+      },
+      "ratelimits": [
+        { "name": "SESSION_RATE", "namespace_id": "2001", "simple": { "limit": 4, "period": 60 } },
+        { "name": "SESSION_RATE_IP", "namespace_id": "2003", "simple": { "limit": 4, "period": 60 } },
+        { "name": "SESSION_ACTION_RATE", "namespace_id": "2002", "simple": { "limit": 30, "period": 60 } },
+        { "name": "SESSION_ACTION_RATE_IP", "namespace_id": "2004", "simple": { "limit": 30, "period": 60 } }
+      ],
+      "observability": {
+        "enabled": true,
+        "head_sampling_rate": 1
+      }
+    }
   }
 }

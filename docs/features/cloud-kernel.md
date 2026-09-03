@@ -1,5 +1,17 @@
 # Cloud kernel + os_publish — cloudflare/computer
 
+> Historical implementation spec. Current deployment, protection, and operations contracts
+> live in `docs/SELF_HOSTING.md` and `docs/OPERATIONS.md`.
+>
+> **Scale-readiness amendment:** protected workspace routes require a short-lived capability.
+> A per-workspace runtime lease allows one exec at a time, stops the container after 5 idle
+> minutes, and enforces a 2-hour budget per 24-hour accounting window. Durable Object alarm
+> slots coordinate runtime cleanup with persisted filesystem-sync retries. Paid actions are
+> rate-limited per signed subject + IP and per IP alone; writes are capped at 2 MB each and
+> 8 MB per request. Published sites retain the existing 64-file/2 MB caps, add a pseudonymous
+> abuse manifest, and are served `noindex` under CSP sandboxing from an untrusted
+> `workers.dev` origin.
+
 ## Goal
 
 Two independent capabilities behind one Worker:

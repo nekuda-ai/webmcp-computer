@@ -3,16 +3,22 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-09-01",
   "compatibility_flags": ["nodejs_compat"],
+  // Published sites are served from this Worker's own workers.dev origin at /s/{id}/ on
+  // purpose: no custom domain, nothing for a phishing page to borrow trust from.
   "workers_dev": true,
+  "routes": [{ "pattern": "cloud.webmcp.com", "custom_domain": true }],
   "secrets": {
-    "required": ["GATEWAY_SIGNING_SECRET"]
+    "required": ["GATEWAY_SIGNING_SECRET", "PUBLIC_SITE_ORIGIN"]
   },
   "containers": [
     {
       "class_name": "WebMCPComputerWorkspace",
       "image": "./Dockerfile",
       "instance_type": "standard-1",
-      "max_instances": 2,
+      // Concurrent running containers, i.e. concurrent cloud_exec users. Each is
+      // idle-stopped after CLOUD_IDLE_MS and hard-capped at CLOUD_BUDGET_MS per machine
+      // per day (shared/session-limits.ts), so this bounds spend, not just load.
+      "max_instances": 25,
       "rollout_active_grace_period": 0,
       "rollout_step_percentage": [100]
     }
@@ -28,27 +34,59 @@
   "r2_buckets": [
     { "binding": "SITES", "bucket_name": "webmcp-computer-sites" }
   ],
+  // Every paid action is limited twice. *_RATE keys on signed subject + IP (fair share
+  // between machines behind one NAT); *_RATE_IP keys on IP alone, because a subject is
+  // free to mint by clearing cookies while an IP is not.
   "ratelimits": [
-    {
-      "name": "EXEC_RATE",
-      "namespace_id": "1012",
-      "simple": { "limit": 6, "period": 60 }
-    },
-    {
-      "name": "PUBLISH_RATE",
-      "namespace_id": "1010",
-      "simple": { "limit": 4, "period": 60 }
-    },
-    {
-      "name": "WORKSPACE_WRITE_RATE",
-      "namespace_id": "1011",
-      // Fresh demo workspaces seed bundled manuals and demos. Keep enough
-      // headroom for that one-time burst while still bounding sustained writes.
-      "simple": { "limit": 300, "period": 60 }
-    }
+    { "name": "EXEC_RATE", "namespace_id": "1012", "simple": { "limit": 6, "period": 60 } },
+    { "name": "EXEC_RATE_IP", "namespace_id": "1013", "simple": { "limit": 6, "period": 60 } },
+    { "name": "PUBLISH_RATE", "namespace_id": "1010", "simple": { "limit": 4, "period": 60 } },
+    { "name": "PUBLISH_RATE_IP", "namespace_id": "1014", "simple": { "limit": 4, "period": 60 } },
+    // Fresh demo workspaces seed bundled manuals and demos. Keep enough headroom for
+    // that one-time burst while still bounding sustained writes.
+    { "name": "WORKSPACE_WRITE_RATE", "namespace_id": "1011", "simple": { "limit": 300, "period": 60 } },
+    { "name": "WORKSPACE_WRITE_RATE_IP", "namespace_id": "1015", "simple": { "limit": 900, "period": 60 } }
   ],
   "observability": {
     "enabled": true,
     "head_sampling_rate": 1
+  },
+  "env": {
+    "staging": {
+      "routes": [{ "pattern": "cloud-staging.webmcp.com", "custom_domain": true }],
+      "secrets": {
+        "required": ["GATEWAY_SIGNING_SECRET", "PUBLIC_SITE_ORIGIN"]
+      },
+      "containers": [
+        {
+          "class_name": "WebMCPComputerWorkspace",
+          "image": "./Dockerfile",
+          "instance_type": "standard-1",
+          "max_instances": 5,
+          "rollout_active_grace_period": 0,
+          "rollout_step_percentage": [100]
+        }
+      ],
+      "durable_objects": {
+        "bindings": [
+          { "name": "WORKSPACES", "class_name": "WebMCPComputerWorkspace" }
+        ]
+      },
+      "r2_buckets": [
+        { "binding": "SITES", "bucket_name": "webmcp-computer-sites-staging" }
+      ],
+      "ratelimits": [
+        { "name": "EXEC_RATE", "namespace_id": "2012", "simple": { "limit": 6, "period": 60 } },
+        { "name": "EXEC_RATE_IP", "namespace_id": "2013", "simple": { "limit": 6, "period": 60 } },
+        { "name": "PUBLISH_RATE", "namespace_id": "2010", "simple": { "limit": 4, "period": 60 } },
+        { "name": "PUBLISH_RATE_IP", "namespace_id": "2014", "simple": { "limit": 4, "period": 60 } },
+        { "name": "WORKSPACE_WRITE_RATE", "namespace_id": "2011", "simple": { "limit": 300, "period": 60 } },
+        { "name": "WORKSPACE_WRITE_RATE_IP", "namespace_id": "2015", "simple": { "limit": 900, "period": 60 } }
+      ],
+      "observability": {
+        "enabled": true,
+        "head_sampling_rate": 1
+      }
+    }
   }
 }

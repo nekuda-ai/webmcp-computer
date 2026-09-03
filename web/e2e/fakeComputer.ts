@@ -186,8 +186,11 @@ export function createFakeComputerHandler(options: { requireAuthorization?: bool
     GATEWAY_SIGNING_SECRET: "fake-computer-gateway-secret-at-least-32-characters",
     SITES: sites,
     EXEC_RATE: { async limit() { return { success: true }; } },
+    EXEC_RATE_IP: { async limit() { return { success: true }; } },
     PUBLISH_RATE: { async limit() { return { success: true }; } },
+    PUBLISH_RATE_IP: { async limit() { return { success: true }; } },
     WORKSPACE_WRITE_RATE: { async limit() { return { success: true }; } },
+    WORKSPACE_WRITE_RATE_IP: { async limit() { return { success: true }; } },
   } satisfies HandlerEnv;
   const dependencies = {
     async authenticate(request: Request, _env: HandlerEnv, workspaceId: string) {

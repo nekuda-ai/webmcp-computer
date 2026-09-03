@@ -1,5 +1,5 @@
 import { defineTool } from "@nekuda/webmcp-sdk";
-import { getBrowserSession, ensureBrowserSession } from "../apps/browser/session";
+import { getBrowserSession, ensureBrowserSession, rememberBrowserUrl } from "../apps/browser/session";
 import type { CdpClient } from "../apps/browser/cdp";
 import { useKernelStore } from "../kernel/store";
 import type { WindowRect } from "../kernel/types";
@@ -76,10 +76,12 @@ function byteLength(value: unknown): number {
 }
 
 async function readPageIdentity(transport: BrowserTransport): Promise<PageIdentity> {
-  return await transport.evaluate<PageIdentity>(
+  const identity = await transport.evaluate<PageIdentity>(
     "identity",
     "(() => ({ title: document.title, url: location.href }))()",
   );
+  rememberBrowserUrl(identity.url);
+  return identity;
 }
 
 async function gotoPage(transport: BrowserTransport, url: string): Promise<PageIdentity> {

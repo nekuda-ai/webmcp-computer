@@ -24,8 +24,8 @@ export const AGENT_SKILL_FILES = {
 export const AGENT_SKILL_SHA256 = {
   "README.md": "4cbb848863f3aa0c997cfc1d42fde34c9cbed8fbdc9bc27cbc9d5e610257ad61",
   "apps.md": "37f3bebef6421e2bfb6a86bc218c10b1006116103c117ae46ce1def0597a63ea",
-  "browser.md": "f49f9d6e14113ba2be2ac358f23404cc360c18c10e3425d8f61539929f38cdac",
-  "cloud.md": "f1d2d527da48110c55041e892dca9590dd88bfd7d446deab074ca626a5edc14c",
+  "browser.md": "f4f15d1fe6b5b00ee1cf85de8612e9aecc3274771252a49649daba435fd28147",
+  "cloud.md": "855acb0600becc65721caade0b5e0ba2d58641c9d58c53f2aad9f370964439ed",
   "conventions.md": "103b28b4cfa1f62d259880f445c6269df13f8a7fec448d5d1f3ff50f36836dbd",
   "filesystem.md": "081d2e4655d8b70a51611bd49f6cf629936d27a986dcc7e30299acf1f70e2113",
   "preview.md": "91744db371a3aa17d1763d708b1e1f63f3d3e5306100fc64cbeb9bcb03cc45b4",

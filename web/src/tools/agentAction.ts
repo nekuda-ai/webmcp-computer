@@ -7,6 +7,9 @@ export async function runAgentAction<T>(
   options?: { resultArgs?: (result: T) => Record<string, unknown> },
 ): Promise<T> {
   const state = useKernelStore.getState();
+  if (state.machineConflict) {
+    throw new Error("webmcp-computer: machine is active in another tab; select Take over here to continue");
+  }
   state.recordActivity();
   state.wakeScreensaver();
   let event = state.osEvent("agent", verb, { ...args });

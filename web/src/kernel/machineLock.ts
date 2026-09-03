@@ -10,8 +10,44 @@ type MachinePeerDetector = {
   close(): void;
 };
 
+export const MACHINE_CONFLICT_REASON = "machine already running in another tab";
+export const MACHINE_TAKEN_OVER_REASON = "machine taken over by another tab";
+
 let started = false;
 let releaseOwner: (() => void) | undefined;
+let takeOver: (() => Promise<void>) | undefined;
+let conflictReason = MACHINE_CONFLICT_REASON;
+const reasonListeners = new Set<() => void>();
+
+function setConflict(conflict: boolean, reason = MACHINE_CONFLICT_REASON): void {
+  if (conflictReason !== reason) {
+    conflictReason = reason;
+    for (const listener of reasonListeners) listener();
+  }
+  useKernelStore.getState().setMachineConflict(conflict);
+}
+
+/** Why this tab is blocked; pairs with `machineConflict` in the kernel store. */
+export function machineConflictReason(): string {
+  return conflictReason;
+}
+
+export function subscribeMachineConflictReason(listener: () => void): () => void {
+  reasonListeners.add(listener);
+  return () => reasonListeners.delete(listener);
+}
+
+function isAbort(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
+}
+
+/**
+ * Steal the machine lock from the tab that holds it. That tab's lock request rejects
+ * with AbortError and it moves to the blocked state; this tab becomes the owner.
+ */
+export async function takeOverMachine(): Promise<void> {
+  await takeOver?.();
+}
 
 function lockManager(): LockManager | undefined {
   return typeof navigator === "undefined" ? undefined : navigator.locks;
@@ -81,6 +117,18 @@ export function startMachineOwnership(
   };
   releaseOwner = releaseOwnership;
 
+  // A granted request that later rejects means another tab stole the lock.
+  const holdLock = async () => {
+    setConflict(false);
+    await hold;
+  };
+  const stolen = (error: unknown): boolean => {
+    if (!isAbort(error)) return false;
+    setConflict(true, MACHINE_TAKEN_OVER_REASON);
+    return true;
+  };
+
+  let owned = false;
   const availability = new Promise<"owned" | "contended" | "unavailable">((resolve) => {
     void locks.request(
       MACHINE_LOCK,
@@ -88,14 +136,25 @@ export function startMachineOwnership(
       async (lock) => {
         resolve(lock === null ? "contended" : "owned");
         if (lock === null) return;
-        useKernelStore.getState().setMachineConflict(false);
-        await hold;
+        owned = true;
+        await holdLock();
       },
     ).catch((error: unknown) => {
+      if (owned && stolen(error)) return;
       resolve("unavailable");
       console.warn("WebMCP Computer machine lock unavailable", error);
     });
   });
+
+  takeOver = async () => {
+    if (!useKernelStore.getState().machineConflict) return;
+    try {
+      await locks.request(MACHINE_LOCK, { mode: "exclusive", steal: true }, holdLock);
+    } catch (error) {
+      if (stolen(error)) return;
+      console.warn("WebMCP Computer machine take-over failed", error);
+    }
+  };
 
   void availability.then((status) => {
     if (status !== "contended") return;
@@ -104,17 +163,19 @@ export function startMachineOwnership(
       setTimeout(() => resolve(true), MACHINE_LOCK_CONFLICT_GRACE_MS);
     });
     void peerConfirmation.then((found) => {
-      if (found && waitingForLock) useKernelStore.getState().setMachineConflict(true);
+      if (found && waitingForLock) setConflict(true);
     }).catch((error: unknown) => {
       console.warn("WebMCP Computer machine peer check unavailable", error);
     });
+    let granted = false;
     void locks.request(MACHINE_LOCK, { mode: "exclusive" }, async () => {
       waitingForLock = false;
-      useKernelStore.getState().setMachineConflict(false);
-      await hold;
+      granted = true;
+      await holdLock();
     }).catch((error: unknown) => {
       waitingForLock = false;
-      useKernelStore.getState().setMachineConflict(false);
+      if (granted && stolen(error)) return;
+      setConflict(false);
       console.warn("WebMCP Computer machine lock wait failed", error);
     });
   });
@@ -125,5 +186,8 @@ export function startMachineOwnership(
 export function resetMachineOwnershipForTests(): void {
   releaseOwner?.();
   releaseOwner = undefined;
+  takeOver = undefined;
+  conflictReason = MACHINE_CONFLICT_REASON;
+  reasonListeners.clear();
   started = false;
 }

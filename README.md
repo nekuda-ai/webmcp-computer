@@ -13,7 +13,6 @@ Entry for the [OpenAI WebMCP Challenge](https://webmcp.devpost.com/).
 
 - **Live:** <https://computer.webmcp.com> (open in ChatGPT's browser or Chrome with
   `--enable-features=WebMCP`)
-- **Video:** _coming before submission_
 - **License:** MIT (see [LICENSE](./LICENSE))
 
 ## What a human and an agent can do together
@@ -100,8 +99,13 @@ as empirically verified, and `docs/features/` for per-feature specs.
   filesystem, Container execution, R2 publishing.
 - `shared/gateway-capability.ts` — provider-neutral signed capability contract shared by
   the site and both Workers.
+- `shared/session-limits.ts` — the visitor budgets (2 h remote Chrome and 2 h cloud
+  container per machine per 24-hour accounting window, 5-minute idle stops) that the site, both Workers, and
+  the client all enforce and display from one place.
 - `docs/` — build brief, feature specs, seeded agent manual (`agent-skills/`), testing
-  charter, WebMCP reference, demo briefs (`demo/`).
+  charter, WebMCP reference, demo briefs (`demo/`), [`SELF_HOSTING.md`](docs/SELF_HOSTING.md),
+  and the on-call runbook [`OPERATIONS.md`](docs/OPERATIONS.md).
+- [`SECURITY.md`](./SECURITY.md) · [`CONTRIBUTING.md`](./CONTRIBUTING.md) · CI in `.github/workflows/`.
 
 ## Running and testing
 
@@ -138,19 +142,25 @@ WebMCP Computer registers its tools through `@nekuda/webmcp-sdk`, which sends an
 content-free usage beacons (SDK init, tool registration, tool call outcomes) to nekuda's
 telemetry endpoint by default. It honors Global Privacy Control and
 `globalThis.__WEBMCP_TELEMETRY__ = false`. Every demo visitor receives a random,
-cookie-backed 15-minute workspace session; no provider identity is requested or stored.
-Opening Browser contacts the `webmcp-computer-browser-session` Worker and Cloudflare Browser
-Run capability URLs to create one shared remote Chrome. Enabling `cloud_kernel` sends
-filesystem bytes to a capability-addressed workspace on the `webmcp-computer-cloud` Worker
-after reboot; `cloud` and `cloud_exec` send requested commands and their output streams
-through that Worker's container; `os_publish` sends selected text files to that Worker's
-public R2-backed site URL. The site backend stores only the gateway signing secret and Worker
-URLs; the Browser Worker alone stores the Browser Rendering API token. Local kernel remains
-the default, and cloud failure falls back visibly to local.
+cookie-backed machine with short-lived (15-minute, auto-renewed) capabilities; no provider
+identity is requested or stored.
+Opening Browser contacts the `webmcp-computer-browser-session` Worker, which creates one
+remote Chrome per machine on Cloudflare Browser Run and hands back session-scoped URLs; the
+client heartbeats only while you are active and the tab is visible, and the Worker deletes
+the Chrome after 5 idle minutes. Enabling `cloud_kernel` sends filesystem bytes to a
+capability-addressed workspace on the `webmcp-computer-cloud` Worker after reboot; `cloud`
+and `cloud_exec` send requested commands and their output streams through that Worker's
+container, which is stopped 5 minutes after the last command; `os_publish` sends selected
+text files to that Worker's public R2-backed site URL (served `noindex` and sandboxed,
+deleted after 30 days; the manifest keeps a pseudonymous publisher record for takedowns).
+Each machine gets 2 hours of remote Chrome and 2 hours of container time per 24-hour accounting window.
+The site backend stores only the gateway signing secret and Worker URLs; the Browser Worker
+alone stores the Browser Rendering API token. Local kernel remains the default, and cloud
+failure falls back visibly to local.
 
 ## Scope notes
 
-One WebMCP Computer machine runs per browser profile (a second tab shows "machine already
-running in another tab"), and its local filesystem persists in OPFS between visits. Git,
+One WebMCP Computer machine runs per browser profile (a second tab is blocked unless the
+human explicitly selects **Take over**), and its local filesystem persists in OPFS between visits. Git,
 node, and real test runners are available only through the opt-in cloud kernel; the
 in-browser shell has no git.
