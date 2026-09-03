@@ -76,7 +76,9 @@ Endpoints:
 - `POST /ws/{wsid}/publish` with `{ files: [{ path, content }] }` (text only; ≤ 64 files,
   ≤ 256KB/file, ≤ 2MB total; paths relative, normalized, no `..`) → reserves one of 20
   successful publishes per workspace per fixed 24-hour accounting window in the workspace
-  Durable Object → writes to R2 under `sites/{id}/…` (id = 8-char random slug) → returns
+  Durable Object. Caller-ID reservation retries are idempotent; pre-upload reservations
+  expire after 5 minutes, while active uploads never expire within their accounting window.
+  It then writes to R2 under `sites/{id}/…` (id = 8-char random slug) → returns
   `{ url, id, expiresInDays: 30 }`
   where url is `https://<worker-host>/s/{id}/`. Published objects have a 30-day
   retention window enforced by the R2 bucket lifecycle, not application deletion.

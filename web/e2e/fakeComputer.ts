@@ -219,11 +219,13 @@ export function createFakeComputerHandler(options: { requireAuthorization?: bool
     },
     openPublishQuota() {
       return {
-        async reserve() { return { ok: true as const, reservationId: crypto.randomUUID(), windowResetsAt: Date.now() + 86_400_000 }; },
+        async reserve(reservationId: string) { return { ok: true as const, reservationId, windowResetsAt: Date.now() + 86_400_000 }; },
+        async begin() {},
         async commit() {},
         async release() {},
       };
     },
+    randomReservationId: () => crypto.randomUUID(),
     randomSlug() {
       return `fake${String(nextSite++).padStart(4, "0")}`;
     },

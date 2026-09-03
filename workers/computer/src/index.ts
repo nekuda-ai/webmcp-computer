@@ -112,8 +112,12 @@ export class WebMCPComputerWorkspace extends ContainerBase {
 
   // Publish quota RPCs use only this DO's durable storage. They never access the Workspace
   // runtime or container backend, so publishing cannot start a container.
-  reservePublish(): ReturnType<PublishQuota["reserve"]> {
-    return this.publishQuota.reserve();
+  reservePublish(reservationId: string): ReturnType<PublishQuota["reserve"]> {
+    return this.publishQuota.reserve(reservationId);
+  }
+
+  beginPublish(reservationId: string): ReturnType<PublishQuota["begin"]> {
+    return this.publishQuota.begin(reservationId);
   }
 
   commitPublish(reservationId: string): ReturnType<PublishQuota["commit"]> {
@@ -226,11 +230,13 @@ const dependencies: WorkerDependencies = {
     const workerEnv = env as Env;
     const stub = workerEnv.WORKSPACES.get(workerEnv.WORKSPACES.idFromName(wsid));
     return {
-      reserve: () => stub.reservePublish(),
+      reserve: (reservationId) => stub.reservePublish(reservationId),
+      begin: (reservationId) => stub.beginPublish(reservationId),
       commit: (reservationId) => stub.commitPublish(reservationId),
       release: (reservationId) => stub.releasePublish(reservationId),
     };
   },
+  randomReservationId: () => crypto.randomUUID(),
   randomSlug,
 };
 

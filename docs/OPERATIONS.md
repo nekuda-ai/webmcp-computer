@@ -239,6 +239,7 @@ capacity remain the deployment-wide cost backstops:
 | Per site | 2 MB |
 | Per machine/workspace | 20 successful publishes per fixed 24-hour accounting window (workspace Durable Object ledger) |
 | Quota response | HTTP 429 JSON with `code: EPUBLISHQUOTA` and `retryAfterMs` |
+| Reservation safety | Caller-ID retries are idempotent; abandoned pre-upload reservations stop blocking after 5 min. Immediately before the first R2 put they become active and cannot expire within that accounting window. Any attempted put is conservatively committed because bytes may have become public. |
 | Retention | 30 days (R2 lifecycle on `sites/`) |
 | Headers | `X-Robots-Tag: noindex`, CSP `sandbox` |
 | Manifest | `sites/{id}/.webmcp-computer-site` — JSON `{ id, publishedAt, subject, ipHash, files, bytes }`; `ipHash` is an HMAC of the IP under the gateway secret, so the IP itself is never stored |

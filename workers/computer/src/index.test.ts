@@ -193,6 +193,9 @@ function fixture(options: {
   publishRate?: boolean;
   publishRateIp?: boolean;
   publishQuota?: "exhausted";
+  reserveFailures?: number;
+  beginFailures?: number;
+  commitFailures?: number;
   sitePutFailureAt?: number;
   slugs?: string[];
   lease?: "exhausted" | "none";
@@ -202,7 +205,16 @@ function fixture(options: {
   const sites = new MemorySiteStore(options.sitePutFailureAt);
   const slugs = options.slugs ?? ["aaaaaaaa"];
   const rateCalls = { exec: 0, publish: 0, write: 0, execIp: 0, publishIp: 0, writeIp: 0 };
-  const quotaCalls = { reserve: 0, commit: [] as string[], release: [] as string[] };
+  const quotaCalls = {
+    reserve: [] as string[],
+    begin: [] as string[],
+    commit: [] as string[],
+    release: [] as string[],
+  };
+  let reserveFailures = options.reserveFailures ?? 0;
+  let beginFailures = options.beginFailures ?? 0;
+  let commitFailures = options.commitFailures ?? 0;
+  let nextReservation = 1;
   const leaseCalls: string[] = [];
   const budget = { remainingMs: 7_000_000, usedMs: 200_000, windowResetsAt: 9_000_000 };
   if (options.lease !== "none") {
@@ -319,8 +331,12 @@ function fixture(options: {
     async openWorkspace() { return workspace.client; },
     openPublishQuota() {
       return {
-        async reserve() {
-          quotaCalls.reserve += 1;
+        async reserve(reservationId: string) {
+          quotaCalls.reserve.push(reservationId);
+          if (reserveFailures > 0) {
+            reserveFailures -= 1;
+            throw new Error("test: ambiguous reserve RPC");
+          }
           if (options.publishQuota === "exhausted") {
             return {
               ok: false as const,
@@ -331,12 +347,26 @@ function fixture(options: {
               },
             };
           }
-          return { ok: true as const, reservationId: `reservation-${quotaCalls.reserve}`, windowResetsAt: BUDGET_WINDOW_MS };
+          return { ok: true as const, reservationId, windowResetsAt: BUDGET_WINDOW_MS };
         },
-        async commit(reservationId: string) { quotaCalls.commit.push(reservationId); },
+        async begin(reservationId: string) {
+          quotaCalls.begin.push(reservationId);
+          if (beginFailures > 0) {
+            beginFailures -= 1;
+            throw new Error("test: ambiguous begin RPC");
+          }
+        },
+        async commit(reservationId: string) {
+          quotaCalls.commit.push(reservationId);
+          if (commitFailures > 0) {
+            commitFailures -= 1;
+            throw new Error("test: ambiguous commit RPC");
+          }
+        },
         async release(reservationId: string) { quotaCalls.release.push(reservationId); },
       };
     },
+    randomReservationId: () => `reservation-${nextReservation++}`,
     randomSlug() {
       const slug = slugs.shift();
       if (!slug) throw new Error("test: no slug left");
@@ -527,13 +557,14 @@ describe("computer worker", () => {
     expect(response.headers.get("Retry-After")).toBe(String(BUDGET_WINDOW_MS / 2 / 1_000));
     expect(scoped.rateCalls.publish).toBe(1);
     expect(scoped.rateCalls.publishIp).toBe(1);
-    expect(scoped.quotaCalls.reserve).toBe(1);
+    expect(scoped.quotaCalls.reserve).toEqual(["reservation-1"]);
+    expect(scoped.quotaCalls.begin).toEqual([]);
     expect(scoped.sites.getCalls).toBe(0);
     expect(scoped.sites.putCalls).toBe(0);
     expect(scoped.workspace.disposeCount).toBe(0);
   });
 
-  test("only reserves daily quota for valid requests and releases failed R2 uploads", async () => {
+  test("releases quota only when failure is certainly before any R2 put", async () => {
     const invalid = fixture();
     const invalidResponse = await handleRequest(
       new Request(`https://computer.test/ws/${WSID}/publish`, {
@@ -544,9 +575,9 @@ describe("computer worker", () => {
       invalid.dependencies,
     );
     expect(invalidResponse.status).toBe(400);
-    expect(invalid.quotaCalls.reserve).toBe(0);
+    expect(invalid.quotaCalls.reserve).toEqual([]);
 
-    const failed = fixture({ sitePutFailureAt: 2 });
+    const failed = fixture({ slugs: ["INVALID"] });
     const failedResponse = await handleRequest(
       new Request(`https://computer.test/ws/${WSID}/publish`, {
         method: "POST",
@@ -557,10 +588,104 @@ describe("computer worker", () => {
     );
     expect(failedResponse.status).toBe(502);
     expect(failed.quotaCalls).toEqual({
-      reserve: 1,
+      reserve: ["reservation-1"],
+      begin: [],
       commit: [],
       release: ["reservation-1"],
     });
+    expect(failed.sites.putCalls).toBe(0);
+  });
+
+  test("conservatively charges quota when a late R2 put may have published bytes", async () => {
+    const failed = fixture({ sitePutFailureAt: 3 });
+    const response = await handleRequest(
+      new Request(`https://computer.test/ws/${WSID}/publish`, {
+        method: "POST",
+        body: JSON.stringify({ files: [
+          { path: "index.html", content: "public" },
+          { path: "late.js", content: "failed" },
+        ] }),
+      }),
+      failed.env,
+      failed.dependencies,
+    );
+
+    expect(response.status).toBe(502);
+    expect(failed.sites.values.has("sites/aaaaaaaa/index.html")).toBe(true);
+    expect(failed.quotaCalls).toEqual({
+      reserve: ["reservation-1"],
+      begin: ["reservation-1"],
+      commit: ["reservation-1"],
+      release: [],
+    });
+  });
+
+  test("never refunds quota when the final commit RPC remains ambiguous", async () => {
+    const failed = fixture({ commitFailures: 2 });
+    const response = await handleRequest(
+      new Request(`https://computer.test/ws/${WSID}/publish`, {
+        method: "POST",
+        body: JSON.stringify({ files: [{ path: "index.html", content: "public" }] }),
+      }),
+      failed.env,
+      failed.dependencies,
+    );
+
+    expect(response.status).toBe(502);
+    expect(failed.sites.values.has("sites/aaaaaaaa/index.html")).toBe(true);
+    expect(failed.quotaCalls.commit).toEqual(["reservation-1", "reservation-1"]);
+    expect(failed.quotaCalls.release).toEqual([]);
+  });
+
+  test("retries an ambiguous reserve with one caller-generated id before uploading", async () => {
+    const ambiguous = fixture({ reserveFailures: 1 });
+    const response = await handleRequest(
+      new Request(`https://computer.test/ws/${WSID}/publish`, {
+        method: "POST",
+        body: JSON.stringify({ files: [{ path: "index.html", content: "ok" }] }),
+      }),
+      ambiguous.env,
+      ambiguous.dependencies,
+    );
+
+    expect(response.status).toBe(200);
+    expect(ambiguous.quotaCalls.reserve).toEqual(["reservation-1", "reservation-1"]);
+    expect(ambiguous.quotaCalls.begin).toEqual(["reservation-1"]);
+    expect(ambiguous.quotaCalls.commit).toEqual(["reservation-1"]);
+  });
+
+  test("retries an ambiguous begin and still confirms it before writing", async () => {
+    const ambiguous = fixture({ beginFailures: 1 });
+    const response = await handleRequest(
+      new Request(`https://computer.test/ws/${WSID}/publish`, {
+        method: "POST",
+        body: JSON.stringify({ files: [{ path: "index.html", content: "ok" }] }),
+      }),
+      ambiguous.env,
+      ambiguous.dependencies,
+    );
+
+    expect(response.status).toBe(200);
+    expect(ambiguous.quotaCalls.begin).toEqual(["reservation-1", "reservation-1"]);
+    expect(ambiguous.sites.putCalls).toBe(2);
+  });
+
+  test("reconciles a reserve that stays ambiguous without attempting R2", async () => {
+    const ambiguous = fixture({ reserveFailures: 2 });
+    const response = await handleRequest(
+      new Request(`https://computer.test/ws/${WSID}/publish`, {
+        method: "POST",
+        body: JSON.stringify({ files: [{ path: "index.html", content: "ok" }] }),
+      }),
+      ambiguous.env,
+      ambiguous.dependencies,
+    );
+
+    expect(response.status).toBe(502);
+    expect(ambiguous.quotaCalls.reserve).toEqual(["reservation-1", "reservation-1"]);
+    expect(ambiguous.quotaCalls.release).toEqual(["reservation-1"]);
+    expect(ambiguous.sites.getCalls).toBe(0);
+    expect(ambiguous.sites.putCalls).toBe(0);
   });
 
   test("charges one workspace rate token per mutating batch request", async () => {
@@ -621,7 +746,12 @@ describe("computer worker", () => {
     });
     expect(sites.values.get("sites/aaaaaaaa/index.html")?.contentType).toBe("text/html; charset=utf-8");
     expect(sites.values.get("sites/aaaaaaaa/assets/app.js")?.contentType).toBe("text/javascript; charset=utf-8");
-    expect(quotaCalls).toEqual({ reserve: 2, commit: ["reservation-1", "reservation-2"], release: [] });
+    expect(quotaCalls).toEqual({
+      reserve: ["reservation-1", "reservation-2"],
+      begin: ["reservation-1", "reservation-2"],
+      commit: ["reservation-1", "reservation-2"],
+      release: [],
+    });
     const publicPublish = await handleRequest(new Request("https://computer.test/publish", {
       method: "POST",
       body: JSON.stringify({ files: [{ path: "index.html", content: "anonymous" }] }),
@@ -943,7 +1073,7 @@ describe("computer worker", () => {
     );
     expect(published.status).toBe(429);
     expect(publish.sites.values.size).toBe(0);
-    expect(publish.quotaCalls.reserve).toBe(0);
+    expect(publish.quotaCalls.reserve).toEqual([]);
 
     const write = fixture({ writeRateIp: false });
     const written = await handleRequest(fsRequest({ op: "mkdir", path: "/x" }), write.env, write.dependencies);

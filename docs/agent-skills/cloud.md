@@ -74,6 +74,9 @@ extensions: html, htm, css, js, json, svg, txt, md. Caps: 64 files, 256 KB per f
 
 Publishing uses the same browser-held workspace capability at
 `POST /ws/{wsid}/publish`; local mode mints and reuses one only for this scoped request.
+The Worker retries reservations idempotently. An abandoned pre-upload reservation stops
+blocking after 5 minutes, but once an R2 write may have started the slot stays charged for
+that accounting window even if a later upload step returns an ambiguous failure.
 
 This is a **transact** tool: uploaded bytes become public to anyone with the returned
 URL. Inspect the tree first. Published files are deleted after 30 days and served from the

@@ -125,7 +125,8 @@ export type WorkspaceExecHandle = ReadableStream<WorkspaceExecEvent> & {
 };
 
 export type PublishQuotaHandle = {
-  reserve(): Promise<PublishQuotaResult>;
+  reserve(reservationId: string): Promise<PublishQuotaResult>;
+  begin(reservationId: string): Promise<void>;
   commit(reservationId: string): Promise<void>;
   release(reservationId: string): Promise<void>;
 };
@@ -134,6 +135,7 @@ export type WorkerDependencies = {
   authenticate(request: Request, env: HandlerEnv, workspaceId: string): Promise<GatewayCapabilityClaims>;
   openWorkspace(wsid: string, env: HandlerEnv): Promise<WorkspaceHandle>;
   openPublishQuota(wsid: string, env: HandlerEnv): PublishQuotaHandle;
+  randomReservationId(): string;
   randomSlug(): string;
 };
 
@@ -627,6 +629,14 @@ function publicSiteOrigin(request: Request, env: HandlerEnv): string {
   throw coded("PUBLIC_SITE_ORIGIN must be an HTTPS origin without a path", "EIO");
 }
 
+async function retryOnce<T>(operation: () => Promise<T>): Promise<T> {
+  try {
+    return await operation();
+  } catch {
+    return await operation();
+  }
+}
+
 async function publishResponse(
   request: Request,
   env: HandlerEnv,
@@ -656,11 +666,28 @@ async function publishResponse(
     // Reserve in the workspace DO only after the whole request is valid. Pending reservations
     // consume capacity, making the daily cap exact even when many R2 uploads overlap.
     const quota = dependencies.openPublishQuota(wsid, env);
-    const reservation = await quota.reserve();
+    const reservationId = dependencies.randomReservationId();
+    let reservation: PublishQuotaResult;
+    try {
+      // The caller-generated ID makes an ambiguous reserve safe to retry: the DO returns
+      // the original reservation instead of consuming another slot.
+      reservation = await retryOnce(() => quota.reserve(reservationId));
+    } catch (error) {
+      // No R2 write can have started. Best-effort reconciliation removes a reserve whose
+      // response was lost; otherwise its short pre-upload expiry bounds the orphan.
+      await quota.release(reservationId).catch(() => undefined);
+      throw error;
+    }
     if (!reservation.ok) return limitErrorResponse(reservation.error, 429);
+    let r2WriteAttempted = false;
     try {
       const id = await allocateSiteId(env.SITES, dependencies.randomSlug);
       const ipHash = await pseudonymousIp(env.GATEWAY_SIGNING_SECRET, keys.ip);
+      // begin() is idempotent and is confirmed before the first put. Once active, this
+      // reservation cannot expire while an upload is in progress.
+      await retryOnce(() => quota.begin(reservationId));
+      // Set this before invoking R2: a rejected put may still have reached durable storage.
+      r2WriteAttempted = true;
       // The manifest doubles as the takedown record: who published, from where (pseudonymous), when.
       await env.SITES.put(
         `sites/${id}/.webmcp-computer-site`,
@@ -679,16 +706,20 @@ async function publishResponse(
           httpMetadata: { contentType: contentType(file.path) },
         });
       }
-      await quota.commit(reservation.reservationId);
+      await quota.commit(reservationId);
       return json({
         id,
         url: `${origin}/s/${id}/`,
         expiresInDays: PUBLISHED_SITE_RETENTION_DAYS,
       });
     } catch (error) {
-      // release() is deliberately a no-op for a committed reservation, so an ambiguous
-      // commit RPC cannot accidentally refund a successful publish.
-      await quota.release(reservation.reservationId).catch(() => undefined);
+      if (r2WriteAttempted) {
+        // Any attempted put may have made bytes public. Count it conservatively; if this
+        // commit is also ambiguous, the active reservation continues consuming capacity.
+        await quota.commit(reservationId).catch(() => undefined);
+      } else {
+        await quota.release(reservationId).catch(() => undefined);
+      }
       throw error;
     }
   } catch (error) {
