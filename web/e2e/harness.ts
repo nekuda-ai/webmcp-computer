@@ -81,7 +81,20 @@ export async function startHarness(): Promise<void> {
   let browser: Browser | undefined;
 
   try {
-    await build({ logLevel: "silent" });
+    // A developer may enable PostHog in gitignored web/.env for staging builds. Keep
+    // deterministic local E2E runs out of that real analytics project.
+    const postHogKey = process.env.VITE_POSTHOG_KEY;
+    const postHogHost = process.env.VITE_POSTHOG_HOST;
+    process.env.VITE_POSTHOG_KEY = "";
+    process.env.VITE_POSTHOG_HOST = "";
+    try {
+      await build({ logLevel: "silent" });
+    } finally {
+      if (postHogKey === undefined) delete process.env.VITE_POSTHOG_KEY;
+      else process.env.VITE_POSTHOG_KEY = postHogKey;
+      if (postHogHost === undefined) delete process.env.VITE_POSTHOG_HOST;
+      else process.env.VITE_POSTHOG_HOST = postHogHost;
+    }
     previewServer = await preview({
       logLevel: "silent",
       preview: { host: "127.0.0.1", port: 0, strictPort: true },

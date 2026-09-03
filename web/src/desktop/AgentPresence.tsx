@@ -125,7 +125,7 @@ export function AgentPresence() {
     : undefined;
 
   return (
-    <div className="agent-presence" aria-live="polite">
+    <div className="agent-presence" data-analytics-block="" aria-live="polite">
       <div
         className={`agent-cursor${cursorVisible ? " is-visible" : ""}`}
         style={{ transform: `translate(${target.x}px, ${target.y}px)` }}

@@ -114,7 +114,7 @@ export function DesktopIcons() {
   };
 
   return (
-    <div className="desktop-icons" aria-label="Desktop files">
+    <div className="desktop-icons" data-analytics-block="" aria-label="Desktop files">
       {pendingDelete ? (
         <form
           className="file-action-bar desktop-icons__confirm"

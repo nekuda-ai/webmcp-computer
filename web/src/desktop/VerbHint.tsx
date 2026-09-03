@@ -140,6 +140,7 @@ export function VerbHint({ verb, arg, children }: VerbHintProps) {
         ref={tipRef}
         className={`verb-hint__tip${position ? " is-ready" : ""}`}
         data-placement={position?.placement ?? "above"}
+        data-analytics-block=""
         role="tooltip"
         style={position ? {
           left: position.left,

@@ -138,6 +138,14 @@ Site uploads use the browser-held capability route `POST /ws/{wsid}/publish`; no
 
 ## Network disclosure
 
+When both `VITE_POSTHOG_KEY` and `VITE_POSTHOG_HOST` are set at build time, the web app
+sends pseudonymous, content-free typed usage events and privacy-masked session replay to that
+PostHog project. Autocapture, page views, person profiles, console/error capture, network
+payload capture, surveys, canvas, inputs, app content, and user-site frames are excluded; DNT and
+Global Privacy Control are honored. With either value absent, PostHog is not initialized.
+The public PostHog project key is browser configuration, not a secret. No project key is
+committed here.
+
 WebMCP Computer registers its tools through `@nekuda/webmcp-sdk`, which sends anonymous,
 content-free usage beacons (SDK init, tool registration, tool call outcomes) to nekuda's
 telemetry endpoint by default. It honors Global Privacy Control and

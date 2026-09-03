@@ -100,6 +100,7 @@ export function Desktop() {
       {!machineConflict && fileSystemWarnings.length === 0 ? null : (
         <div
           className={`machine-banner mono${fileSystemWarnings.length > 0 ? " machine-banner--error" : ""}`}
+          data-analytics-block=""
           role={fileSystemWarnings.length > 0 ? "alert" : "status"}
         >
           {machineConflict ? (

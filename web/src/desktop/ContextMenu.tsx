@@ -198,6 +198,7 @@ export function ContextMenu() {
       ref={menuRef}
       className={`context-menu${readyPosition ? " is-ready" : ""}`}
       data-context-menu=""
+      data-analytics-block=""
       role="menu"
       aria-label={menu.label}
       tabIndex={-1}

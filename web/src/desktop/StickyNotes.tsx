@@ -79,7 +79,7 @@ function StickyNote({ note }: { note: StickyNoteRecord }) {
 export function StickyNotes() {
   const notes = useKernelStore((state) => state.stickyNotes);
   return (
-    <div className="sticky-notes" aria-label="Sticky notes">
+    <div className="sticky-notes" data-analytics-block="" aria-label="Sticky notes">
       {notes.map((note) => <StickyNote key={note.path} note={note} />)}
     </div>
   );

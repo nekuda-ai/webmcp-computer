@@ -155,6 +155,17 @@ same `/api/session` broker and reads `web/.env` (see `web/.env.example`): point
 set `WEBMCP_COMPUTER_DEV_GATEWAY_SIGNING_SECRET` to their gateway secret, or run both
 Workers locally on `127.0.0.1:8787` / `127.0.0.1:8788` with the development secret.
 
+### Optional PostHog analytics
+
+Set both `VITE_POSTHOG_KEY` and `VITE_POSTHOG_HOST` in the frontend build environment to
+enable pseudonymous typed usage analytics and privacy-masked session replay. If either is
+empty, PostHog is not initialized. The project key is intentionally public browser
+configuration; never put a personal or administrative PostHog token in a `VITE_` value.
+The SDK is bundled (including replay), so no PostHog script origin is needed in CSP; allow
+the configured ingestion host in `connect-src`. The integration honors DNT/GPC and does
+not expose an application consent setting. See the repository README network disclosure
+for the captured/excluded categories.
+
 ### Another host
 
 Keep browser contract in `web/src/kernel/hostedSession.ts`. Implement same-origin
