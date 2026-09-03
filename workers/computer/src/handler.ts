@@ -1,6 +1,7 @@
 import { MAX_FS_BATCH_OPERATIONS, PUBLISHED_SITE_RETENTION_DAYS } from "./protocol";
 import type { GatewayCapabilityClaims } from "../../../shared/gateway-capability";
 import type { BudgetSnapshot, LimitError } from "../../../shared/session-limits";
+import type { PublishQuotaResult } from "./publishQuota";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Headers": "Authorization, Content-Type",
@@ -123,9 +124,16 @@ export type WorkspaceExecHandle = ReadableStream<WorkspaceExecEvent> & {
   [Symbol.dispose](): void;
 };
 
+export type PublishQuotaHandle = {
+  reserve(): Promise<PublishQuotaResult>;
+  commit(reservationId: string): Promise<void>;
+  release(reservationId: string): Promise<void>;
+};
+
 export type WorkerDependencies = {
   authenticate(request: Request, env: HandlerEnv, workspaceId: string): Promise<GatewayCapabilityClaims>;
   openWorkspace(wsid: string, env: HandlerEnv): Promise<WorkspaceHandle>;
+  openPublishQuota(wsid: string, env: HandlerEnv): PublishQuotaHandle;
   randomSlug(): string;
 };
 
@@ -623,6 +631,7 @@ async function publishResponse(
   request: Request,
   env: HandlerEnv,
   dependencies: WorkerDependencies,
+  wsid: string,
   keys: RateKeys,
 ): Promise<Response> {
   if (await rateLimited(env.PUBLISH_RATE, env.PUBLISH_RATE_IP, keys)) return rateLimitedResponse();
@@ -644,30 +653,44 @@ async function publishResponse(
   try {
     const { files, bytes } = parsePublishFiles(value);
     const origin = publicSiteOrigin(request, env);
-    const id = await allocateSiteId(env.SITES, dependencies.randomSlug);
-    // The manifest doubles as the takedown record: who published, from where (pseudonymous), when.
-    await env.SITES.put(
-      `sites/${id}/.webmcp-computer-site`,
-      JSON.stringify({
+    // Reserve in the workspace DO only after the whole request is valid. Pending reservations
+    // consume capacity, making the daily cap exact even when many R2 uploads overlap.
+    const quota = dependencies.openPublishQuota(wsid, env);
+    const reservation = await quota.reserve();
+    if (!reservation.ok) return limitErrorResponse(reservation.error, 429);
+    try {
+      const id = await allocateSiteId(env.SITES, dependencies.randomSlug);
+      const ipHash = await pseudonymousIp(env.GATEWAY_SIGNING_SECRET, keys.ip);
+      // The manifest doubles as the takedown record: who published, from where (pseudonymous), when.
+      await env.SITES.put(
+        `sites/${id}/.webmcp-computer-site`,
+        JSON.stringify({
+          id,
+          publishedAt: new Date().toISOString(),
+          subject: keys.subject,
+          ipHash,
+          files: files.length,
+          bytes,
+        }),
+        { httpMetadata: { contentType: "application/json; charset=utf-8" } },
+      );
+      for (const file of files) {
+        await env.SITES.put(`sites/${id}/${file.path}`, file.content, {
+          httpMetadata: { contentType: contentType(file.path) },
+        });
+      }
+      await quota.commit(reservation.reservationId);
+      return json({
         id,
-        publishedAt: new Date().toISOString(),
-        subject: keys.subject,
-        ipHash: await pseudonymousIp(env.GATEWAY_SIGNING_SECRET, keys.ip),
-        files: files.length,
-        bytes,
-      }),
-      { httpMetadata: { contentType: "application/json; charset=utf-8" } },
-    );
-    for (const file of files) {
-      await env.SITES.put(`sites/${id}/${file.path}`, file.content, {
-        httpMetadata: { contentType: contentType(file.path) },
+        url: `${origin}/s/${id}/`,
+        expiresInDays: PUBLISHED_SITE_RETENTION_DAYS,
       });
+    } catch (error) {
+      // release() is deliberately a no-op for a committed reservation, so an ambiguous
+      // commit RPC cannot accidentally refund a successful publish.
+      await quota.release(reservation.reservationId).catch(() => undefined);
+      throw error;
     }
-    return json({
-      id,
-      url: `${origin}/s/${id}/`,
-      expiresInDays: PUBLISHED_SITE_RETENTION_DAYS,
-    });
   } catch (error) {
     const code = errorCode(error);
     const status = code === "EINVAL"
@@ -928,7 +951,7 @@ export async function handleRequest(
         return withCors(json({ error: "unauthorized" }, 401), request);
       }
       const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
-      return withCors(await publishResponse(request, env, dependencies, { subject: claims.subject, ip }), request);
+      return withCors(await publishResponse(request, env, dependencies, wsid, { subject: claims.subject, ip }), request);
     }
     const workspace = /^\/ws\/([^/]+)\/fs(\/batch)?$/.exec(pathname);
     if (request.method === "POST" && workspace) {

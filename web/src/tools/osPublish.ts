@@ -3,6 +3,7 @@ import { ls, normalizePath, readFile, stat, type FileEntry, type FileStat } from
 import { ensureWorkspaceId, resolveComputerWorkerUrl } from "../kernel/cloudFs";
 import { runAgentAction } from "./agentAction";
 import { TRANSACT_ANNOTATIONS } from "./taxonomy";
+import { PUBLISH_QUOTA_LIMIT } from "../../../shared/session-limits";
 import { PUBLISHED_SITE_RETENTION_DAYS } from "../../../workers/computer/src/protocol";
 import { hostedAuthorization } from "../kernel/hostedSession";
 
@@ -119,6 +120,28 @@ function reason(error: unknown): string {
   return message.replace(/^webmcp-computer:\s*/, "");
 }
 
+function retryDelay(retryAfterMs: number): string {
+  const minutes = Math.max(1, Math.ceil(retryAfterMs / 60_000));
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"}`;
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  return `${hours} hour${hours === 1 ? "" : "s"}${remainder === 0 ? "" : ` ${remainder} minutes`}`;
+}
+
+function publishFailure(payload: unknown, status: number): string {
+  const failure = payload !== null && typeof payload === "object"
+    ? payload as { error?: unknown; code?: unknown; retryAfterMs?: unknown }
+    : undefined;
+  if (failure?.code === "EPUBLISHQUOTA") {
+    const explanation =
+      `publishing limit reached for this machine (${PUBLISH_QUOTA_LIMIT} successful publishes per 24-hour accounting window)`;
+    return typeof failure.retryAfterMs === "number" && Number.isFinite(failure.retryAfterMs) && failure.retryAfterMs >= 0
+      ? `${explanation}; try again in ${retryDelay(failure.retryAfterMs)}`
+      : `${explanation}; try again after the accounting window resets`;
+  }
+  return typeof failure?.error === "string" ? failure.error : `Worker returned ${status}`;
+}
+
 export function createOsPublishTool(
   dependencies?: OsPublishDependencies,
 ) {
@@ -127,7 +150,7 @@ export function createOsPublishTool(
     name: "os_publish",
     title: "Publish site",
     description:
-      `Publish a text-only directory to a public internet URL and show that URL with a QR code. Published files are public and deleted after ${PUBLISHED_SITE_RETENTION_DAYS} days. path defaults to ~/site and must be a directory. Allows html, css, js, json, svg, txt, and md; maximum 64 files, 256 KB each, 2 MB total. This is consequential because anyone with the returned URL can read the uploaded content.`,
+      `Publish a text-only directory to a public internet URL and show that URL with a QR code. Published files are public and deleted after ${PUBLISHED_SITE_RETENTION_DAYS} days. Anonymous machines may successfully publish ${PUBLISH_QUOTA_LIMIT} times per 24-hour accounting window. path defaults to ~/site and must be a directory. Allows html, css, js, json, svg, txt, and md; maximum 64 files, 256 KB each, 2 MB total. This is consequential because anyone with the returned URL can read the uploaded content.`,
     inputSchema: {
       type: "object",
       properties: {
@@ -165,12 +188,7 @@ export function createOsPublishTool(
           payload = undefined;
         }
         if (!response.ok) {
-          const workerReason = payload && typeof payload === "object"
-            ? (payload as { error?: unknown }).error
-            : undefined;
-          throw new Error(
-            `webmcp-computer: site publish failed: ${typeof workerReason === "string" ? workerReason : `Worker returned ${response.status}`}`,
-          );
+          throw new Error(`webmcp-computer: site publish failed: ${publishFailure(payload, response.status)}`);
         }
         const url = requirePublishedUrl(
           payload && typeof payload === "object" ? (payload as { url?: unknown }).url : undefined,

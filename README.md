@@ -153,7 +153,8 @@ and `cloud_exec` send requested commands and their output streams through that W
 container, which is stopped 5 minutes after the last command; `os_publish` sends selected
 text files to that Worker's public R2-backed site URL (served `noindex` and sandboxed,
 deleted after 30 days; the manifest keeps a pseudonymous publisher record for takedowns).
-Each machine gets 2 hours of remote Chrome and 2 hours of container time per 24-hour accounting window.
+Each machine may complete 20 publishes, gets 2 hours of remote Chrome, and gets 2 hours of
+container time per 24-hour accounting window.
 The site backend stores only the gateway signing secret and Worker URLs; the Browser Worker
 alone stores the Browser Rendering API token. Local kernel remains the default, and cloud
 failure falls back visibly to local.

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import type { FileEntry, FileStat } from "../kernel/fs";
 import { resetKernelStore, useKernelStore } from "../kernel/store";
 import { qrMatrix, qrSvg } from "../shared/qr";
+import { PUBLISH_QUOTA_LIMIT } from "../../../shared/session-limits";
 import { PUBLISHED_SITE_RETENTION_DAYS } from "../../../workers/computer/src/protocol";
 import {
   collectPublishFiles,
@@ -109,6 +110,9 @@ describe("os_publish", () => {
     expect(tool.description).toContain(
       `public and deleted after ${PUBLISHED_SITE_RETENTION_DAYS} days`,
     );
+    expect(tool.description).toContain(
+      `successfully publish ${PUBLISH_QUOTA_LIMIT} times per 24-hour accounting window`,
+    );
   });
 
   test("rejects a publish response without an expiry in house voice", async () => {
@@ -175,6 +179,27 @@ describe("os_publish", () => {
     await expect(unsafe.execute({})).rejects.toThrow(
       "webmcp-computer: computer Worker returned an invalid publish URL",
     );
+  });
+
+  test("explains structured daily publish exhaustion and retry timing", async () => {
+    const exhausted = createOsPublishTool({
+      fileSystem: fakeFileSystem({ "~/site/index.html": "ok" }),
+      workerBaseUrl: "http://computer.test",
+      workspaceId: WSID,
+      fetch: (async () => Response.json({
+        error: "anonymous publish limit exhausted",
+        code: "EPUBLISHQUOTA",
+        retryAfterMs: 90_001,
+      }, { status: 429 })) as unknown as typeof fetch,
+    });
+
+    await expect(exhausted.execute({})).rejects.toThrow(
+      `webmcp-computer: site publish failed: publishing limit reached for this machine (${PUBLISH_QUOTA_LIMIT} successful publishes per 24-hour accounting window); try again in 2 minutes`,
+    );
+    expect(useKernelStore.getState().events.at(-1)).toEqual(expect.objectContaining({
+      verb: "os_publish",
+      ok: false,
+    }));
   });
 
   test("pins the fixed publish URL QR matrix and inline SVG", () => {

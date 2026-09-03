@@ -29,6 +29,7 @@ import {
   type WorkspaceHandle,
   type WorkspaceLease,
 } from "./handler";
+import { PublishQuota } from "./publishQuota";
 import { RUNTIME_LEASE_ALARM, RuntimeLease } from "./runtimeLease";
 import { randomSlug } from "./slug";
 import { DurableSyncRetryScheduler, settleSyncRetryAlarm, syncRetryAlarmSlot } from "./syncRetry";
@@ -73,6 +74,7 @@ export class WebMCPComputerWorkspace extends ContainerBase {
     budgetMs: CLOUD_BUDGET_MS,
     idleMs: CLOUD_IDLE_MS,
   });
+  readonly publishQuota = new PublishQuota(this.ctx.storage);
   readonly workspace = new Workspace(workspaceOptions(this, this.alarms));
   #leaseOperation: Promise<void> = Promise.resolve();
 
@@ -106,6 +108,20 @@ export class WebMCPComputerWorkspace extends ContainerBase {
 
   runtimeBudget(): ReturnType<RuntimeLease["budget"]> {
     return this.#withLease(() => this.lease.budget());
+  }
+
+  // Publish quota RPCs use only this DO's durable storage. They never access the Workspace
+  // runtime or container backend, so publishing cannot start a container.
+  reservePublish(): ReturnType<PublishQuota["reserve"]> {
+    return this.publishQuota.reserve();
+  }
+
+  commitPublish(reservationId: string): ReturnType<PublishQuota["commit"]> {
+    return this.publishQuota.commit(reservationId);
+  }
+
+  releasePublish(reservationId: string): ReturnType<PublishQuota["release"]> {
+    return this.publishQuota.release(reservationId);
   }
 
   override async fetch(request: Request): Promise<Response> {
@@ -205,6 +221,15 @@ const dependencies: WorkerDependencies = {
       abandon: () => stub.abandonRuntimeLease(),
     };
     return handle;
+  },
+  openPublishQuota(wsid, env) {
+    const workerEnv = env as Env;
+    const stub = workerEnv.WORKSPACES.get(workerEnv.WORKSPACES.idFromName(wsid));
+    return {
+      reserve: () => stub.reservePublish(),
+      commit: (reservationId) => stub.commitPublish(reservationId),
+      release: (reservationId) => stub.releasePublish(reservationId),
+    };
   },
   randomSlug,
 };

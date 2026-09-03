@@ -107,5 +107,9 @@ export function describeLimitError(error: LimitError, resource: LimitResource): 
         : "cloud is busy or at capacity right now; try again in a minute or keep working locally";
     case "EOWNER":
       return `${resource} session belongs to another machine; start a new one`;
+    case "EPUBLISHQUOTA":
+      return error.retryAfterMs === undefined
+        ? "site publishing limit is used up; try again after the accounting window resets"
+        : `site publishing limit is used up; try again in ${formatDuration(error.retryAfterMs)}`;
   }
 }

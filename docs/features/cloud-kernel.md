@@ -74,8 +74,10 @@ Endpoints:
   Batched variant `POST /ws/{wsid}/fs/batch` accepting an array of ops, executed in
   order, responses positional — the boot/seed path uses this to keep latency sane.
 - `POST /ws/{wsid}/publish` with `{ files: [{ path, content }] }` (text only; ≤ 64 files,
-  ≤ 256KB/file, ≤ 2MB total; paths relative, normalized, no `..`) → writes to R2 under
-  `sites/{id}/…` (id = 8-char random slug) → returns `{ url, id, expiresInDays: 30 }`
+  ≤ 256KB/file, ≤ 2MB total; paths relative, normalized, no `..`) → reserves one of 20
+  successful publishes per workspace per fixed 24-hour accounting window in the workspace
+  Durable Object → writes to R2 under `sites/{id}/…` (id = 8-char random slug) → returns
+  `{ url, id, expiresInDays: 30 }`
   where url is `https://<worker-host>/s/{id}/`. Published objects have a 30-day
   retention window enforced by the R2 bucket lifecycle, not application deletion.
 - `GET /s/{id}/{path...}` → serve from R2 with a small extension→content-type map,

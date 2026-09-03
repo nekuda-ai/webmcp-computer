@@ -222,6 +222,7 @@ capacity remain the deployment-wide cost backstops:
 | Budget window | fixed 24 h from first use | |
 | Remote Chrome (Browser Run) time | 2 h / window | `EBUDGET` |
 | Cloud container runtime | 2 h / window | `EBUDGET` |
+| Successful anonymous publishes | 20 / window | `EPUBLISHQUOTA` |
 | Remote Chrome idle | deleted after 5 min without heartbeat | `EIDLE` |
 | Container idle | stopped after 5 min without exec | `EIDLE` |
 | Client heartbeat | every 60 s while tab visible | |
@@ -236,6 +237,8 @@ capacity remain the deployment-wide cost backstops:
 | Files per site | 64 |
 | Per file | 256 KB |
 | Per site | 2 MB |
+| Per machine/workspace | 20 successful publishes per fixed 24-hour accounting window (workspace Durable Object ledger) |
+| Quota response | HTTP 429 JSON with `code: EPUBLISHQUOTA` and `retryAfterMs` |
 | Retention | 30 days (R2 lifecycle on `sites/`) |
 | Headers | `X-Robots-Tag: noindex`, CSP `sandbox` |
 | Manifest | `sites/{id}/.webmcp-computer-site` — JSON `{ id, publishedAt, subject, ipHash, files, bytes }`; `ipHash` is an HMAC of the IP under the gateway secret, so the IP itself is never stored |

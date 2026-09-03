@@ -61,9 +61,9 @@ Out of scope:
 
 `os_publish` lets anonymous visitors publish small static sites to a public URL
 (`/s/{id}/` on the Computer Worker's configured `workers.dev` origin); the same paths are
-refused on its trusted custom API domain. Sites are limited to 64 files,
-256 KB per file, 2 MB total, expire after 30 days, and are served with
-`X-Robots-Tag: noindex` and a CSP `sandbox`.
+refused on its trusted custom API domain. Each machine may complete 20 publishes per
+24-hour accounting window. Sites are limited to 64 files, 256 KB per file, 2 MB total,
+expire after 30 days, and are served with `X-Robots-Tag: noindex` and a CSP `sandbox`.
 
 To report abusive, illegal, or infringing content on a published site, use the private
 reporting form above with the full URL and prefix the title with `Abuse report`. Each site's

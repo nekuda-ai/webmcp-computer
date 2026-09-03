@@ -11,6 +11,7 @@ import {
   type WorkspaceHandle,
 } from "./handler";
 import { MAX_FS_WRITE_BYTES } from "./handler";
+import { BUDGET_WINDOW_MS, PUBLISH_QUOTA_LIMIT } from "../../../shared/session-limits";
 import { MAX_FS_BATCH_OPERATIONS, PUBLISHED_SITE_RETENTION_DAYS } from "./protocol";
 import { randomSlug } from "./slug";
 
@@ -152,8 +153,13 @@ class MemoryWorkspace {
 
 class MemorySiteStore implements SiteStore {
   readonly values = new Map<string, { bytes: Uint8Array; contentType?: string }>();
+  getCalls = 0;
+  putCalls = 0;
+
+  constructor(readonly failPutAt?: number) {}
 
   async get(key: string): Promise<SiteObject | null> {
+    this.getCalls += 1;
     const value = this.values.get(key);
     return value ? {
       body: stream(value.bytes),
@@ -166,6 +172,8 @@ class MemorySiteStore implements SiteStore {
     value: ReadableStream<Uint8Array> | string | Uint8Array,
     options?: { httpMetadata?: { contentType?: string } },
   ): Promise<void> {
+    this.putCalls += 1;
+    if (this.putCalls === this.failPutAt) throw new Error("test: R2 put failed");
     let bytes: Uint8Array;
     if (typeof value === "string") bytes = encoder.encode(value);
     else if (value instanceof Uint8Array) bytes = Uint8Array.from(value);
@@ -184,14 +192,17 @@ function fixture(options: {
   writeRates?: boolean[];
   publishRate?: boolean;
   publishRateIp?: boolean;
+  publishQuota?: "exhausted";
+  sitePutFailureAt?: number;
   slugs?: string[];
   lease?: "exhausted" | "none";
   publicSiteOrigin?: string;
 } = {}) {
   const workspace = new MemoryWorkspace();
-  const sites = new MemorySiteStore();
+  const sites = new MemorySiteStore(options.sitePutFailureAt);
   const slugs = options.slugs ?? ["aaaaaaaa"];
   const rateCalls = { exec: 0, publish: 0, write: 0, execIp: 0, publishIp: 0, writeIp: 0 };
+  const quotaCalls = { reserve: 0, commit: [] as string[], release: [] as string[] };
   const leaseCalls: string[] = [];
   const budget = { remainingMs: 7_000_000, usedMs: 200_000, windowResetsAt: 9_000_000 };
   if (options.lease !== "none") {
@@ -306,6 +317,26 @@ function fixture(options: {
       };
     },
     async openWorkspace() { return workspace.client; },
+    openPublishQuota() {
+      return {
+        async reserve() {
+          quotaCalls.reserve += 1;
+          if (options.publishQuota === "exhausted") {
+            return {
+              ok: false as const,
+              error: {
+                error: `anonymous publish limit of ${PUBLISH_QUOTA_LIMIT} per 24-hour accounting window is exhausted`,
+                code: "EPUBLISHQUOTA" as const,
+                retryAfterMs: BUDGET_WINDOW_MS / 2,
+              },
+            };
+          }
+          return { ok: true as const, reservationId: `reservation-${quotaCalls.reserve}`, windowResetsAt: BUDGET_WINDOW_MS };
+        },
+        async commit(reservationId: string) { quotaCalls.commit.push(reservationId); },
+        async release(reservationId: string) { quotaCalls.release.push(reservationId); },
+      };
+    },
     randomSlug() {
       const slug = slugs.shift();
       if (!slug) throw new Error("test: no slug left");
@@ -319,6 +350,7 @@ function fixture(options: {
     getExecCalls,
     execDisposeCount: () => execDisposeCount,
     leaseCalls,
+    quotaCalls,
     rateCalls,
     sites,
     workspace,
@@ -475,6 +507,62 @@ describe("computer worker", () => {
     expect(publish.status).toBe(429);
   });
 
+  test("returns a structured daily publish-quota error before touching R2 or the container", async () => {
+    const scoped = fixture({ publishQuota: "exhausted" });
+    const response = await handleRequest(
+      new Request(`https://computer.test/ws/${WSID}/publish`, {
+        method: "POST",
+        body: JSON.stringify({ files: [{ path: "index.html", content: "ok" }] }),
+      }),
+      scoped.env,
+      scoped.dependencies,
+    );
+
+    expect(response.status).toBe(429);
+    expect(await response.json() as unknown).toEqual({
+      error: `anonymous publish limit of ${PUBLISH_QUOTA_LIMIT} per 24-hour accounting window is exhausted`,
+      code: "EPUBLISHQUOTA",
+      retryAfterMs: BUDGET_WINDOW_MS / 2,
+    });
+    expect(response.headers.get("Retry-After")).toBe(String(BUDGET_WINDOW_MS / 2 / 1_000));
+    expect(scoped.rateCalls.publish).toBe(1);
+    expect(scoped.rateCalls.publishIp).toBe(1);
+    expect(scoped.quotaCalls.reserve).toBe(1);
+    expect(scoped.sites.getCalls).toBe(0);
+    expect(scoped.sites.putCalls).toBe(0);
+    expect(scoped.workspace.disposeCount).toBe(0);
+  });
+
+  test("only reserves daily quota for valid requests and releases failed R2 uploads", async () => {
+    const invalid = fixture();
+    const invalidResponse = await handleRequest(
+      new Request(`https://computer.test/ws/${WSID}/publish`, {
+        method: "POST",
+        body: JSON.stringify({ files: [{ path: "../index.html", content: "no" }] }),
+      }),
+      invalid.env,
+      invalid.dependencies,
+    );
+    expect(invalidResponse.status).toBe(400);
+    expect(invalid.quotaCalls.reserve).toBe(0);
+
+    const failed = fixture({ sitePutFailureAt: 2 });
+    const failedResponse = await handleRequest(
+      new Request(`https://computer.test/ws/${WSID}/publish`, {
+        method: "POST",
+        body: JSON.stringify({ files: [{ path: "index.html", content: "ok" }] }),
+      }),
+      failed.env,
+      failed.dependencies,
+    );
+    expect(failedResponse.status).toBe(502);
+    expect(failed.quotaCalls).toEqual({
+      reserve: 1,
+      commit: [],
+      release: ["reservation-1"],
+    });
+  });
+
   test("charges one workspace rate token per mutating batch request", async () => {
     const { env, dependencies, rateCalls, workspace } = fixture();
     const response = await handleRequest(fsRequest([
@@ -513,7 +601,7 @@ describe("computer worker", () => {
   });
 
   test("publishes validated text with retention, unique slugs, and content types", async () => {
-    const { env, dependencies, sites } = fixture({ slugs: ["aaaaaaaa", "aaaaaaaa", "bbbbbbbb"] });
+    const { env, dependencies, quotaCalls, sites } = fixture({ slugs: ["aaaaaaaa", "aaaaaaaa", "bbbbbbbb"] });
     const publish = async (content: string) => await handleRequest(new Request(`https://computer.test/ws/${WSID}/publish`, {
       method: "POST",
       body: JSON.stringify({ files: [
@@ -533,6 +621,7 @@ describe("computer worker", () => {
     });
     expect(sites.values.get("sites/aaaaaaaa/index.html")?.contentType).toBe("text/html; charset=utf-8");
     expect(sites.values.get("sites/aaaaaaaa/assets/app.js")?.contentType).toBe("text/javascript; charset=utf-8");
+    expect(quotaCalls).toEqual({ reserve: 2, commit: ["reservation-1", "reservation-2"], release: [] });
     const publicPublish = await handleRequest(new Request("https://computer.test/publish", {
       method: "POST",
       body: JSON.stringify({ files: [{ path: "index.html", content: "anonymous" }] }),
@@ -854,6 +943,7 @@ describe("computer worker", () => {
     );
     expect(published.status).toBe(429);
     expect(publish.sites.values.size).toBe(0);
+    expect(publish.quotaCalls.reserve).toBe(0);
 
     const write = fixture({ writeRateIp: false });
     const written = await handleRequest(fsRequest({ op: "mkdir", path: "/x" }), write.env, write.dependencies);

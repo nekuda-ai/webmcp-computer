@@ -85,7 +85,9 @@ bunx wrangler deploy
 Wrangler configs declare required secrets, stable `ratelimits` bindings, logs,
 SQLite Durable Object migrations, Container, and R2 binding. Change Worker names,
 rate-limit namespace IDs, R2 bucket, or container capacity before deploy when
-sharing a Cloudflare account with another installation. R2 lifecycle rule is
+sharing a Cloudflare account with another installation. The workspace Durable Object
+also enforces 20 successful publishes per machine per fixed 24-hour accounting window.
+R2 lifecycle rule is
 required for product's advertised 30-day public-site deletion contract; verify it
 with `bunx wrangler r2 bucket lifecycle list webmcp-computer-sites`.
 

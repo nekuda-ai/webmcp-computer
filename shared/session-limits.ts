@@ -11,6 +11,9 @@ export const BROWSER_BUDGET_MS = 2 * 60 * 60 * 1_000;
 /** Total cloud container running time one machine may consume per window. */
 export const CLOUD_BUDGET_MS = 2 * 60 * 60 * 1_000;
 
+/** Successful anonymous site publishes one machine may make per window. */
+export const PUBLISH_QUOTA_LIMIT = 20;
+
 /** Remote Chrome is deleted when the machine sends no heartbeat for this long. */
 export const BROWSER_IDLE_MS = 5 * 60 * 1_000;
 
@@ -31,7 +34,9 @@ export type LimitErrorCode =
   /** The caller does not own the referenced session. */
   | "EOWNER"
   /** The platform has no free capacity right now; retry shortly. */
-  | "ECAPACITY";
+  | "ECAPACITY"
+  /** Anonymous site publish count for this window is exhausted. */
+  | "EPUBLISHQUOTA";
 
 export type LimitError = {
   error: string;
@@ -49,7 +54,8 @@ export type BudgetSnapshot = {
 };
 
 export function isLimitErrorCode(value: unknown): value is LimitErrorCode {
-  return value === "EBUDGET" || value === "EIDLE" || value === "EOWNER" || value === "ECAPACITY";
+  return value === "EBUDGET" || value === "EIDLE" || value === "EOWNER" || value === "ECAPACITY" ||
+    value === "EPUBLISHQUOTA";
 }
 
 /**

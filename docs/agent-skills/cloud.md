@@ -70,7 +70,7 @@ package cache or an interactive shell.
 `os_publish {path?}` publishes a text directory to a public internet URL. `path`
 defaults to `~/site`; publishing works in local and cloud kernel modes. Allowed
 extensions: html, htm, css, js, json, svg, txt, md. Caps: 64 files, 256 KB per file,
-2 MB total.
+2 MB total, and 20 successful publishes per machine per 24-hour accounting window.
 
 Publishing uses the same browser-held workspace capability at
 `POST /ws/{wsid}/publish`; local mode mints and reuses one only for this scoped request.
@@ -86,5 +86,7 @@ expiry also land in the `os_publish` `dmesg` trace.
 
 Common failures name the cause: `webmcp-computer: publish path is not a directory: <path>`,
 `webmcp-computer: os_publish rejects non-text file: <path>`, cap errors, or
-`webmcp-computer: site publish failed: <Worker reason>`. `.webmcp-computer-site` is reserved and cannot be
-included in a published tree.
+`webmcp-computer: site publish failed: <Worker reason>`. When the daily publish allowance is
+exhausted, the tool says how long remains before its fixed accounting window resets; the
+Worker response uses stable code `EPUBLISHQUOTA` with `retryAfterMs`. `.webmcp-computer-site`
+is reserved and cannot be included in a published tree.

@@ -217,6 +217,13 @@ export function createFakeComputerHandler(options: { requireAuthorization?: bool
       }
       return workspace.handle;
     },
+    openPublishQuota() {
+      return {
+        async reserve() { return { ok: true as const, reservationId: crypto.randomUUID(), windowResetsAt: Date.now() + 86_400_000 }; },
+        async commit() {},
+        async release() {},
+      };
+    },
     randomSlug() {
       return `fake${String(nextSite++).padStart(4, "0")}`;
     },
