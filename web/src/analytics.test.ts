@@ -145,6 +145,16 @@ describe("optional PostHog analytics", () => {
         succeeded: true,
       },
     });
+    expect(safeUsageEvent(osEvent({ verb: "machine_take_over" }))).toEqual({
+      event: "webmcp_usage",
+      properties: {
+        actor: "agent",
+        family: "system",
+        action: "other",
+        app: "none",
+        succeeded: true,
+      },
+    });
     expect(safeUsageEvent(osEvent({ source: "system", reason: "error" }))).toBeUndefined();
     expect(safeUsageEvent({
       source: "agent",

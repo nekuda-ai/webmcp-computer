@@ -53,14 +53,18 @@ End-to-end tests (`cd web && bun run test:e2e`) need a local Chrome with native 
 ## Conventions
 
 - **TypeScript strict** everywhere. No `any` unless quarantined with a comment.
-- **Wire names are `snake_case`** for tools, tool arguments, and JSON fields sent over the
-  network (`cloud_exec`, `retry_after_ms` style). Internal TypeScript uses `camelCase`.
+- **WebMCP wire names are `snake_case`** for tools, tool arguments, and tool result fields
+  (`cloud_exec`, `retry_after_ms` style). Internal TypeScript and the typed, private
+  site-to-Worker gateway protocols use `camelCase`; keep each shared protocol consistent
+  across its clients and Workers.
 - **Every tool declares an invocation class** via annotations: `ask` (read-only), `act`
   (reversible, visible), `transact` (consequential). Register through
   `@nekuda/webmcp-sdk` (`defineTool` + `registerTools`); return errors as MCP
   `{ content, isError: true }` results, not thrown exceptions.
-- **Tests next to code.** `foo.ts` is covered by `foo.test.ts` in the same directory.
-  Bun's test runner picks them up from `src` (and `server` in `web/`).
+- **Tests next to code.** Tests stay in the implementation's package and directory. Prefer
+  `foo.test.ts` for focused modules; entrypoint and integration tests may cover adjacent
+  protocol, handler, or adapter modules together. Bun's test runner picks them up from
+  `src` (and `server` in `web/`).
 - **No UI kit.** Hand-rolled CSS, React 18, Zustand. Do not add component libraries.
 - **Shared contract changes are coordinated.** Anything in `shared/` is imported by the
   site and both Workers; change it together and note it in the PR so both Workers are

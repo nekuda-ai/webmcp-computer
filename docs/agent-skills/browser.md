@@ -55,15 +55,14 @@ Other common errors are `webmcp-computer: browser session unavailable: <reason>`
 The parent cannot inspect pointer or keyboard events inside the cross-origin live-view
 frame. It counts the trusted focus transition into that frame once, then uses the existing
 tab CDP connection at each heartbeat cadence to install or query a small listener in an
-isolated worlds for a bounded set of up to 32 current page frames. Those listeners record
+isolated world for a bounded set of up to 32 current page frames. Those listeners record
 only trusted pointer, keyboard, wheel, and touch events and report a bounded monotonic age;
-navigation creates
-new worlds and the next query installs them again. Merely querying the page is not activity.
-This relies on the current Live View forwarding human controls through Chromium's trusted
-input path and on `Runtime.evaluate`; page CSP does not normally block DevTools evaluation.
-If that platform behavior changes or a query
-fails during navigation, no remote activity is credited and the lease expires
-conservatively. DOM `.click()` and `dispatchEvent()` calls remain untrusted and do not count.
+navigation creates new worlds and the next query installs them again. Merely querying the
+page is not activity. This relies on the current Live View forwarding human controls through
+Chromium's trusted input path and on `Runtime.evaluate`; page CSP does not normally block
+DevTools evaluation. If that platform behavior changes or a query fails during navigation,
+no remote activity is credited and the lease expires conservatively. DOM `.click()` and
+`dispatchEvent()` calls remain untrusted and do not count.
 
 Human page clicks and typing do not appear in `dmesg`; the live view itself is the human's
 visible trace. Agent browser tools do flow through `runAgentAction` and appear in the normal

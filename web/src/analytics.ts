@@ -134,7 +134,8 @@ function familyFor(verb: string): UsageFamily | undefined {
   if (verb.startsWith("site_")) return "site";
   if (
     verb.startsWith("sys_") || verb.startsWith("settings_") ||
-    verb === "os_manual" || verb === "os_search" || verb === "screensaver_wake"
+    verb === "os_manual" || verb === "os_search" || verb === "screensaver_wake" ||
+    verb === "machine_take_over"
   ) {
     return "system";
   }

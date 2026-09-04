@@ -16,7 +16,7 @@
 - [ ] Typecheck passes (`bunx tsc --noEmit` in each touched package)
 - [ ] `cd web && bun run build` passes if `web/` changed
 - [ ] New or changed tools use `snake_case` wire names and declare an invocation class
-- [ ] Tests live next to the code they cover
+- [ ] Tests live beside the code they cover; focused modules use matching test files where practical
 - [ ] No secrets, account IDs, tokens, or user data in the diff
 - [ ] `shared/` changes: both Workers and the site are updated together and
       `docs/OPERATIONS.md` / `docs/SELF_HOSTING.md` reflect new limits
