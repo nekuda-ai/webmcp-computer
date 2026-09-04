@@ -52,8 +52,14 @@ starting, and Browser heartbeat is ineligible until its exclusive Web Lock is gr
 A confirmed competing tab shows **Take over**. `machine_take_over {}` is the only
 blocked-state exception and is deliberately consequential: it invokes the same ownership
 steal as the visible button and returns `{taken_over: boolean}`. Losing ownership aborts
-cancellable transports and prevents stale calls from reporting success. Remote work already
-accepted or completed may still finish; takeover cannot undo it.
+agent work and every active human Terminal command, and queued human Terminal commands are
+canceled before they start. Human and agent filesystem mutations retain their admission
+ownership epoch through locks, preflight, and async update callbacks; an old mutation stays
+invalid even if this tab later reacquires ownership. Pending Editor and Notes autosaves fail
+without marking stale snapshots saved. System seed and repair writes remain allowed during
+initial ownership acquisition. Remote work already accepted or completed may still finish;
+takeover cannot undo it, though the old tab cancels its transport and does not report stale
+success.
 
 Strict multi-tab enforcement requires Web Locks. BroadcastChannel presence only confirms a
 contended lock after a short reload grace period; it is not a mutex and cannot safely replace

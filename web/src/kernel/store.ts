@@ -53,6 +53,8 @@ type KernelData = {
   /** Trusted human interaction only; paid-resource presence must use this timestamp. */
   lastHumanActivityAt: number;
   machineOwnership: MachineOwnership;
+  /** Monotonic locally; changes whenever an owner loses mutation authority. */
+  machineOwnershipEpoch: number;
 };
 
 type KernelActions = {
@@ -125,6 +127,7 @@ const createInitialData = (): KernelData => ({
   lastActivityAt: Date.now(),
   lastHumanActivityAt: 0,
   machineOwnership: "pending",
+  machineOwnershipEpoch: 0,
 });
 
 const APP_SIZES: Record<AppId, Pick<WindowRect, "width" | "height">> = {
@@ -590,7 +593,12 @@ export const useKernelStore = create<KernelState>()((set, get) => ({
   },
 
   setMachineOwnership(ownership) {
-    set({ machineOwnership: ownership });
+    set((state) => ({
+      machineOwnership: ownership,
+      machineOwnershipEpoch: state.machineOwnership === "owned" && ownership !== "owned"
+        ? state.machineOwnershipEpoch + 1
+        : state.machineOwnershipEpoch,
+    }));
   },
 
   restoreSession(snapshot) {
@@ -715,7 +723,12 @@ export function resetKernelStore(): void {
   appliedSessionSnapshots.clear();
   // Unit tests historically start from an admitted machine; ownership tests call
   // startMachineOwnership(), which synchronously returns this to pending.
-  useKernelStore.setState({ ...createInitialData(), machineOwnership: "owned" });
+  const machineOwnershipEpoch = useKernelStore.getState().machineOwnershipEpoch + 1;
+  useKernelStore.setState({
+    ...createInitialData(),
+    machineOwnership: "owned",
+    machineOwnershipEpoch,
+  });
 }
 
 export function latestAgentEvent(events: readonly OSEvent[]): OSEvent | undefined {

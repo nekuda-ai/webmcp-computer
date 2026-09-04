@@ -34,6 +34,11 @@ import {
   createCloudOutputBuffer,
   type CloudOutputBuffer,
 } from "../cloudExec";
+import {
+  assertMachineMutationAdmission,
+  captureMachineMutationAdmission,
+  type MachineMutationAdmission,
+} from "../ownershipAdmission";
 
 export type ExecuteShellOptions = {
   source?: ShellExecutionSource;
@@ -44,10 +49,12 @@ export type ExecuteShellOptions = {
   cloudExecDependencies?: CloudExecDependencies;
   cloudExecRequest?: CloudExecRequest;
   onCloudExecResult?: (result: CloudExecResult) => void;
+  ownershipAdmission?: MachineMutationAdmission;
 };
 
 type ActiveExecution = {
   source: ShellExecutionSource;
+  ownershipAdmission: MachineMutationAdmission;
   processes: ShellProcessContext;
   clear: boolean;
   signal?: AbortSignal;
@@ -130,6 +137,7 @@ function commandContext(
     },
     stdin: "",
     source: active.source,
+    ownershipAdmission: active.ownershipAdmission,
     processes: active.processes,
     ...(active.signal === undefined ? {} : { signal: active.signal }),
     ...(active.cloudExecDependencies === undefined ? {} : {
@@ -318,9 +326,9 @@ function helpCommand(): Command {
 async function createRuntime(session: ShellSession): Promise<ShellRuntime> {
   let runtime: ShellRuntime | undefined;
   const fs = new JustBashFileSystem(() => {
-    const source = runtime?.active?.source;
-    if (!source) throw new Error("webmcp-computer: shell execution source unavailable");
-    return source;
+    const admission = runtime?.active?.ownershipAdmission;
+    if (!admission) throw new Error("webmcp-computer: shell execution source unavailable");
+    return admission;
   });
   const shellRuntime = {} as ShellRuntime;
   runtime = shellRuntime;
@@ -367,6 +375,8 @@ export async function executeShell(
   processes: ShellProcessContext,
   options: ExecuteShellOptions = {},
 ): Promise<ShellResult> {
+  const source = options.source ?? "human";
+  const ownershipAdmission = options.ownershipAdmission ?? captureMachineMutationAdmission(source);
   const identity = machineIdentity(useKernelStore.getState().settings.hostname);
   session.env.USER = identity.user;
   session.env.HOSTNAME = identity.host;
@@ -375,6 +385,7 @@ export async function executeShell(
   const runtime = await runtimeFor(session);
   if (runtime.active) throw new Error("webmcp-computer: shell session is already executing");
 
+  assertMachineMutationAdmission(ownershipAdmission);
   session.history.push(sourceText);
   if (session.history.length > 1_000) session.history.splice(0, session.history.length - 1_000);
 
@@ -384,7 +395,8 @@ export async function executeShell(
   else options.signal?.addEventListener("abort", abortProcess, { once: true });
 
   const activeExecution: ActiveExecution = {
-    source: options.source ?? "human",
+    source,
+    ownershipAdmission,
     processes,
     clear: false,
     ...(options.signal === undefined ? {} : { signal: options.signal }),
@@ -416,6 +428,7 @@ export async function executeShell(
       replaceEnv: false,
       ...(signal === undefined ? {} : { signal }),
     });
+    assertMachineMutationAdmission(ownershipAdmission);
     syncSession(session, result.env, result.exitCode);
     const active = runtime.active;
     if (!active) throw new Error("webmcp-computer: shell execution context unavailable");

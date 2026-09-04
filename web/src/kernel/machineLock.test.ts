@@ -14,6 +14,12 @@ import { isHumanActivityContext } from "./activity";
 import { resetKernelStore, useKernelStore } from "./store";
 import { runAgentAction } from "../tools/agentAction";
 import { machineTakeOverTool } from "../tools/systemTools";
+import {
+  resetTerminalSessions,
+  setTerminalShellExecutor,
+  terminalSession,
+} from "./terminalSessions";
+import { executeShell } from "./shell/engine";
 
 function abortError(): Error {
   const error = new Error("Lock broken by another request with the 'steal' option.");
@@ -29,9 +35,14 @@ describe("WebMCP Computer machine ownership", () => {
   beforeEach(() => {
     resetKernelStore();
     resetMachineOwnershipForTests();
+    resetTerminalSessions();
   });
 
-  afterEach(() => resetMachineOwnershipForTests());
+  afterEach(() => {
+    resetMachineOwnershipForTests();
+    resetTerminalSessions();
+    setTerminalShellExecutor(executeShell);
+  });
 
   test("has zero admission window while the initial lock request is pending", async () => {
     const locks = {
@@ -253,6 +264,56 @@ describe("WebMCP Computer machine ownership", () => {
     await expect(action).rejects.toThrow("machine ownership was lost to another tab");
     expect(signal?.aborted).toBe(true);
     expect(useKernelStore.getState().events.at(-1)?.ok).toBe(false);
+  });
+
+  test("losing ownership interrupts active human terminals and cancels queued human work", async () => {
+    let breakLock: (error: Error) => void = () => {};
+    const locks = {
+      async request<T>(name: string, options: LockOptions, callback: LockGrantedCallback<T>): Promise<T> {
+        if (!options.ifAvailable) return await new Promise<T>(() => {});
+        void callback({ name, mode: "exclusive" } as Lock);
+        return await new Promise<T>((_resolve, reject) => { breakLock = reject; });
+      },
+    } as unknown as LockManager;
+    startMachineOwnership(locks, { findPeer: async () => false, close() {} });
+    await settle();
+
+    const started: string[] = [];
+    const signals = new Map<string, AbortSignal | undefined>();
+    const finishes = new Map<string, () => void>();
+    setTerminalShellExecutor(async (command, _session, _processes, options) => {
+      started.push(command);
+      signals.set(command, options?.signal);
+      await new Promise<void>((resolve) => {
+        finishes.set(command, resolve);
+        options?.signal?.addEventListener("abort", () => resolve(), { once: true });
+      });
+      return { stdout: "", stderr: "", exitCode: 0 };
+    });
+    const first = terminalSession(useKernelStore.getState().spawn("terminal").pid);
+    const second = terminalSession(useKernelStore.getState().spawn("terminal").pid);
+    const local = first.run("local-active", "human");
+    const queued = first.run("queued-human", "human");
+    const cloud = second.run("cloud-active", "human");
+    await settle();
+
+    try {
+      expect(started).toEqual(["local-active", "cloud-active"]);
+      breakLock(abortError());
+      await settle();
+
+      expect(signals.get("local-active")?.aborted).toBe(true);
+      expect(signals.get("cloud-active")?.aborted).toBe(true);
+      expect(started).not.toContain("queued-human");
+      await expect(local).resolves.toEqual({ stdout: "", stderr: "", exitCode: 130 });
+      await expect(cloud).resolves.toEqual({ stdout: "", stderr: "", exitCode: 130 });
+      await expect(queued).rejects.toThrow("machine ownership was lost to another tab");
+    } finally {
+      for (const finish of finishes.values()) finish();
+      await settle();
+      for (const finish of finishes.values()) finish();
+      await Promise.allSettled([local, queued, cloud]);
+    }
   });
 
   test("a tab that took over can itself be taken over again", async () => {

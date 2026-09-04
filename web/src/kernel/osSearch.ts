@@ -4,6 +4,10 @@ import { commandRegistry } from "./shell/registry";
 import { useKernelStore } from "./store";
 import { APP_IDS, type AppId } from "./types";
 import { terminalSession } from "./terminalSessions";
+import {
+  assertMachineMutationAdmission,
+  captureMachineMutationAdmission,
+} from "./ownershipAdmission";
 
 export type OSSearchMatch = "exact-name" | "name-prefix" | "content";
 export type OSSearchResult = {
@@ -260,6 +264,7 @@ export async function actOnSearchResult(
   result: OSSearchResult,
   dependencies: OSSearchActDependencies = defaultActDependencies,
 ): Promise<void> {
+  const ownershipAdmission = captureMachineMutationAdmission("human");
   const state = useKernelStore.getState();
   if (result.kind === "file") {
     const path = result.args.path;
@@ -278,6 +283,7 @@ export async function actOnSearchResult(
   if (result.kind === "app") {
     if (result.verb === "browser_open") {
       await dependencies.ensureBrowserSession();
+      assertMachineMutationAdmission(ownershipAdmission);
       const process = state.spawn("browser");
       state.osEvent("human", "browser_open", { appId: "browser", pid: process.pid });
       return;
@@ -316,7 +322,8 @@ export async function actOnSearchResult(
   try {
     const session = terminalSession(process.pid);
     await session.waitForView();
-    await session.run(command, "human");
+    assertMachineMutationAdmission(ownershipAdmission);
+    await session.run(command, "human", { ownershipAdmission });
     useKernelStore.getState().settleEvent(event, true);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

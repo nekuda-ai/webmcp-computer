@@ -1,5 +1,7 @@
-import { describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
 import { initializeMemoryFileSystem, readFile, writeFile } from "../../kernel/fs";
+import { captureMachineMutationAdmission } from "../../kernel/ownershipAdmission";
+import { resetKernelStore, useKernelStore } from "../../kernel/store";
 import {
   AUTOSAVE_DELAY_MS,
   resolveExternalFileChange,
@@ -8,6 +10,8 @@ import {
 } from "./fileBuffer";
 
 describe("shared editor buffer reconciliation", () => {
+  beforeEach(() => resetKernelStore());
+
   test("preserves dirty human edits when disk content changes", () => {
     expect(resolveExternalFileChange("human draft", "saved", "agent write")).toEqual({
       kind: "conflict",
@@ -78,6 +82,25 @@ describe("shared editor buffer reconciliation", () => {
     expect(saves).toBe(1);
     expect(pending.size).toBe(0);
     expect(await readFile(path)).toBe("human draft");
+  });
+
+  test("a pending autosave keeps its old ownership ticket and cannot mark stale bytes saved", async () => {
+    await initializeMemoryFileSystem();
+    const path = "~/desktop/autosave-takeover.txt";
+    await writeFile(path, "new owner", "system");
+    const admission = captureMachineMutationAdmission("human");
+    const { clock } = fakeClock();
+    let pendingWrite = Promise.resolve();
+    const autosave = scheduleAutosave(() => {
+      pendingWrite = writeFile(path, "stale draft", admission);
+    }, () => true, clock);
+
+    useKernelStore.getState().setMachineOwnership("conflict");
+    useKernelStore.getState().setMachineOwnership("owned");
+    autosave.flush();
+
+    await expect(pendingWrite).rejects.toThrow("machine ownership changed while action was pending");
+    expect(await readFile(path)).toBe("new owner");
   });
 
   test("guard false makes debounce and flush no-ops", () => {

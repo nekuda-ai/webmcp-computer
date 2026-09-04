@@ -17,6 +17,10 @@ import { MarkdownPreview } from "./MarkdownPreview";
 import { notesTools } from "../../tools/registry";
 import { useAppTools } from "../../tools/useAppTools";
 import { errorMessage } from "../../shared";
+import {
+  captureMachineMutationAdmission,
+  type MachineMutationAdmission,
+} from "../../kernel/ownershipAdmission";
 
 export function NotesApp({ process }: AppComponentProps) {
   useAppTools(process.pid, notesTools);
@@ -160,7 +164,10 @@ export function NotesApp({ process }: AppComponentProps) {
 
   useEffect(() => () => flushRef.current(), []);
 
-  const save = useCallback(async (autosave = false) => {
+  const save = useCallback(async (
+    autosave = false,
+    ownershipAdmission?: MachineMutationAdmission,
+  ) => {
     if (loadError) {
       setStatus("webmcp-computer: reload the note successfully before saving");
       return;
@@ -174,7 +181,7 @@ export function NotesApp({ process }: AppComponentProps) {
     pendingAgentChange.current = false;
     const snapshot = contentRef.current;
     try {
-      await writeFile(activePath, snapshot, "human");
+      await writeFile(activePath, snapshot, ownershipAdmission ?? "human");
       savedContentRef.current = snapshot;
       setSavedContent(snapshot);
       await whenPathIdle(activePath);
@@ -212,8 +219,15 @@ export function NotesApp({ process }: AppComponentProps) {
     autosaveRef.current = null;
     if (!dirty || conflict || fileSystemStatus !== "ready") return undefined;
     setStatus("Autosave pending");
+    let ownershipAdmission: MachineMutationAdmission;
+    try {
+      ownershipAdmission = captureMachineMutationAdmission("human");
+    } catch (error) {
+      setStatus(errorMessage(error));
+      return undefined;
+    }
     const autosave = scheduleAutosave(
-      () => void save(true),
+      () => void save(true, ownershipAdmission),
       () =>
         !conflictRef.current && !loadErrorRef.current &&
         useKernelStore.getState().fileSystemStatus === "ready",

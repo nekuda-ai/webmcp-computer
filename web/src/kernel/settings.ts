@@ -17,6 +17,10 @@ import {
   ensureWorkspaceId,
   setCloudKernelPreference,
 } from "./cloudFs";
+import {
+  assertMachineMutationAdmission,
+  captureMachineMutationAdmission,
+} from "./ownershipAdmission";
 
 export const SETTINGS_PATH = "~/.config/settings.json";
 export const SETTING_KEYS = [
@@ -198,9 +202,11 @@ export async function setSetting(
   source: "agent" | "human",
   storage: SettingsStorage | null | undefined = browserStorage(),
 ): Promise<WebMCPComputerSettings & { note?: string }> {
+  const admission = captureMachineMutationAdmission(source);
   const [settingKey, validated] = validateSetting(key, value);
   return await enqueueSettings(async () => {
     const current = await ensureSettingsFile(storage);
+    assertMachineMutationAdmission(admission);
     const next = { ...current, [settingKey]: validated } as WebMCPComputerSettings;
     if (settingKey === "cloud_kernel") {
       if (!storage) {
@@ -214,7 +220,7 @@ export async function setSetting(
         throw new Error(`webmcp-computer: could not persist cloud_kernel boot mirror: ${detail}`);
       }
     }
-    await writeFile(SETTINGS_PATH, serialized(next), source);
+    await writeFile(SETTINGS_PATH, serialized(next), admission);
     useKernelStore.getState().setSettings(next);
     return settingKey === "cloud_kernel"
       ? {

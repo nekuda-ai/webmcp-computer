@@ -14,6 +14,12 @@ import type {
   CloudExecRequest,
   CloudExecResult,
 } from "./cloudExec";
+import {
+  assertMachineMutationAdmission,
+  captureMachineMutationAdmission,
+  type MachineMutationAdmission,
+} from "./ownershipAdmission";
+import { MACHINE_OWNERSHIP_LOST_ERROR } from "./agentActionLifecycle";
 
 export type TerminalLine = {
   text: string;
@@ -42,12 +48,18 @@ type RunOptions = {
   cloudExecDependencies?: CloudExecDependencies;
   cloudExecRequest?: CloudExecRequest;
   onCloudExecResult?: (result: CloudExecResult) => void;
+  ownershipAdmission?: MachineMutationAdmission;
 };
 
 type ActiveRun = {
   controller: AbortController;
   command: string;
-  reason?: "interrupt" | "timeout";
+  source: ShellExecutionSource;
+  reason?: "interrupt" | "ownership" | "timeout";
+};
+
+type QueuedHumanRun = {
+  controller: AbortController;
 };
 
 type ShellExecutor = (
@@ -99,6 +111,7 @@ export class TerminalSessionController {
   private readyWaiters = new Set<() => void>();
   private queue: Promise<void> = Promise.resolve();
   private activeRun: ActiveRun | undefined;
+  private readonly queuedHumanRuns = new Set<QueuedHumanRun>();
 
   constructor(readonly pid: number) {
     const process = useKernelStore.getState().processes.find((entry) => entry.pid === pid);
@@ -178,11 +191,34 @@ export class TerminalSessionController {
     return true;
   }
 
+  interruptHumanWork(): number {
+    let interrupted = 0;
+    if (this.activeRun?.source === "human") {
+      this.activeRun.reason = "ownership";
+      this.activeRun.controller.abort(new Error(MACHINE_OWNERSHIP_LOST_ERROR));
+      interrupted += 1;
+    }
+    for (const queued of this.queuedHumanRuns) {
+      queued.controller.abort(new Error(MACHINE_OWNERSHIP_LOST_ERROR));
+      interrupted += 1;
+    }
+    this.queuedHumanRuns.clear();
+    return interrupted;
+  }
+
   run(
     command: string,
     source: ShellExecutionSource,
     options: RunOptions = {},
   ): Promise<ShellResult> {
+    let admission: MachineMutationAdmission;
+    try {
+      admission = options.ownershipAdmission ?? captureMachineMutationAdmission(source);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    const queued = source === "human" ? { controller: new AbortController() } : undefined;
+    if (queued) this.queuedHumanRuns.add(queued);
     let resolveResult: (result: ShellResult) => void = () => {};
     let rejectResult: (error: unknown) => void = () => {};
     const result = new Promise<ShellResult>((resolve, reject) => {
@@ -190,8 +226,11 @@ export class TerminalSessionController {
       rejectResult = reject;
     });
     this.queue = this.queue.then(async () => {
+      if (queued) this.queuedHumanRuns.delete(queued);
       try {
-        resolveResult(await this.runNow(command, source, options));
+        if (queued?.controller.signal.aborted) throw queued.controller.signal.reason;
+        assertMachineMutationAdmission(admission);
+        resolveResult(await this.runNow(command, source, { ...options, ownershipAdmission: admission }));
       } catch (error) {
         rejectResult(error);
       }
@@ -205,7 +244,7 @@ export class TerminalSessionController {
     options: RunOptions,
   ): Promise<ShellResult> {
     this.syncIdentity();
-    const activeRun: ActiveRun = { controller: new AbortController(), command };
+    const activeRun: ActiveRun = { controller: new AbortController(), command, source };
     const abortFromCaller = () => activeRun.controller.abort(options.signal?.reason);
     if (options.signal?.aborted) abortFromCaller();
     else options.signal?.addEventListener("abort", abortFromCaller, { once: true });
@@ -234,7 +273,7 @@ export class TerminalSessionController {
       }
 
       if (options.signal?.aborted) throw options.signal.reason;
-      if (activeRun.reason === "interrupt") {
+      if (activeRun.reason === "interrupt" || activeRun.reason === "ownership") {
         this.shell.lastExitCode = 130;
         return { stdout: "", stderr: "", exitCode: 130 };
       }
@@ -257,7 +296,8 @@ export class TerminalSessionController {
         if (
           activeRun.reason && (
             text === "bash: execution aborted\n" ||
-            (activeRun.reason === "interrupt" && text.startsWith("webmcp-computer: cloud exec failed:"))
+            ((activeRun.reason === "interrupt" || activeRun.reason === "ownership") &&
+              text.startsWith("webmcp-computer: cloud exec failed:"))
           )
         ) return;
         this.appendLines(...transcriptLines(text, tone));
@@ -274,6 +314,9 @@ export class TerminalSessionController {
         ...(options.onCloudExecResult === undefined ? {} : {
           onCloudExecResult: options.onCloudExecResult,
         }),
+        ...(options.ownershipAdmission === undefined ? {} : {
+          ownershipAdmission: options.ownershipAdmission,
+        }),
         onStdout: (text) => output(text, "output"),
         onStderr: (text) => output(text, "error"),
         onClear: () => {
@@ -286,7 +329,7 @@ export class TerminalSessionController {
       if (activeRun.reason === "timeout") {
         throw new Error(`webmcp-computer: command timed out after ${(options.timeoutMs ?? 0) / 1_000}s`);
       }
-      if (activeRun.reason === "interrupt") {
+      if (activeRun.reason === "interrupt" || activeRun.reason === "ownership") {
         this.shell.lastExitCode = 130;
         return { stdout: result.stdout, stderr: "", exitCode: 130 };
       }
@@ -324,9 +367,18 @@ export function terminalSession(pid: number): TerminalSessionController {
 }
 
 export function releaseTerminalSession(pid: number): void {
+  sessions.get(pid)?.interruptHumanWork();
   sessions.delete(pid);
 }
 
+/** Interrupt active human commands and invalidate queued human commands in every Terminal. */
+export function interruptHumanTerminalWork(): number {
+  let interrupted = 0;
+  for (const session of sessions.values()) interrupted += session.interruptHumanWork();
+  return interrupted;
+}
+
 export function resetTerminalSessions(): void {
+  for (const session of sessions.values()) session.interruptHumanWork();
   sessions.clear();
 }

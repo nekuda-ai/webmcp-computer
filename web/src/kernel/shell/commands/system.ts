@@ -2,6 +2,7 @@ import { optionEnabled, parseOptions, requireOperandCount, ShellUsageError } fro
 import type { ShellCommand } from "../types";
 import { machineIdentity } from "../../identity";
 import { useKernelStore } from "../../store";
+import { assertMachineMutationAdmission } from "../../ownershipAdmission";
 
 const unameFlags = [
   { short: "a", long: "all", description: "print all system information" },
@@ -104,6 +105,7 @@ export function createSystemCommands(): readonly ShellCommand[] {
         if (!Number.isInteger(pid) || pid < 2) {
           throw new ShellUsageError(`kill: invalid PID '${args[0] ?? ""}'`);
         }
+        assertMachineMutationAdmission(context.ownershipAdmission);
         const killed = context.processes.kill(pid);
         if (!killed) throw new Error(`webmcp-computer: process PID ${pid} not found`);
         return {};
@@ -120,6 +122,7 @@ export function createSystemCommands(): readonly ShellCommand[] {
           args[0] ?? "",
           context.session.cwd,
           context.source,
+          context.ownershipAdmission,
         );
         return { stdout: `Opened ${process.command} (PID ${process.pid})\n` };
       },
@@ -135,6 +138,7 @@ export function createSystemCommands(): readonly ShellCommand[] {
           args[0] ?? "",
           context.session.cwd,
           context.source,
+          context.ownershipAdmission,
         );
         return { stdout: `serving ${process.root}/ → preview (pid ${process.pid})\n` };
       },

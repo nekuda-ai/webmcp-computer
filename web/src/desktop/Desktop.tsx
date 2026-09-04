@@ -7,6 +7,7 @@ import {
   takeOverMachine,
 } from "../kernel/machineLock";
 import { machineInteractionBlocked, type MachineOwnership } from "../kernel/machineOwnership";
+import { captureMachineMutationAdmission } from "../kernel/ownershipAdmission";
 import { useKernelStore } from "../kernel/store";
 import type { ProcessRecord } from "../kernel/types";
 import { errorMessage } from "../shared";
@@ -27,6 +28,7 @@ function isFileExistsError(error: unknown): boolean {
 }
 
 export async function createUntitledEntry(kind: "file" | "directory"): Promise<void> {
+  const ownershipAdmission = captureMachineMutationAdmission("human");
   const state = useKernelStore.getState();
   const verb = kind === "file" ? "fs_write" : "fs_mkdir";
   let path = "~/desktop/untitled";
@@ -37,8 +39,8 @@ export async function createUntitledEntry(kind: "file" | "directory"): Promise<v
       path = joinPath("~/desktop", nextUntitledName(entries.map(({ name }) => name)));
       if (path !== "~/desktop/untitled") event = state.annotateEvent(event, { path });
       try {
-        if (kind === "file") await createFile(path, "", "human");
-        else await mkdir(path, "human");
+        if (kind === "file") await createFile(path, "", ownershipAdmission);
+        else await mkdir(path, ownershipAdmission);
         state.settleEvent(event, true);
         return;
       } catch (error) {

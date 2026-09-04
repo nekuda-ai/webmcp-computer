@@ -1,6 +1,7 @@
 import { abortInFlightAgentActions } from "./agentActionLifecycle";
 import { useKernelStore } from "./store";
 import type { MachineOwnership } from "./machineOwnership";
+import { interruptHumanTerminalWork } from "./terminalSessions";
 
 export const MACHINE_LOCK = "webmcp-computer-machine";
 export const MACHINE_LOCK_CONFLICT_GRACE_MS = 500;
@@ -27,12 +28,17 @@ const reasonListeners = new Set<() => void>();
 
 function setOwnership(ownership: MachineOwnership, reason?: string): void {
   const previous = useKernelStore.getState().machineOwnership;
-  if (previous === "owned" && ownership !== "owned") abortInFlightAgentActions();
+  const ownershipLost = previous === "owned" && ownership !== "owned";
   if (reason !== undefined && ownershipReason !== reason) {
     ownershipReason = reason;
     for (const listener of reasonListeners) listener();
   }
+  // Revoke mutation tickets before abort handlers can resume stale work.
   useKernelStore.getState().setMachineOwnership(ownership);
+  if (ownershipLost) {
+    abortInFlightAgentActions();
+    interruptHumanTerminalWork();
+  }
 }
 
 /** Why ownership is pending, degraded, unavailable, or held by another tab. */

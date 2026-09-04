@@ -16,6 +16,11 @@ import { resolveExternalFileChange, scheduleAutosave } from "../shared/fileBuffe
 import { editorTools } from "../../tools/registry";
 import { useAppTools } from "../../tools/useAppTools";
 import { errorMessage } from "../../shared";
+import {
+  assertMachineMutationAdmission,
+  captureMachineMutationAdmission,
+  type MachineMutationAdmission,
+} from "../../kernel/ownershipAdmission";
 
 export function EditorApp({ process }: AppComponentProps) {
   useAppTools(process.pid, editorTools);
@@ -134,10 +139,12 @@ export function EditorApp({ process }: AppComponentProps) {
     event.preventDefault();
     const action = osEvent("human", "editor_open_file", { path: openPath, pid: process.pid });
     try {
+      const ownershipAdmission = captureMachineMutationAdmission("human");
       const path = normalizePath(openPath.trim());
       const file = await stat(path);
       if (file.kind !== "file") throw new Error(`webmcp-computer: is a directory: ${path}`);
       if (!isTextFile(path)) throw new Error(`webmcp-computer: not a text file: ${path} (${file.size} bytes)`);
+      assertMachineMutationAdmission(ownershipAdmission);
       setProcessPath(process.pid, path);
       setOpenPath(path);
       setLoadError(false);
@@ -151,7 +158,10 @@ export function EditorApp({ process }: AppComponentProps) {
     }
   };
 
-  const save = useCallback(async (autosave = false) => {
+  const save = useCallback(async (
+    autosave = false,
+    ownershipAdmission?: MachineMutationAdmission,
+  ) => {
     if (loadError) {
       setStatus("webmcp-computer: reload the file successfully before saving");
       return;
@@ -170,7 +180,7 @@ export function EditorApp({ process }: AppComponentProps) {
     pendingAgentChange.current = false;
     const snapshot = contentRef.current;
     try {
-      await writeFile(path, snapshot, "human");
+      await writeFile(path, snapshot, ownershipAdmission ?? "human");
       savedContentRef.current = snapshot;
       setSavedContent(snapshot);
       await whenPathIdle(path);
@@ -208,8 +218,15 @@ export function EditorApp({ process }: AppComponentProps) {
     autosaveRef.current = null;
     if (!dirty || conflict || fileSystemStatus !== "ready") return undefined;
     setStatus("Autosave pending");
+    let ownershipAdmission: MachineMutationAdmission;
+    try {
+      ownershipAdmission = captureMachineMutationAdmission("human");
+    } catch (error) {
+      setStatus(errorMessage(error));
+      return undefined;
+    }
     const autosave = scheduleAutosave(
-      () => void save(true),
+      () => void save(true, ownershipAdmission),
       () =>
         !conflictRef.current && !loadErrorRef.current &&
         useKernelStore.getState().fileSystemStatus === "ready",
