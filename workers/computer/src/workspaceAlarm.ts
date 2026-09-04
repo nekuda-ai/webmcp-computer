@@ -15,36 +15,11 @@ type TerminalSyncFailure = {
   error?: unknown;
 };
 
-export type TerminalSyncAttemptStorage = Pick<DurableObjectStorage, "delete" | "get" | "put">;
-
 export type TerminalSyncAttempts = {
   attempted(backend: string): Promise<boolean>;
   mark(backend: string): Promise<void>;
   clear(backend: string): Promise<void>;
 };
-
-const TERMINAL_SYNC_ATTEMPT_KEY_PREFIX = "webmcp-computer:terminal-sync-attempt:";
-
-/** Durable guard that limits each backend's hard-budget cleanup path to one final sync. */
-export class DurableTerminalSyncAttempts implements TerminalSyncAttempts {
-  readonly #storage: TerminalSyncAttemptStorage;
-
-  constructor(storage: TerminalSyncAttemptStorage) {
-    this.#storage = storage;
-  }
-
-  async attempted(backend: string): Promise<boolean> {
-    return await this.#storage.get<boolean>(`${TERMINAL_SYNC_ATTEMPT_KEY_PREFIX}${backend}`) === true;
-  }
-
-  async mark(backend: string): Promise<void> {
-    await this.#storage.put(`${TERMINAL_SYNC_ATTEMPT_KEY_PREFIX}${backend}`, true);
-  }
-
-  async clear(backend: string): Promise<void> {
-    await this.#storage.delete(`${TERMINAL_SYNC_ATTEMPT_KEY_PREFIX}${backend}`);
-  }
-}
 
 type WorkspaceAlarmOptions = {
   alarms: AlarmSlots;

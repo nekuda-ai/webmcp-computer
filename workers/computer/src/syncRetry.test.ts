@@ -2,8 +2,24 @@ import { describe, expect, test } from "bun:test";
 import { BUDGET_WINDOW_MS } from "../../../shared/session-limits";
 import { AlarmSlots, type AlarmStorage } from "./alarms";
 import { DurableSyncRetryScheduler, settleSyncRetryAlarm, syncRetryAlarmSlot } from "./syncRetry";
-import { coordinateWorkspaceAlarm, DurableTerminalSyncAttempts } from "./workspaceAlarm";
-import { RUNTIME_LEASE_ALARM, RuntimeLease } from "./runtimeLease";
+import { coordinateWorkspaceAlarm, type TerminalSyncAttempts } from "./workspaceAlarm";
+import { RUNTIME_LEASE_ALARM, RuntimeLease, type LeaseStorage } from "./runtimeLease";
+
+class MemoryTerminalSyncAttempts implements TerminalSyncAttempts {
+  readonly #attempted = new Set<string>();
+
+  async attempted(backend: string) { return this.#attempted.has(backend); }
+  async mark(backend: string) { this.#attempted.add(backend); }
+  async clear(backend: string) { this.#attempted.delete(backend); }
+}
+
+function leaseTerminalSyncAttempts(lease: RuntimeLease): TerminalSyncAttempts {
+  return {
+    attempted: (backend) => lease.terminalSyncAttempted(backend),
+    mark: (backend) => lease.markTerminalSyncAttempt(backend),
+    clear: (backend) => lease.clearTerminalSyncAttempt(backend),
+  };
+}
 
 export function memoryAlarmStorage(initialAlarm: number | null = null) {
   const values = new Map<string, unknown>();
@@ -53,7 +69,7 @@ describe("workspace alarm coordination", () => {
       alarms,
       backend: "container",
       now: 1_000,
-      terminalSyncAttempts: new DurableTerminalSyncAttempts(memory.storage),
+      terminalSyncAttempts: new MemoryTerminalSyncAttempts(),
       getPendingSync: () => scheduler.get("container"),
       async retryPendingSync() {
         events.push("sync");
@@ -85,7 +101,7 @@ describe("workspace alarm coordination", () => {
       alarms,
       backend: "container",
       now,
-      terminalSyncAttempts: new DurableTerminalSyncAttempts(memory.storage),
+      terminalSyncAttempts: new MemoryTerminalSyncAttempts(),
       getPendingSync: () => scheduler.get("container"),
       async retryPendingSync() {
         events.push(`sync:${now}`);
@@ -130,7 +146,7 @@ describe("workspace alarm coordination", () => {
       alarms,
       backend: "container",
       now: 1_000,
-      terminalSyncAttempts: new DurableTerminalSyncAttempts(memory.storage),
+      terminalSyncAttempts: new MemoryTerminalSyncAttempts(),
       getPendingSync: () => scheduler.get("container"),
       async retryPendingSync() { return { status: "pending" }; },
       async runtimeCleanupReason() { return "idle"; },
@@ -153,7 +169,7 @@ describe("workspace alarm coordination", () => {
       alarms,
       backend: "container",
       now: 1_000,
-      terminalSyncAttempts: new DurableTerminalSyncAttempts(memory.storage),
+      terminalSyncAttempts: new MemoryTerminalSyncAttempts(),
       async getPendingSync() { return undefined; },
       async retryPendingSync() { return { status: "idle" }; },
       async runtimeCleanupReason() { return "idle" as const; },
@@ -177,7 +193,7 @@ describe("workspace alarm coordination", () => {
       alarms,
       backend: "container",
       now: 1_000,
-      terminalSyncAttempts: new DurableTerminalSyncAttempts(memory.storage),
+      terminalSyncAttempts: new MemoryTerminalSyncAttempts(),
       getPendingSync: () => scheduler.get("container"),
       async retryPendingSync() { throw new Error("transport failed"); },
       async runtimeCleanupReason() { return "idle" as const; },
@@ -204,7 +220,7 @@ describe("workspace alarm coordination", () => {
       alarms,
       backend: "container",
       now,
-      terminalSyncAttempts: new DurableTerminalSyncAttempts(memory.storage),
+      terminalSyncAttempts: new MemoryTerminalSyncAttempts(),
       getPendingSync: () => scheduler.get("container"),
       async retryPendingSync() {
         retries += 1;
@@ -245,11 +261,12 @@ describe("workspace alarm coordination", () => {
       const alarms = new AlarmSlots(memory.storage);
       const scheduler = new DurableSyncRetryScheduler(memory.storage, alarms);
       const lease = new RuntimeLease(memory.storage, alarms, {
+        backend: "container",
         budgetMs: 2 * 60 * 60_000,
         idleMs: 5 * 60_000,
         now: () => now,
       });
-      const terminalSyncAttempts = new DurableTerminalSyncAttempts(memory.storage);
+      const terminalSyncAttempts = leaseTerminalSyncAttempts(lease);
       return { alarms, scheduler, lease, terminalSyncAttempts };
     };
 
@@ -304,17 +321,99 @@ describe("workspace alarm coordination", () => {
     expect(memory.getAlarm()).toBeNull();
   });
 
-  test("a new-window acquire cannot inherit a previous terminal cleanup decision", async () => {
+  test("a failed new-window lease write preserves the terminal decision across reconstruction", async () => {
+    const memory = memoryAlarmStorage();
+    let failNextPut = false;
+    const failingStorage = {
+      ...memory.storage,
+      async put(key: string, value: unknown) {
+        if (failNextPut) {
+          failNextPut = false;
+          throw new Error("lease put failed");
+        }
+        await memory.storage.put(key, value);
+      },
+    } as unknown as LeaseStorage;
+    let now = 0;
+    let syncAttempts = 0;
+    const makeCoordinator = () => {
+      const alarms = new AlarmSlots(memory.storage);
+      const scheduler = new DurableSyncRetryScheduler(memory.storage, alarms);
+      const lease = new RuntimeLease(failingStorage, alarms, {
+        backend: "container",
+        budgetMs: 2 * 60 * 60_000,
+        idleMs: 5 * 60_000,
+        now: () => now,
+      });
+      const terminalSyncAttempts = leaseTerminalSyncAttempts(lease);
+      return { alarms, scheduler, lease, terminalSyncAttempts };
+    };
+
+    let reconstructed = makeCoordinator();
+    await reconstructed.lease.acquire(60_000);
+    await reconstructed.lease.started();
+    await reconstructed.lease.release();
+    await reconstructed.scheduler.schedule({
+      backend: "container",
+      runtimeId: "old-runtime",
+      attempt: 12,
+      notBefore: 2 * 60 * 60_000,
+    });
+    now = 2 * 60 * 60_000;
+    await coordinateWorkspaceAlarm({
+      alarms: reconstructed.alarms,
+      backend: "container",
+      now,
+      terminalSyncAttempts: reconstructed.terminalSyncAttempts,
+      getPendingSync: () => reconstructed.scheduler.get("container"),
+      async retryPendingSync() {
+        syncAttempts += 1;
+        return { status: "exhausted" as const };
+      },
+      runtimeCleanupReason: () => reconstructed.lease.cleanupReason(),
+      runtimeHardBudgetDeadline: () => reconstructed.lease.hardBudgetDeadline(),
+      handleRuntimeLease: () => reconstructed.lease.onAlarm(async () => { throw new Error("destroy failed"); }),
+    });
+    expect(syncAttempts).toBe(1);
+    expect(await reconstructed.terminalSyncAttempts.attempted("container")).toBe(true);
+
+    now = BUDGET_WINDOW_MS + 60_000;
+    failNextPut = true;
+    await expect(reconstructed.lease.acquire(60_000)).rejects.toThrow("lease put failed");
+
+    reconstructed = makeCoordinator();
+    expect(await reconstructed.terminalSyncAttempts.attempted("container")).toBe(true);
+
+    now = BUDGET_WINDOW_MS + 2 * 60 * 60_000;
+    await coordinateWorkspaceAlarm({
+      alarms: reconstructed.alarms,
+      backend: "container",
+      now,
+      terminalSyncAttempts: reconstructed.terminalSyncAttempts,
+      getPendingSync: () => reconstructed.scheduler.get("container"),
+      async retryPendingSync() {
+        syncAttempts += 1;
+        return { status: "exhausted" as const };
+      },
+      runtimeCleanupReason: () => reconstructed.lease.cleanupReason(),
+      runtimeHardBudgetDeadline: () => reconstructed.lease.hardBudgetDeadline(),
+      handleRuntimeLease: () => reconstructed.lease.onAlarm(async () => { throw new Error("destroy failed again"); }),
+    });
+    expect(syncAttempts).toBe(1);
+  });
+
+  test("a successful new-window admission clears the previous terminal decision", async () => {
     const memory = memoryAlarmStorage();
     const alarms = new AlarmSlots(memory.storage);
     const scheduler = new DurableSyncRetryScheduler(memory.storage, alarms);
-    const terminalSyncAttempts = new DurableTerminalSyncAttempts(memory.storage);
     let now = 0;
     const lease = new RuntimeLease(memory.storage, alarms, {
+      backend: "container",
       budgetMs: 2 * 60 * 60_000,
       idleMs: 5 * 60_000,
       now: () => now,
     });
+    const terminalSyncAttempts = leaseTerminalSyncAttempts(lease);
 
     await lease.acquire(60_000);
     await lease.started();
@@ -340,15 +439,7 @@ describe("workspace alarm coordination", () => {
     expect(await terminalSyncAttempts.attempted("container")).toBe(true);
 
     now = BUDGET_WINDOW_MS + 60_000;
-    const blocked = await lease.acquire(60_000, async () => {
-      throw new Error("marker clear failed");
-    });
-    expect(blocked.ok).toBe(false);
-    if (blocked.ok) throw new Error("unreachable");
-    expect(blocked.error.code).toBe("ECAPACITY");
-    expect(await terminalSyncAttempts.attempted("container")).toBe(true);
-
-    const acquired = await lease.acquire(60_000, () => terminalSyncAttempts.clear("container"));
+    const acquired = await lease.acquire(60_000);
     expect(acquired.ok).toBe(true);
     expect(await terminalSyncAttempts.attempted("container")).toBe(false);
     await lease.release();
@@ -385,7 +476,7 @@ describe("workspace alarm coordination", () => {
     const memory = memoryAlarmStorage();
     const alarms = new AlarmSlots(memory.storage);
     const scheduler = new DurableSyncRetryScheduler(memory.storage, alarms);
-    const terminalSyncAttempts = new DurableTerminalSyncAttempts(memory.storage);
+    const terminalSyncAttempts = new MemoryTerminalSyncAttempts();
     await scheduler.schedule({ backend: "container", runtimeId: "runtime-1", attempt: 2, notBefore: 1_000 });
     await alarms.set(RUNTIME_LEASE_ALARM, 1_000);
     let syncAttempts = 0;
@@ -414,7 +505,7 @@ describe("workspace alarm coordination", () => {
     const memory = memoryAlarmStorage();
     const alarms = new AlarmSlots(memory.storage);
     const scheduler = new DurableSyncRetryScheduler(memory.storage, alarms);
-    const terminalSyncAttempts = new DurableTerminalSyncAttempts(memory.storage);
+    const terminalSyncAttempts = new MemoryTerminalSyncAttempts();
     await scheduler.schedule({ backend: "container", runtimeId: "runtime-1", attempt: 2, notBefore: 1_000 });
     await alarms.set(RUNTIME_LEASE_ALARM, 1_000);
     const terminal: unknown[] = [];
@@ -498,7 +589,7 @@ describe("workspace alarm coordination", () => {
       alarms,
       backend: "container",
       now: 1_000,
-      terminalSyncAttempts: new DurableTerminalSyncAttempts(memory.storage),
+      terminalSyncAttempts: new MemoryTerminalSyncAttempts(),
       getPendingSync: () => scheduler.get("container"),
       async retryPendingSync() {
         retries += 1;

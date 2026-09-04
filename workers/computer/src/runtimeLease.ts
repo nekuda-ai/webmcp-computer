@@ -24,6 +24,8 @@ type RuntimeLeaseState = BudgetLedgerState & {
   execActive?: boolean;
   /** This exec opened the run, but container startup has not succeeded yet. */
   provisional?: boolean;
+  /** The configured backend has spent this run's one final hard-budget sync attempt. */
+  terminalSyncAttempted?: boolean;
 };
 
 export type LeaseAcquireResult =
@@ -33,6 +35,7 @@ export type LeaseAcquireResult =
 export type LeaseAlarmOutcome = "none" | "kept" | "cleanup-retry" | "stopped-idle" | "stopped-budget";
 
 export type RuntimeLeaseOptions = {
+  backend: string;
   budgetMs: number;
   idleMs: number;
   now?: () => number;
@@ -41,6 +44,7 @@ export type RuntimeLeaseOptions = {
 export class RuntimeLease {
   readonly #storage: LeaseStorage;
   readonly #alarms: AlarmSlots;
+  readonly #backend: string;
   readonly #budgetMs: number;
   readonly #idleMs: number;
   readonly #now: () => number;
@@ -48,6 +52,7 @@ export class RuntimeLease {
   constructor(storage: LeaseStorage, alarms: AlarmSlots, options: RuntimeLeaseOptions) {
     this.#storage = storage;
     this.#alarms = alarms;
+    this.#backend = options.backend;
     this.#budgetMs = options.budgetMs;
     this.#idleMs = options.idleMs;
     this.#now = options.now ?? (() => Date.now());
@@ -73,10 +78,10 @@ export class RuntimeLease {
 
   /**
    * Charge budget for a run that must not be idle-stopped for `busyForMs`.
-   * `prepareAdmission` runs after eligibility is established but before lease state is
-   * committed, so its failure cannot admit an exec with stale external lease metadata.
+   * Successful admission also clears the previous run's terminal-sync decision in the
+   * same durable state write, so neither change can survive without the other.
    */
-  async acquire(busyForMs: number, prepareAdmission?: () => Promise<void>): Promise<LeaseAcquireResult> {
+  async acquire(busyForMs: number): Promise<LeaseAcquireResult> {
     const now = this.#now();
     const state = await this.#load(now);
     if (state.execActive) {
@@ -96,20 +101,8 @@ export class RuntimeLease {
       await this.#save(result.state);
       return { ok: false, error: result.error, budget: result.snapshot };
     }
-    try {
-      await prepareAdmission?.();
-    } catch {
-      return {
-        ok: false,
-        error: {
-          error: "workspace cleanup state could not be reset safely; retry shortly",
-          code: "ECAPACITY",
-          retryAfterMs: 1_000,
-        },
-        budget: result.snapshot,
-      };
-    }
-    const acquired: RuntimeLeaseState = { ...result.state, execActive: true, provisional };
+    const { terminalSyncAttempted: _terminalSyncAttempted, ...admission } = result.state as RuntimeLeaseState;
+    const acquired: RuntimeLeaseState = { ...admission, execActive: true, provisional };
     await this.#save(acquired);
     await this.#schedule(acquired, now);
     return { ok: true, budget: result.snapshot };
@@ -153,6 +146,31 @@ export class RuntimeLease {
   async budget(): Promise<BudgetSnapshot> {
     const now = this.#now();
     return budgetSnapshot(await this.#load(now), this.#budgetMs, now);
+  }
+
+  #assertBackend(backend: string): void {
+    if (backend !== this.#backend) {
+      throw new Error(`runtime lease is configured for backend ${this.#backend}, not ${backend}`);
+    }
+  }
+
+  async terminalSyncAttempted(backend: string): Promise<boolean> {
+    this.#assertBackend(backend);
+    return (await this.#load(this.#now())).terminalSyncAttempted === true;
+  }
+
+  async markTerminalSyncAttempt(backend: string): Promise<void> {
+    this.#assertBackend(backend);
+    const now = this.#now();
+    const state = await this.#load(now);
+    await this.#save({ ...state, terminalSyncAttempted: true });
+  }
+
+  async clearTerminalSyncAttempt(backend: string): Promise<void> {
+    this.#assertBackend(backend);
+    const now = this.#now();
+    const { terminalSyncAttempted: _terminalSyncAttempted, ...state } = await this.#load(now);
+    await this.#save(state);
   }
 
   /** Why the current lease alarm may clean up, without mutating the ledger. */

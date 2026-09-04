@@ -13,7 +13,12 @@ function leaseFixture(start = 0) {
   const alarms = new AlarmSlots(memory.storage);
   let now = start;
   const stops: number[] = [];
-  const lease = new RuntimeLease(memory.storage, alarms, { budgetMs: BUDGET, idleMs: IDLE, now: () => now });
+  const lease = new RuntimeLease(memory.storage, alarms, {
+    backend: "container",
+    budgetMs: BUDGET,
+    idleMs: IDLE,
+    now: () => now,
+  });
   return {
     alarms,
     lease,
@@ -125,6 +130,19 @@ describe("runtime lease", () => {
     const renewed = await fixture.lease.acquire(MINUTE);
     expect(renewed.ok).toBe(true);
     expect(renewed.budget.remainingMs).toBe(BUDGET);
+  });
+
+  test("terminal-sync markers reject operations for an unconfigured backend", async () => {
+    const fixture = leaseFixture();
+    await expect(fixture.lease.terminalSyncAttempted("other")).rejects.toThrow(
+      "runtime lease is configured for backend container, not other",
+    );
+    await expect(fixture.lease.markTerminalSyncAttempt("other")).rejects.toThrow(
+      "runtime lease is configured for backend container, not other",
+    );
+    await expect(fixture.lease.clearTerminalSyncAttempt("other")).rejects.toThrow(
+      "runtime lease is configured for backend container, not other",
+    );
   });
 
   test("abandon stops charging immediately when the container never ran", async () => {

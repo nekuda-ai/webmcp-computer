@@ -33,7 +33,7 @@ import { PublishQuota } from "./publishQuota";
 import { RuntimeLease } from "./runtimeLease";
 import { randomSlug } from "./slug";
 import { DurableSyncRetryScheduler } from "./syncRetry";
-import { coordinateWorkspaceAlarm, DurableTerminalSyncAttempts } from "./workspaceAlarm";
+import { coordinateWorkspaceAlarm } from "./workspaceAlarm";
 
 export { WorkspaceProxy } from "@cloudflare/computer";
 
@@ -75,12 +75,12 @@ function workspaceOptions(
 export class WebMCPComputerWorkspace extends ContainerBase {
   readonly alarms = new AlarmSlots(this.ctx.storage);
   readonly lease = new RuntimeLease(this.ctx.storage, this.alarms, {
+    backend: this.backend.id,
     budgetMs: CLOUD_BUDGET_MS,
     idleMs: CLOUD_IDLE_MS,
   });
   readonly publishQuota = new PublishQuota(this.ctx.storage);
   readonly syncRetries = new DurableSyncRetryScheduler(this.ctx.storage, this.alarms);
-  readonly terminalSyncAttempts = new DurableTerminalSyncAttempts(this.ctx.storage);
   readonly workspace = new Workspace(workspaceOptions(this, this.syncRetries));
   #leaseOperation: Promise<void> = Promise.resolve();
 
@@ -97,17 +97,7 @@ export class WebMCPComputerWorkspace extends ContainerBase {
 
   // Lease RPC surface used by the Worker before/after every exec.
   acquireRuntimeLease(busyForMs: number): ReturnType<WorkspaceLease["acquire"]> {
-    return this.#withLease(() => this.lease.acquire(
-      busyForMs,
-      async () => {
-        try {
-          await this.terminalSyncAttempts.clear(this.backend.id);
-        } catch (error) {
-          console.error("WebMCP Computer terminal sync marker could not be cleared before exec admission", error);
-          throw error;
-        }
-      },
-    ));
+    return this.#withLease(() => this.lease.acquire(busyForMs));
   }
 
   runtimeLeaseStarted(): ReturnType<WorkspaceLease["started"]> {
@@ -163,7 +153,13 @@ export class WebMCPComputerWorkspace extends ContainerBase {
       alarms: this.alarms,
       backend: this.backend.id,
       now: Date.now(),
-      terminalSyncAttempts: this.terminalSyncAttempts,
+      // These callbacks share the lease record with exec admission. Queue each operation
+      // at this adapter boundary; RuntimeLease itself never re-enters #withLease.
+      terminalSyncAttempts: {
+        attempted: (backend) => this.#withLease(() => this.lease.terminalSyncAttempted(backend)),
+        mark: (backend) => this.#withLease(() => this.lease.markTerminalSyncAttempt(backend)),
+        clear: (backend) => this.#withLease(() => this.lease.clearTerminalSyncAttempt(backend)),
+      },
       getPendingSync: () => this.syncRetries.get(this.backend.id),
       retryPendingSync: () => this.workspace.retryPendingSync(this.backend.id),
       runtimeCleanupReason: () => this.#withLease(() => this.lease.cleanupReason()),
