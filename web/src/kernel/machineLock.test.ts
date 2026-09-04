@@ -130,7 +130,7 @@ describe("WebMCP Computer machine ownership", () => {
 
     expect(machineTakeOverTool.intent).toBe("transact");
     expect(machineTakeOverTool.annotations?.consequentialHint).toBe(true);
-    await expect(machineTakeOverTool.execute({})).resolves.toEqual({ takenOver: true });
+    await expect(machineTakeOverTool.execute({})).resolves.toEqual({ taken_over: true });
     expect(useKernelStore.getState().machineConflict).toBe(false);
     expect(useKernelStore.getState().events.at(-1)).toEqual(expect.objectContaining({
       verb: "machine_take_over",

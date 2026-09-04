@@ -24,7 +24,7 @@ Windows ARE processes: every open window has a PID (shown in its titlebar chip),
   is re-clamped when the viewport shrinks. The returned rect is the truth.
 - `machine_take_over {}` — consequentially steal this machine's single-tab ownership
   when this tab is blocked. It matches the visible **Take over** button and returns
-  `{takenOver: boolean}`.
+  `{taken_over: boolean}`.
 - `editor_open_file {path}` — Editor on a specific text file.
 - `files_reveal {path}` — show a file or directory in an already-open Files window.
 - `notes_append {note, text}` — append to a markdown note under `~/notes/`.

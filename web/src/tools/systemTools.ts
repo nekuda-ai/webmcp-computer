@@ -489,7 +489,7 @@ export const machineTakeOverTool = defineTool<EmptyInput>({
   execute(input) {
     return runAgentAction("machine_take_over", {}, async () => {
       requireEmptyInput(input);
-      return { takenOver: await takeOverMachine() };
+      return { taken_over: await takeOverMachine() };
     }, { allowWhileBlocked: true });
   },
 });

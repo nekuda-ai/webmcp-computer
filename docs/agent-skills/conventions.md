@@ -50,7 +50,7 @@ is true only for transact tools.
 Only one tab owns the machine. While this tab is blocked, ordinary tools fail before
 starting. `machine_take_over {}` is the deliberately consequential exception: it invokes
 the same ownership steal as the visible **Take over** button and returns
-`{takenOver: boolean}`. Losing ownership aborts cancellable transports and prevents stale
+`{taken_over: boolean}`. Losing ownership aborts cancellable transports and prevents stale
 calls from reporting success. Remote work already accepted or completed may still finish;
 takeover cannot undo it.
 
