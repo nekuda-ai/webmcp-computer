@@ -77,13 +77,14 @@ export function freshBudgetLedger(now: number): BudgetLedgerState {
 }
 
 function rolled(state: BudgetLedgerState, now: number): BudgetLedgerState {
-  if (now - state.windowStartedAt < BUDGET_WINDOW_MS) return state;
+  const elapsed = now - state.windowStartedAt;
+  if (elapsed < BUDGET_WINDOW_MS) return state;
+  const windowStartedAt = state.windowStartedAt + Math.floor(elapsed / BUDGET_WINDOW_MS) * BUDGET_WINDOW_MS;
   return {
-    windowStartedAt: now,
+    ...state,
+    windowStartedAt,
     usedMs: 0,
-    lastActivityAt: now,
-    ...(state.runningSince === undefined ? {} : { runningSince: now }),
-    ...(state.busyUntil === undefined ? {} : { busyUntil: state.busyUntil }),
+    ...(state.runningSince === undefined ? {} : { runningSince: Math.max(state.runningSince, windowStartedAt) }),
   };
 }
 

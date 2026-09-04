@@ -96,6 +96,20 @@ describe("runtime lease", () => {
     expect(await fixture.alarms.get(RUNTIME_LEASE_ALARM)).toBeUndefined();
   });
 
+  test("a running container keeps fixed windows, current-window charges, and real idle time across rollover", async () => {
+    const fixture = leaseFixture();
+    await fixture.lease.acquire(MINUTE);
+
+    fixture.advance(2 * 24 * HOUR + 30 * MINUTE);
+    expect(await fixture.lease.budget()).toEqual({
+      remainingMs: BUDGET - 30 * MINUTE,
+      usedMs: 30 * MINUTE,
+      windowResetsAt: 3 * 24 * HOUR,
+    });
+    expect(await fixture.lease.cleanupReason()).toBe("idle");
+    expect(await fixture.lease.onAlarm(fixture.stop)).toBe("stopped-idle");
+  });
+
   test("the hard budget stops a busy container and refuses new execs until the window resets", async () => {
     const fixture = leaseFixture();
     await fixture.lease.acquire(10 * MINUTE);

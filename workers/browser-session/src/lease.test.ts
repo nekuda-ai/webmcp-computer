@@ -176,6 +176,22 @@ describe("browser lease", () => {
     expect(fixture.calls).toEqual(["create:https://example.com/"]);
   });
 
+  test("a live Chrome keeps fixed windows, current-window charges, and real idle time across rollover", async () => {
+    const fixture = leaseFixture();
+    await fixture.lease.create("https://example.com/");
+
+    fixture.advance(2 * BUDGET_WINDOW_MS + 30 * MINUTE);
+    expect(await fixture.lease.onAlarm()).toBe("stopped-idle");
+    const renewed = await fixture.lease.create("https://example.com/");
+    expect(renewed.ok).toBe(true);
+    if (!renewed.ok) throw new Error("unreachable");
+    expect(renewed.value.budget).toEqual({
+      remainingMs: BUDGET - 30 * MINUTE,
+      usedMs: 30 * MINUTE,
+      windowResetsAt: 3 * BUDGET_WINDOW_MS,
+    });
+  });
+
   test("the hard budget stops a live Chrome and refuses new ones until the window resets", async () => {
     const fixture = leaseFixture();
     await fixture.lease.create("https://example.com/");

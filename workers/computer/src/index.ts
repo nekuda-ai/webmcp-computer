@@ -33,7 +33,7 @@ import { PublishQuota } from "./publishQuota";
 import { RuntimeLease } from "./runtimeLease";
 import { randomSlug } from "./slug";
 import { DurableSyncRetryScheduler } from "./syncRetry";
-import { coordinateWorkspaceAlarm } from "./workspaceAlarm";
+import { coordinateWorkspaceAlarm, DurableTerminalSyncAttempts } from "./workspaceAlarm";
 
 export { WorkspaceProxy } from "@cloudflare/computer";
 
@@ -80,6 +80,7 @@ export class WebMCPComputerWorkspace extends ContainerBase {
   });
   readonly publishQuota = new PublishQuota(this.ctx.storage);
   readonly syncRetries = new DurableSyncRetryScheduler(this.ctx.storage, this.alarms);
+  readonly terminalSyncAttempts = new DurableTerminalSyncAttempts(this.ctx.storage);
   readonly workspace = new Workspace(workspaceOptions(this, this.syncRetries));
   #leaseOperation: Promise<void> = Promise.resolve();
 
@@ -96,7 +97,17 @@ export class WebMCPComputerWorkspace extends ContainerBase {
 
   // Lease RPC surface used by the Worker before/after every exec.
   acquireRuntimeLease(busyForMs: number): ReturnType<WorkspaceLease["acquire"]> {
-    return this.#withLease(() => this.lease.acquire(busyForMs));
+    return this.#withLease(() => this.lease.acquire(
+      busyForMs,
+      async () => {
+        try {
+          await this.terminalSyncAttempts.clear(this.backend.id);
+        } catch (error) {
+          console.error("WebMCP Computer terminal sync marker could not be cleared before exec admission", error);
+          throw error;
+        }
+      },
+    ));
   }
 
   runtimeLeaseStarted(): ReturnType<WorkspaceLease["started"]> {
@@ -152,6 +163,7 @@ export class WebMCPComputerWorkspace extends ContainerBase {
       alarms: this.alarms,
       backend: this.backend.id,
       now: Date.now(),
+      terminalSyncAttempts: this.terminalSyncAttempts,
       getPendingSync: () => this.syncRetries.get(this.backend.id),
       retryPendingSync: () => this.workspace.retryPendingSync(this.backend.id),
       runtimeCleanupReason: () => this.#withLease(() => this.lease.cleanupReason()),
@@ -159,17 +171,21 @@ export class WebMCPComputerWorkspace extends ContainerBase {
       handleRuntimeLease: async () => {
         const outcome = await this.#withLease(() => this.lease.onAlarm(() => this.#stopContainer()));
         if (outcome !== "kept") console.log("WebMCP Computer runtime lease", JSON.stringify({ outcome }));
+        return outcome;
       },
       onSyncResult(result) {
         console.log("WebMCP Computer workspace sync retry", JSON.stringify(result));
       },
       onSyncError(error) {
-        console.error("WebMCP Computer workspace sync retry rescheduled", error);
+        console.error("WebMCP Computer workspace sync retry failure", error);
+      },
+      onTerminalMarkerError(error) {
+        console.error("WebMCP Computer terminal sync marker storage failure; cleanup still takes precedence", error);
       },
       onTerminalSyncFailure(failure) {
         console.error(
           "WebMCP Computer workspace sync terminal failure: runtime budget takes precedence; " +
-          "destroying container after final retry while retaining diagnostic intent",
+          "destroying container after terminal sync decision while retaining diagnostic intent",
           failure,
         );
       },

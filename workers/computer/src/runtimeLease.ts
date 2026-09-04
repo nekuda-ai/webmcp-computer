@@ -71,8 +71,12 @@ export class RuntimeLease {
     await this.#alarms.set(RUNTIME_LEASE_ALARM, verdict.checkAt);
   }
 
-  /** Charge budget for a run that must not be idle-stopped for `busyForMs`. */
-  async acquire(busyForMs: number): Promise<LeaseAcquireResult> {
+  /**
+   * Charge budget for a run that must not be idle-stopped for `busyForMs`.
+   * `prepareAdmission` runs after eligibility is established but before lease state is
+   * committed, so its failure cannot admit an exec with stale external lease metadata.
+   */
+  async acquire(busyForMs: number, prepareAdmission?: () => Promise<void>): Promise<LeaseAcquireResult> {
     const now = this.#now();
     const state = await this.#load(now);
     if (state.execActive) {
@@ -91,6 +95,19 @@ export class RuntimeLease {
     if (!result.ok) {
       await this.#save(result.state);
       return { ok: false, error: result.error, budget: result.snapshot };
+    }
+    try {
+      await prepareAdmission?.();
+    } catch {
+      return {
+        ok: false,
+        error: {
+          error: "workspace cleanup state could not be reset safely; retry shortly",
+          code: "ECAPACITY",
+          retryAfterMs: 1_000,
+        },
+        budget: result.snapshot,
+      };
     }
     const acquired: RuntimeLeaseState = { ...result.state, execActive: true, provisional };
     await this.#save(acquired);

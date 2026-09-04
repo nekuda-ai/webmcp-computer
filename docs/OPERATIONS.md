@@ -271,10 +271,13 @@ Both Workers have `observability.enabled` with `head_sampling_rate: 1`.
 
 Container cleanup precedence is deliberate: pending sync beats the 5-minute idle deadline,
 including across repeated bounded SDK retry cycles, but the 2-hour runtime budget beats sync.
-At that hard deadline the Worker performs a final retry before stopping the paid runtime. If
-that retry cannot recover the bytes, the durable intent is retained for diagnosis but cannot
-keep scheduling a billable container indefinitely; operators must treat the terminal log as
-possible loss of files that existed only in the container.
+At that hard deadline the Worker records and performs exactly one final retry before stopping
+the paid runtime. If container destruction fails, later alarms retry destruction directly rather
+than repeating sync. A new-window exec is admitted only after that terminal marker is cleared,
+so new sync work cannot inherit the earlier cleanup decision. If the final retry cannot recover
+the bytes, the durable intent is retained for diagnosis but cannot keep scheduling a billable
+container indefinitely; operators must treat the terminal log as possible loss of files that
+existed only in the container.
 
 ```sh
 wr tail webmcp-computer-cloud                        # production

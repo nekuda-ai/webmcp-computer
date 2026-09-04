@@ -15,10 +15,42 @@ type TerminalSyncFailure = {
   error?: unknown;
 };
 
+export type TerminalSyncAttemptStorage = Pick<DurableObjectStorage, "delete" | "get" | "put">;
+
+export type TerminalSyncAttempts = {
+  attempted(backend: string): Promise<boolean>;
+  mark(backend: string): Promise<void>;
+  clear(backend: string): Promise<void>;
+};
+
+const TERMINAL_SYNC_ATTEMPT_KEY_PREFIX = "webmcp-computer:terminal-sync-attempt:";
+
+/** Durable guard that limits each backend's hard-budget cleanup path to one final sync. */
+export class DurableTerminalSyncAttempts implements TerminalSyncAttempts {
+  readonly #storage: TerminalSyncAttemptStorage;
+
+  constructor(storage: TerminalSyncAttemptStorage) {
+    this.#storage = storage;
+  }
+
+  async attempted(backend: string): Promise<boolean> {
+    return await this.#storage.get<boolean>(`${TERMINAL_SYNC_ATTEMPT_KEY_PREFIX}${backend}`) === true;
+  }
+
+  async mark(backend: string): Promise<void> {
+    await this.#storage.put(`${TERMINAL_SYNC_ATTEMPT_KEY_PREFIX}${backend}`, true);
+  }
+
+  async clear(backend: string): Promise<void> {
+    await this.#storage.delete(`${TERMINAL_SYNC_ATTEMPT_KEY_PREFIX}${backend}`);
+  }
+}
+
 type WorkspaceAlarmOptions = {
   alarms: AlarmSlots;
   backend: string;
   now: number;
+  terminalSyncAttempts: TerminalSyncAttempts;
   getPendingSync(): Promise<SyncRetryIntent | undefined>;
   retryPendingSync(): Promise<{ status: SyncRetryStatus }>;
   runtimeCleanupReason(): Promise<RuntimeCleanupReason>;
@@ -27,6 +59,7 @@ type WorkspaceAlarmOptions = {
   onSyncResult?(result: { status: SyncRetryStatus }): void;
   onSyncError?(error: unknown): void;
   onTerminalSyncFailure?(failure: TerminalSyncFailure): void;
+  onTerminalMarkerError?(error: unknown): void;
 };
 
 /**
@@ -49,11 +82,56 @@ export async function coordinateWorkspaceAlarm(options: WorkspaceAlarmOptions): 
       ? await options.runtimeHardBudgetDeadline?.() ?? Number.POSITIVE_INFINITY
       : Number.POSITIVE_INFINITY;
     const hardBudgetDue = cleanupReason === "budget";
-    let pendingSync = hardBudgetDue ? await options.getPendingSync() : undefined;
-    const shouldRetry = due.has(syncSlot) || (hardBudgetDue && pendingSync !== undefined);
+    let terminalAttemptedBeforeAlarm = false;
+    let skipSyncForTerminalCleanup = false;
+    let madeTerminalDecision = false;
+    let pendingSync: SyncRetryIntent | undefined;
     let finalStatus: SyncRetryStatus | "error" | undefined;
     let finalError: unknown;
 
+    if (runtimeDue) {
+      try {
+        terminalAttemptedBeforeAlarm = await options.terminalSyncAttempts.attempted(backend);
+        skipSyncForTerminalCleanup = terminalAttemptedBeforeAlarm;
+      } catch (error) {
+        // Unknown marker state must favor stopping paid runtime over possibly repeating
+        // an already-attempted terminal sync.
+        skipSyncForTerminalCleanup = true;
+        finalStatus = "error";
+        finalError = error;
+        options.onTerminalMarkerError?.(error);
+      }
+    }
+
+    if (hardBudgetDue) {
+      try {
+        pendingSync = await options.getPendingSync();
+      } catch (error) {
+        // Durable diagnostic reads are useful, but never a prerequisite for destruction.
+        skipSyncForTerminalCleanup = true;
+        finalStatus = "error";
+        finalError = error;
+        options.onSyncError?.(error);
+      }
+    }
+
+    let makeFinalSyncAttempt = false;
+    if (hardBudgetDue && pendingSync !== undefined && !skipSyncForTerminalCleanup) {
+      try {
+        // Persist before calling the SDK so a restart or failed destroy cannot repeat it.
+        await options.terminalSyncAttempts.mark(backend);
+        makeFinalSyncAttempt = true;
+        madeTerminalDecision = true;
+      } catch (error) {
+        skipSyncForTerminalCleanup = true;
+        madeTerminalDecision = true;
+        finalStatus = "error";
+        finalError = error;
+        options.onTerminalMarkerError?.(error);
+      }
+    }
+
+    const shouldRetry = makeFinalSyncAttempt || (due.has(syncSlot) && !skipSyncForTerminalCleanup);
     if (shouldRetry) {
       try {
         const result = await options.retryPendingSync();
@@ -79,18 +157,32 @@ export async function coordinateWorkspaceAlarm(options: WorkspaceAlarmOptions): 
     }
 
     if (runtimeDue) {
-      pendingSync = await options.getPendingSync();
-      if (pendingSync !== undefined && !hardBudgetDue) {
+      try {
+        pendingSync = await options.getPendingSync();
+      } catch (error) {
+        if (!hardBudgetDue && !skipSyncForTerminalCleanup) throw error;
+        finalStatus = "error";
+        finalError = error;
+        options.onSyncError?.(error);
+      }
+
+      const terminalCleanup = hardBudgetDue || skipSyncForTerminalCleanup;
+      if (pendingSync !== undefined && !terminalCleanup) {
         const retryAt = await alarms.get(syncSlot);
         const nextSyncAttempt = retryAt !== undefined && retryAt > now
           ? retryAt
           : now + DURABLE_RETRY_DELAY_MS;
         await alarms.set(RUNTIME_LEASE_ALARM, Math.min(nextSyncAttempt, hardBudgetDeadline));
       } else {
-        if (pendingSync !== undefined && hardBudgetDue) {
-          // Budget is the terminal cost/safety boundary. Keep diagnostic intent but do
-          // not let it schedule paid runtime forever after the final best-effort pull.
-          await alarms.clear(syncSlot);
+        if (terminalCleanup) {
+          // Retain the SDK's intent as diagnostic evidence, but disarm its paid wakeup.
+          try {
+            await alarms.clear(syncSlot);
+          } catch (error) {
+            options.onSyncError?.(error);
+          }
+        }
+        if (pendingSync !== undefined && hardBudgetDue && !terminalAttemptedBeforeAlarm && madeTerminalDecision) {
           try {
             options.onTerminalSyncFailure?.({
               reason: "runtime-budget",
@@ -103,7 +195,17 @@ export async function coordinateWorkspaceAlarm(options: WorkspaceAlarmOptions): 
             // Observability must never prevent the hard paid-runtime cleanup boundary.
           }
         }
-        await options.handleRuntimeLease();
+        const outcome = await options.handleRuntimeLease();
+        const cleanupFinished = outcome === "none" || outcome === "stopped-idle" || outcome === "stopped-budget";
+        if (cleanupFinished && (terminalAttemptedBeforeAlarm || makeFinalSyncAttempt)) {
+          try {
+            await options.terminalSyncAttempts.clear(backend);
+          } catch (error) {
+            // The runtime is already stopped. A stale marker is safer than restoring an
+            // alarm or letting a storage failure turn cleanup into an endless paid retry.
+            options.onTerminalMarkerError?.(error);
+          }
+        }
       }
     }
   } finally {

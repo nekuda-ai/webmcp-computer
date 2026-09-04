@@ -66,7 +66,7 @@ describe("budget ledger", () => {
     expect(later.ok).toBe(true);
     if (!later.ok) throw new Error("unreachable");
     expect(later.state.usedMs).toBe(0);
-    expect(later.state.windowStartedAt).toBe(BUDGET_WINDOW_MS + 1);
+    expect(later.state.windowStartedAt).toBe(BUDGET_WINDOW_MS);
   });
 
   test("judgeRun stops an idle run only after the idle window and never while busy", () => {
