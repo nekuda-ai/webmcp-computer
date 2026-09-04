@@ -6,6 +6,7 @@ import {
   shellQuote,
 } from "../kernel/cloudExec";
 import { useKernelStore } from "../kernel/store";
+import { assertMachineMutationAdmission } from "../kernel/ownershipAdmission";
 import { terminalSession } from "../kernel/terminalSessions";
 import { runAgentAction } from "./agentAction";
 import { TRANSACT_ANNOTATIONS } from "./taxonomy";
@@ -107,8 +108,9 @@ export function createCloudExecTool(dependencies?: CloudExecDependencies) {
           ...(input?.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
           appId: "terminal",
         },
-        async (signal) => {
+        async (signal, mutationAdmission) => {
           const request = requireInput(input);
+          assertMachineMutationAdmission(mutationAdmission);
           const pid = resolveTermExecPid(undefined);
           useKernelStore.getState().focus(pid);
           const session = terminalSession(pid);
@@ -117,6 +119,7 @@ export function createCloudExecTool(dependencies?: CloudExecDependencies) {
           const result = await session.run(`cloud ${shellQuote(request.command)}`, "agent", {
             timeoutMs: (request.timeoutMs ?? DEFAULT_TIMEOUT_MS) + LOCAL_TIMEOUT_GRACE_MS,
             signal,
+            ownershipAdmission: mutationAdmission,
             ...(dependencies === undefined ? {} : { cloudExecDependencies: dependencies }),
             cloudExecRequest: request,
             onCloudExecResult(value) {

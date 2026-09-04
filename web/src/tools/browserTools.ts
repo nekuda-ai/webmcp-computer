@@ -2,6 +2,7 @@ import { defineTool } from "@nekuda/webmcp-sdk";
 import { getBrowserSession, ensureBrowserSession, rememberBrowserUrl } from "../apps/browser/session";
 import type { CdpClient } from "../apps/browser/cdp";
 import { useKernelStore } from "../kernel/store";
+import { assertMachineMutationAdmission } from "../kernel/ownershipAdmission";
 import type { WindowRect } from "../kernel/types";
 import { currentViewport } from "../kernel/windowGeometry";
 import { requireFinite } from "../shared";
@@ -143,7 +144,7 @@ export function createBrowserOpenTool(
         ...(input?.width === undefined ? {} : { width: input.width }),
         ...(input?.height === undefined ? {} : { height: input.height }),
         ...(rawFocus === undefined ? {} : { focus: rawFocus }),
-      }, async (signal) => {
+      }, async (signal, mutationAdmission) => {
         const url = rawUrl === undefined ? undefined : requireBrowserUrl(rawUrl);
         if (rawFocus !== undefined && typeof rawFocus !== "boolean") {
           throw new Error("webmcp-computer: focus must be a boolean");
@@ -166,6 +167,7 @@ export function createBrowserOpenTool(
           : await readPageIdentity(session.cdp, signal);
         const currentUrl = identity.url;
 
+        assertMachineMutationAdmission(mutationAdmission);
         const process = useKernelStore.getState().spawn("browser", {
           ...(Object.keys(placement).length === 0 ? {} : { placement }),
           ...(existing ? { focus: true } : rawFocus === undefined ? {} : { focus: rawFocus }),

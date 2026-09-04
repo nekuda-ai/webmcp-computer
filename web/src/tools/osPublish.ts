@@ -6,6 +6,7 @@ import { TRANSACT_ANNOTATIONS } from "./taxonomy";
 import { PUBLISH_QUOTA_LIMIT } from "../../../shared/session-limits";
 import { PUBLISHED_SITE_RETENTION_DAYS } from "../../../workers/computer/src/protocol";
 import { hostedAuthorization } from "../kernel/hostedSession";
+import { assertMachineMutationAdmission } from "../kernel/ownershipAdmission";
 
 export const MAX_PUBLISH_FILES = 64;
 export const MAX_PUBLISH_FILE_BYTES = 256 * 1_024;
@@ -162,7 +163,7 @@ export function createOsPublishTool(
     intent: "transact",
     execute(input) {
       const path = input?.path;
-      return runAgentAction("os_publish", { path: path ?? "~/site" }, async (signal) => {
+      return runAgentAction("os_publish", { path: path ?? "~/site" }, async (signal, mutationAdmission) => {
         // Resolve defaults at invocation time so a bad optional override becomes a
         // traced tool failure instead of breaking boot while tools register.
         const runtime = dependencies ?? defaultDependencies();
@@ -171,6 +172,7 @@ export function createOsPublishTool(
         try {
           const authorization = await runtime.authorization?.() ?? {};
           if (signal.aborted) throw signal.reason;
+          assertMachineMutationAdmission(mutationAdmission);
           response = await runtime.fetch(
             `${runtime.workerBaseUrl}/ws/${runtime.workspaceId}/publish`,
             {

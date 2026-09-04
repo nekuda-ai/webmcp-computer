@@ -102,6 +102,16 @@ function transcriptLines(text: string, tone: TerminalLine["tone"]): TerminalLine
   return values.map((value) => ({ text: value, tone }));
 }
 
+function mutationAdmissionCurrent(admission?: MachineMutationAdmission): boolean {
+  if (!admission) return true;
+  try {
+    assertMachineMutationAdmission(admission);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export class TerminalSessionController {
   readonly shell: ShellSession;
   private readonly listeners = new Set<Listener>();
@@ -273,6 +283,9 @@ export class TerminalSessionController {
       }
 
       if (options.signal?.aborted) throw options.signal.reason;
+      if (options.ownershipAdmission) {
+        assertMachineMutationAdmission(options.ownershipAdmission);
+      }
       if (activeRun.reason === "interrupt" || activeRun.reason === "ownership") {
         this.shell.lastExitCode = 130;
         return { stdout: "", stderr: "", exitCode: 130 };
@@ -300,6 +313,7 @@ export class TerminalSessionController {
               text.startsWith("webmcp-computer: cloud exec failed:"))
           )
         ) return;
+        if (!mutationAdmissionCurrent(options.ownershipAdmission)) return;
         this.appendLines(...transcriptLines(text, tone));
         this.emit({ type: "output", text, tone });
       };
@@ -320,6 +334,9 @@ export class TerminalSessionController {
         onStdout: (text) => output(text, "output"),
         onStderr: (text) => output(text, "error"),
         onClear: () => {
+          if (options.ownershipAdmission) {
+            assertMachineMutationAdmission(options.ownershipAdmission);
+          }
           this.lines.length = 0;
           this.scrollbackWasTruncated = false;
           this.emit({ type: "clear" });
@@ -338,8 +355,10 @@ export class TerminalSessionController {
       options.signal?.removeEventListener("abort", abortFromCaller);
       if (timeout !== undefined) globalThis.clearTimeout(timeout);
       if (this.activeRun === activeRun) this.activeRun = undefined;
-      useKernelStore.getState().setProcessCwd(this.pid, this.shell.cwd);
-      this.emit({ type: "prompt", prompt: promptFor(this.shell) });
+      if (mutationAdmissionCurrent(options.ownershipAdmission)) {
+        useKernelStore.getState().setProcessCwd(this.pid, this.shell.cwd);
+        this.emit({ type: "prompt", prompt: promptFor(this.shell) });
+      }
     }
   }
 

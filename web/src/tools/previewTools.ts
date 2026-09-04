@@ -1,5 +1,6 @@
 import { defineTool } from "@nekuda/webmcp-sdk";
 import { getPreviewRuntime } from "../apps/preview/runtime";
+import { assertMachineMutationAdmission } from "../kernel/ownershipAdmission";
 import { resolveAppTarget } from "./appTarget";
 import { runAgentAction } from "./agentAction";
 import { ACT_ANNOTATIONS, ASK_ANNOTATIONS } from "./taxonomy";
@@ -60,8 +61,9 @@ export const previewReloadTool = defineTool<PreviewInput>({
     return runAgentAction("preview_reload", {
       appId: "preview",
       ...(rawPid === undefined ? {} : { pid: rawPid }),
-    }, async () => {
+    }, async (_signal, mutationAdmission) => {
       const { process, runtime } = targetPreview(rawPid);
+      assertMachineMutationAdmission(mutationAdmission);
       await runtime.reload();
       return { reloaded: true, pid: process.pid, url: runtime.url };
     });

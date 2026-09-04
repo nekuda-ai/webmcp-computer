@@ -5,7 +5,7 @@ import type {
   SpecTool,
   ToolRegistration,
 } from "@nekuda/webmcp-sdk";
-import { initializeMemoryFileSystem, writeFile } from "../kernel/fs";
+import { initializeMemoryFileSystem, readFile, writeFile } from "../kernel/fs";
 import { executeShell } from "../kernel/shell/engine";
 import { resetKernelStore, useKernelStore } from "../kernel/store";
 import {
@@ -15,7 +15,9 @@ import {
   TerminalSessionController,
   type TerminalSessionEvent,
 } from "../kernel/terminalSessions";
+import { abortInFlightAgentActions } from "./agentAction";
 import { registerSystemTools } from "./registry";
+import { termExecTool } from "./terminalTools";
 
 let captured: SpecTool[] = [];
 let registration: ToolRegistration;
@@ -76,6 +78,44 @@ describe("M3 terminal tools", () => {
       exit_code: 0,
       truncated: true,
     });
+  });
+
+  test("term_exec keeps the action admission through a delayed shell mutation", async () => {
+    const path = "~/site/delayed-terminal.txt";
+    await writeFile(path, "initial", "system");
+    let releaseShell = () => {};
+    const shellGate = new Promise<void>((resolve) => { releaseShell = resolve; });
+    let markShellStarted = () => {};
+    const shellStarted = new Promise<void>((resolve) => { markShellStarted = resolve; });
+    let markShellSettled = () => {};
+    const shellSettled = new Promise<void>((resolve) => { markShellSettled = resolve; });
+
+    setTerminalShellExecutor(async (_command, _session, _processes, options) => {
+      markShellStarted();
+      await shellGate;
+      try {
+        if (!options?.ownershipAdmission) throw new Error("test: missing terminal admission");
+        await writeFile(path, "stale terminal", options.ownershipAdmission);
+        return { stdout: "", stderr: "", exitCode: 0 };
+      } finally {
+        markShellSettled();
+      }
+    });
+    try {
+      const action = termExecTool.execute({ command: `echo stale > ${path}` });
+      await shellStarted;
+      useKernelStore.getState().setMachineOwnership("conflict");
+      abortInFlightAgentActions();
+      await expect(action).rejects.toThrow("machine ownership was lost to another tab");
+      useKernelStore.getState().setMachineOwnership("owned");
+      await writeFile(path, "new owner", "human");
+
+      releaseShell();
+      await shellSettled;
+      expect(await readFile(path)).toBe("new owner");
+    } finally {
+      setTerminalShellExecutor(executeShell);
+    }
   });
 
   test("term_read reports when backing scrollback discarded old lines", async () => {

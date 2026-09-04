@@ -20,6 +20,7 @@ import {
 import {
   assertMachineMutationAdmission,
   captureMachineMutationAdmission,
+  type MachineMutationAdmission,
 } from "./ownershipAdmission";
 
 export const SETTINGS_PATH = "~/.config/settings.json";
@@ -199,10 +200,12 @@ export async function loadSettings(
 export async function setSetting(
   key: unknown,
   value: unknown,
-  source: "agent" | "human",
+  source: "agent" | "human" | MachineMutationAdmission,
   storage: SettingsStorage | null | undefined = browserStorage(),
 ): Promise<WebMCPComputerSettings & { note?: string }> {
-  const admission = captureMachineMutationAdmission(source);
+  const admission = typeof source === "string"
+    ? captureMachineMutationAdmission(source)
+    : source;
   const [settingKey, validated] = validateSetting(key, value);
   return await enqueueSettings(async () => {
     const current = await ensureSettingsFile(storage);
@@ -221,6 +224,7 @@ export async function setSetting(
       }
     }
     await writeFile(SETTINGS_PATH, serialized(next), admission);
+    assertMachineMutationAdmission(admission);
     useKernelStore.getState().setSettings(next);
     return settingKey === "cloud_kernel"
       ? {

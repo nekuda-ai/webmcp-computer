@@ -16,6 +16,7 @@ import {
   writeFileBytes,
 } from "../kernel/fs";
 import { useKernelStore } from "../kernel/store";
+import { assertMachineMutationAdmission } from "../kernel/ownershipAdmission";
 import { runAgentAction } from "./agentAction";
 import { focusAppTarget } from "./appTarget";
 import { ACT_ANNOTATIONS, ASK_ANNOTATIONS, TRANSACT_ANNOTATIONS } from "./taxonomy";
@@ -189,16 +190,16 @@ export const fsWriteTool = defineTool<WriteInput>({
   annotations: ACT_ANNOTATIONS,
   intent: "act",
   execute({ path: rawPath, content: rawContent, encoding: rawEncoding }) {
-    return runAgentAction("fs_write", { path: rawPath }, async () => {
+    return runAgentAction("fs_write", { path: rawPath }, async (_signal, mutationAdmission) => {
       const path = normalizePath(requireString(rawPath, "path"));
       const content = requireString(rawContent, "content");
       const encoding = requireEncoding(rawEncoding);
       if (encoding === "base64") {
         const bytes = decodeBase64(content);
-        await writeFileBytes(path, bytes, "agent");
+        await writeFileBytes(path, bytes, mutationAdmission);
         return { written: true, path, bytes: bytes.byteLength };
       }
-      await writeFile(path, content, "agent");
+      await writeFile(path, content, mutationAdmission);
       return { written: true, path, bytes: new TextEncoder().encode(content).byteLength };
     });
   },
@@ -231,7 +232,7 @@ export const fsEditTool = defineTool<EditInput>({
   annotations: ACT_ANNOTATIONS,
   intent: "act",
   execute({ path: rawPath, old_string: rawOldString, new_string: rawNewString, replace_all }) {
-    return runAgentAction("fs_edit", { path: rawPath }, async () => {
+    return runAgentAction("fs_edit", { path: rawPath }, async (_signal, mutationAdmission) => {
       const path = normalizePath(requireString(rawPath, "path"));
       const oldString = requireString(rawOldString, "old_string");
       const newString = requireString(rawNewString, "new_string");
@@ -255,7 +256,7 @@ export const fsEditTool = defineTool<EditInput>({
         return replace_all
           ? current.split(oldString).join(newString)
           : current.replace(oldString, newString);
-      }, "agent");
+      }, mutationAdmission);
       return { path, replacements };
     });
   },
@@ -372,9 +373,9 @@ export const fsMkdirTool = defineTool<PathInput>({
   annotations: ACT_ANNOTATIONS,
   intent: "act",
   execute({ path: rawPath }) {
-    return runAgentAction("fs_mkdir", { path: rawPath }, async () => {
+    return runAgentAction("fs_mkdir", { path: rawPath }, async (_signal, mutationAdmission) => {
       const path = normalizePath(requireString(rawPath, "path"));
-      await mkdir(path, "agent");
+      await mkdir(path, mutationAdmission);
       return { created: true, path };
     });
   },
@@ -395,9 +396,9 @@ export const fsDeleteTool = defineTool<PathInput>({
   annotations: TRANSACT_ANNOTATIONS,
   intent: "transact",
   execute({ path: rawPath }) {
-    return runAgentAction("fs_delete", { path: rawPath }, async () => {
+    return runAgentAction("fs_delete", { path: rawPath }, async (_signal, mutationAdmission) => {
       const path = normalizePath(requireString(rawPath, "path"));
-      await rm(path, "agent");
+      await rm(path, mutationAdmission);
       return { deleted: true, path };
     });
   },
@@ -429,13 +430,13 @@ export const fsMoveTool = defineTool<MoveInput>({
       from: rawFrom,
       to: rawTo,
       ...(overwrite === undefined ? {} : { overwrite }),
-    }, async () => {
+    }, async (_signal, mutationAdmission) => {
       const from = normalizePath(requireString(rawFrom, "from"));
       const to = normalizePath(requireString(rawTo, "to"));
       if (overwrite !== undefined && typeof overwrite !== "boolean") {
         throw new Error("webmcp-computer: overwrite must be a boolean");
       }
-      await mv(from, to, "agent", overwrite ?? false);
+      await mv(from, to, mutationAdmission, overwrite ?? false);
       return { moved: true, from, to };
     });
   },
@@ -463,10 +464,11 @@ export const editorOpenFileTool = defineTool<AppPathInput>({
       path: rawPath,
       appId: "editor",
       ...(rawPid === undefined ? {} : { pid: rawPid }),
-    }, async () => {
+    }, async (_signal, mutationAdmission) => {
       const path = normalizePath(requireString(rawPath, "path"));
       const file = await stat(path);
       requireTextFile(path, file.kind, file.size);
+      assertMachineMutationAdmission(mutationAdmission);
       const process = focusAppTarget("editor", rawPid);
       useKernelStore.getState().setProcessPath(process.pid, path);
       return { pid: process.pid, appId: process.appId, path };
@@ -500,11 +502,13 @@ export const notesAppendTool = defineTool<NoteInput>({
       note: rawNote,
       appId: "notes",
       ...(rawPid === undefined ? {} : { pid: rawPid }),
-    }, async () => {
+    }, async (_signal, mutationAdmission) => {
       const path = notePath(rawNote);
       const text = requireString(rawText, "text");
+      assertMachineMutationAdmission(mutationAdmission);
       const process = focusAppTarget("notes", rawPid);
-      await updateFile(path, (current) => current + text, "agent", true);
+      await updateFile(path, (current) => current + text, mutationAdmission, true);
+      assertMachineMutationAdmission(mutationAdmission);
       useKernelStore.getState().setProcessPath(process.pid, path);
       return {
         appended: true,
@@ -538,8 +542,9 @@ export const notesPreviewTool = defineTool<NotesPreviewInput>({
       enabled,
       appId: "notes",
       ...(rawPid === undefined ? {} : { pid: rawPid }),
-    }, () => {
+    }, (_signal, mutationAdmission) => {
       if (typeof enabled !== "boolean") throw new Error("webmcp-computer: enabled must be a boolean");
+      assertMachineMutationAdmission(mutationAdmission);
       const process = focusAppTarget("notes", rawPid);
       useKernelStore.getState().setNotesPreviewEnabled(process.pid, enabled);
       return { enabled, pid: process.pid };
@@ -571,12 +576,13 @@ export const notesStickTool = defineTool<NotesStickInput>({
   annotations: ACT_ANNOTATIONS,
   intent: "act",
   execute({ title_or_index: titleOrIndex, sticky }) {
-    return runAgentAction("notes_stick", { title_or_index: titleOrIndex, sticky, appId: "notes" }, async () => {
+    return runAgentAction("notes_stick", { title_or_index: titleOrIndex, sticky, appId: "notes" }, async (_signal, mutationAdmission) => {
       if (typeof sticky !== "boolean") throw new Error("webmcp-computer: sticky must be a boolean");
       if (typeof titleOrIndex !== "string" && typeof titleOrIndex !== "number") {
         throw new Error("webmcp-computer: title_or_index must be a string or integer");
       }
       const path = await resolveNotePath(titleOrIndex);
+      assertMachineMutationAdmission(mutationAdmission);
       const process = focusAppTarget("notes");
       useKernelStore.getState().setProcessPath(process.pid, path);
       const note = useKernelStore.getState().setNoteSticky(path, sticky);
@@ -612,10 +618,11 @@ export const filesRevealTool = defineTool<AppPathInput>({
       path: rawPath,
       appId: "files",
       ...(rawPid === undefined ? {} : { pid: rawPid }),
-    }, async () => {
+    }, async (_signal, mutationAdmission) => {
       const path = normalizePath(requireString(rawPath, "path"));
       const target = await stat(path);
       const directory = target.kind === "directory" ? path : parentPath(path);
+      assertMachineMutationAdmission(mutationAdmission);
       const process = focusAppTarget("files", rawPid);
       useKernelStore.getState().setProcessPath(process.pid, directory);
       return { pid: process.pid, path, directory };
