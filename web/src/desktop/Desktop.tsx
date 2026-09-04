@@ -2,10 +2,11 @@ import { useEffect, useRef, useSyncExternalStore } from "react";
 import { getApp } from "../apps/registry";
 import { createFile, joinPath, ls, mkdir } from "../kernel/fs";
 import {
-  machineConflictReason,
-  subscribeMachineConflictReason,
+  machineOwnershipReason,
+  subscribeMachineOwnershipReason,
   takeOverMachine,
 } from "../kernel/machineLock";
+import { machineInteractionBlocked, type MachineOwnership } from "../kernel/machineOwnership";
 import { useKernelStore } from "../kernel/store";
 import type { ProcessRecord } from "../kernel/types";
 import { errorMessage } from "../shared";
@@ -67,13 +68,30 @@ export function DesktopWindows({
   ));
 }
 
+export function machineSurfaceState(ownership: MachineOwnership): {
+  blocked: boolean;
+  showOwnershipNotice: boolean;
+  showTakeOver: boolean;
+} {
+  return {
+    blocked: machineInteractionBlocked(ownership),
+    showOwnershipNotice: ownership !== "owned",
+    showTakeOver: ownership === "conflict",
+  };
+}
+
 export function Desktop() {
   const processes = useKernelStore((state) => state.processes);
   const minimizedPids = useKernelStore((state) => state.minimizedPids);
   const fileSystemWarnings = useKernelStore((state) => state.fileSystemWarnings);
   const fileSystemStatus = useKernelStore((state) => state.fileSystemStatus);
-  const machineConflict = useKernelStore((state) => state.machineConflict);
-  const conflictReason = useSyncExternalStore(subscribeMachineConflictReason, machineConflictReason);
+  const machineOwnership = useKernelStore((state) => state.machineOwnership);
+  const ownershipReason = useSyncExternalStore(
+    subscribeMachineOwnershipReason,
+    machineOwnershipReason,
+    machineOwnershipReason,
+  );
+  const { blocked, showOwnershipNotice, showTakeOver } = machineSurfaceState(machineOwnership);
   const clampWindows = useKernelStore((state) => state.clampWindows);
   const interactiveRef = useRef<HTMLDivElement>(null);
 
@@ -85,11 +103,11 @@ export function Desktop() {
   }, [clampWindows]);
 
   useEffect(() => {
-    if (interactiveRef.current) interactiveRef.current.inert = machineConflict;
-    if (machineConflict && document.activeElement instanceof HTMLElement) {
+    if (interactiveRef.current) interactiveRef.current.inert = blocked;
+    if (blocked && document.activeElement instanceof HTMLElement) {
       document.activeElement.blur();
     }
-  }, [machineConflict]);
+  }, [blocked]);
 
   return (
     <main className="desktop">
@@ -97,40 +115,49 @@ export function Desktop() {
       <div className="desktop__stars" aria-hidden="true" />
       <div className="desktop__mist" aria-hidden="true" />
       <div className="desktop__grain" aria-hidden="true" />
-      {machineConflict ? <div className="machine-blocker" aria-hidden="true" /> : null}
-      {!machineConflict && fileSystemWarnings.length === 0 ? null : (
+      {blocked ? <div className="machine-blocker" aria-hidden="true" /> : null}
+      {!showOwnershipNotice && fileSystemWarnings.length === 0 ? null : (
         <div
           className={`machine-banner mono${fileSystemWarnings.length > 0 ? " machine-banner--error" : ""}`}
           data-analytics-block=""
           role={fileSystemWarnings.length > 0 ? "alert" : "status"}
         >
-          {machineConflict ? (
+          {showOwnershipNotice ? (
             <>
-              {conflictReason}
-              {" · "}
-              <VerbHint verb="machine_take_over">
-                <button
-                  type="button"
-                  className="machine-banner__action mono"
-                  onClick={() => {
-                    const state = useKernelStore.getState();
-                    const event = state.osEvent("human", "machine_take_over");
-                    void takeOverMachine().then(
-                      () => state.settleEvent(event, true),
-                      (error: unknown) => state.settleEvent(event, false, errorMessage(error)),
-                    );
-                  }}
-                >
-                  Take over
-                </button>
-              </VerbHint>
+              {ownershipReason}
+              {showTakeOver ? (
+                <>
+                  {" · "}
+                  <VerbHint verb="machine_take_over">
+                    <button
+                      type="button"
+                      className="machine-banner__action mono"
+                      onClick={() => {
+                        const state = useKernelStore.getState();
+                        const event = state.osEvent("human", "machine_take_over");
+                        void takeOverMachine().then(
+                          () => state.settleEvent(event, true),
+                          (error: unknown) => state.settleEvent(event, false, errorMessage(error)),
+                        );
+                      }}
+                    >
+                      Take over
+                    </button>
+                  </VerbHint>
+                </>
+              ) : null}
             </>
           ) : null}
-          {machineConflict && fileSystemWarnings.length > 0 ? " · " : null}
+          {showOwnershipNotice && fileSystemWarnings.length > 0 ? " · " : null}
           {fileSystemWarnings.length > 0 ? `FILESYSTEM: ${fileSystemWarnings.join(" · ")}` : null}
         </div>
       )}
-      <div ref={interactiveRef} className="desktop__interactive" aria-hidden={machineConflict || undefined}>
+      <div
+        ref={interactiveRef}
+        className="desktop__interactive"
+        {...(blocked ? { inert: "" } : {})}
+        aria-hidden={blocked || undefined}
+      >
         <MenuBar />
         <section
           className="desktop__workarea"

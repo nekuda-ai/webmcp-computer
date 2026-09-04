@@ -1,5 +1,6 @@
 import { abortInFlightAgentActions } from "./agentActionLifecycle";
 import { useKernelStore } from "./store";
+import type { MachineOwnership } from "./machineOwnership";
 
 export const MACHINE_LOCK = "webmcp-computer-machine";
 export const MACHINE_LOCK_CONFLICT_GRACE_MS = 500;
@@ -13,29 +14,33 @@ type MachinePeerDetector = {
 
 export const MACHINE_CONFLICT_REASON = "machine already running in another tab";
 export const MACHINE_TAKEN_OVER_REASON = "machine taken over by another tab";
+export const MACHINE_PENDING_REASON = "acquiring exclusive machine control";
+export const MACHINE_UNAVAILABLE_REASON = "machine ownership unavailable; reload to retry";
+export const MACHINE_UNSUPPORTED_REASON =
+  "multi-tab protection unavailable; use only one tab (Browser heartbeat disabled)";
 
 let started = false;
 let releaseOwner: (() => void) | undefined;
 let takeOver: (() => Promise<boolean>) | undefined;
-let conflictReason = MACHINE_CONFLICT_REASON;
+let ownershipReason = MACHINE_PENDING_REASON;
 const reasonListeners = new Set<() => void>();
 
-function setConflict(conflict: boolean, reason = MACHINE_CONFLICT_REASON): void {
-  const wasConflict = useKernelStore.getState().machineConflict;
-  if (conflict && !wasConflict) abortInFlightAgentActions();
-  if (conflictReason !== reason) {
-    conflictReason = reason;
+function setOwnership(ownership: MachineOwnership, reason?: string): void {
+  const previous = useKernelStore.getState().machineOwnership;
+  if (previous === "owned" && ownership !== "owned") abortInFlightAgentActions();
+  if (reason !== undefined && ownershipReason !== reason) {
+    ownershipReason = reason;
     for (const listener of reasonListeners) listener();
   }
-  useKernelStore.getState().setMachineConflict(conflict);
+  useKernelStore.getState().setMachineOwnership(ownership);
 }
 
-/** Why this tab is blocked; pairs with `machineConflict` in the kernel store. */
-export function machineConflictReason(): string {
-  return conflictReason;
+/** Why ownership is pending, degraded, unavailable, or held by another tab. */
+export function machineOwnershipReason(): string {
+  return ownershipReason;
 }
 
-export function subscribeMachineConflictReason(listener: () => void): () => void {
+export function subscribeMachineOwnershipReason(listener: () => void): () => void {
   reasonListeners.add(listener);
   return () => reasonListeners.delete(listener);
 }
@@ -49,7 +54,7 @@ function isAbort(error: unknown): boolean {
  * with AbortError and it moves to the blocked state; this tab becomes the owner.
  */
 export async function takeOverMachine(): Promise<boolean> {
-  if (!useKernelStore.getState().machineConflict) return false;
+  if (useKernelStore.getState().machineOwnership !== "conflict") return false;
   if (!takeOver) throw new Error("webmcp-computer: machine take over is unavailable in this browser");
   return await takeOver();
 }
@@ -105,11 +110,17 @@ function peerDetector(): MachinePeerDetector | undefined {
 }
 
 export function startMachineOwnership(
-  locks: LockManager | undefined = lockManager(),
+  locks: LockManager | null | undefined = lockManager(),
   injectedPeerDetector?: MachinePeerDetector,
 ): void {
-  if (started || !locks) return;
+  if (started) return;
   started = true;
+  setOwnership("pending", MACHINE_PENDING_REASON);
+  if (!locks) {
+    setOwnership("unsupported", MACHINE_UNSUPPORTED_REASON);
+    console.warn("WebMCP Computer requires Web Locks for strict multi-tab ownership");
+    return;
+  }
   const peers = injectedPeerDetector ?? peerDetector();
 
   let release = () => {};
@@ -124,12 +135,12 @@ export function startMachineOwnership(
 
   // A granted request that later rejects means another tab stole the lock.
   const holdLock = async () => {
-    setConflict(false);
+    setOwnership("owned");
     await hold;
   };
   const stolen = (error: unknown): boolean => {
     if (!isAbort(error)) return false;
-    setConflict(true, MACHINE_TAKEN_OVER_REASON);
+    setOwnership("conflict", MACHINE_TAKEN_OVER_REASON);
     return true;
   };
 
@@ -146,13 +157,15 @@ export function startMachineOwnership(
       },
     ).catch((error: unknown) => {
       if (owned && stolen(error)) return;
+      if (owned) setOwnership("unavailable", MACHINE_UNAVAILABLE_REASON);
       resolve("unavailable");
       console.warn("WebMCP Computer machine lock unavailable", error);
     });
   });
 
   takeOver = async () => {
-    if (!useKernelStore.getState().machineConflict) return false;
+    if (useKernelStore.getState().machineOwnership !== "conflict") return false;
+    setOwnership("pending", MACHINE_PENDING_REASON);
     let granted = false;
     let resolveAcquired: (value: boolean) => void = () => {};
     let rejectAcquired: (error: unknown) => void = () => {};
@@ -162,15 +175,17 @@ export function startMachineOwnership(
     });
     void locks.request(MACHINE_LOCK, { mode: "exclusive", steal: true }, async (lock) => {
       if (lock === null) {
+        setOwnership("conflict", MACHINE_CONFLICT_REASON);
         resolveAcquired(false);
         return;
       }
       granted = true;
-      setConflict(false);
+      setOwnership("owned");
       resolveAcquired(true);
       await hold;
     }).catch((error: unknown) => {
       if (granted && stolen(error)) return;
+      setOwnership("conflict", MACHINE_CONFLICT_REASON);
       const detail = error instanceof Error ? error.message : String(error);
       rejectAcquired(new Error(`webmcp-computer: machine take over failed: ${detail}`));
     });
@@ -178,13 +193,17 @@ export function startMachineOwnership(
   };
 
   void availability.then((status) => {
+    if (status === "unavailable") {
+      setOwnership("unavailable", MACHINE_UNAVAILABLE_REASON);
+      return;
+    }
     if (status !== "contended") return;
     let waitingForLock = true;
     const peerConfirmation = peers?.findPeer() ?? new Promise<boolean>((resolve) => {
       setTimeout(() => resolve(true), MACHINE_LOCK_CONFLICT_GRACE_MS);
     });
     void peerConfirmation.then((found) => {
-      if (found && waitingForLock) setConflict(true);
+      if (found && waitingForLock) setOwnership("conflict", MACHINE_CONFLICT_REASON);
     }).catch((error: unknown) => {
       console.warn("WebMCP Computer machine peer check unavailable", error);
     });
@@ -196,7 +215,7 @@ export function startMachineOwnership(
     }).catch((error: unknown) => {
       waitingForLock = false;
       if (granted && stolen(error)) return;
-      setConflict(false);
+      setOwnership("unavailable", MACHINE_UNAVAILABLE_REASON);
       console.warn("WebMCP Computer machine lock wait failed", error);
     });
   });
@@ -208,7 +227,7 @@ export function resetMachineOwnershipForTests(): void {
   releaseOwner?.();
   releaseOwner = undefined;
   takeOver = undefined;
-  conflictReason = MACHINE_CONFLICT_REASON;
+  ownershipReason = MACHINE_PENDING_REASON;
   reasonListeners.clear();
   started = false;
 }

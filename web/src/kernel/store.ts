@@ -22,6 +22,7 @@ import {
 } from "./windowGeometry";
 import type { SessionSnapshot } from "./sessionSnapshot";
 import { clampStickyPosition, defaultStickyPosition } from "./stickyNotes";
+import type { MachineOwnership } from "./machineOwnership";
 
 export const MAX_OS_EVENTS = 2_000;
 
@@ -51,7 +52,7 @@ type KernelData = {
   lastActivityAt: number;
   /** Trusted human interaction only; paid-resource presence must use this timestamp. */
   lastHumanActivityAt: number;
-  machineConflict: boolean;
+  machineOwnership: MachineOwnership;
 };
 
 type KernelActions = {
@@ -93,7 +94,7 @@ type KernelActions = {
   recordActivity: () => void;
   recordHumanActivity: () => void;
   activateScreensaver: () => void;
-  setMachineConflict: (conflict: boolean) => void;
+  setMachineOwnership: (ownership: MachineOwnership) => void;
   restoreSession: (snapshot: SessionSnapshot) => void;
 };
 
@@ -123,7 +124,7 @@ const createInitialData = (): KernelData => ({
   toolRegistryGroups: [],
   lastActivityAt: Date.now(),
   lastHumanActivityAt: 0,
-  machineConflict: false,
+  machineOwnership: "pending",
 });
 
 const APP_SIZES: Record<AppId, Pick<WindowRect, "width" | "height">> = {
@@ -588,8 +589,8 @@ export const useKernelStore = create<KernelState>()((set, get) => ({
     set({ screensaverActive: true });
   },
 
-  setMachineConflict(conflict) {
-    set({ machineConflict: conflict });
+  setMachineOwnership(ownership) {
+    set({ machineOwnership: ownership });
   },
 
   restoreSession(snapshot) {
@@ -712,7 +713,9 @@ export function resetKernelStore(): void {
   for (const controller of commandControllers.values()) controller.abort();
   commandControllers.clear();
   appliedSessionSnapshots.clear();
-  useKernelStore.setState(createInitialData());
+  // Unit tests historically start from an admitted machine; ownership tests call
+  // startMachineOwnership(), which synchronously returns this to pending.
+  useKernelStore.setState({ ...createInitialData(), machineOwnership: "owned" });
 }
 
 export function latestAgentEvent(events: readonly OSEvent[]): OSEvent | undefined {

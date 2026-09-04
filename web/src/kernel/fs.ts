@@ -121,6 +121,9 @@ export const LEGACY_AGENT_SKILL_SHA256: ReadonlySet<string> = new Set([
   "f61a81f66b7e41285cc652a120c59961325ebceb771c3edc6207bc7c28703ad2",
   "fdbc019861e6129beaa15c5a52d1411e50f47ffd33174d809fbd5f9573c05cd9",
   "ffb37ad856c26cebf506fb26911933f33a90dcc36b53795e357c9e12063c4d67",
+  "1ac6b36339bf88ba2fffd3ecd8e0be0ab4e0c59b78b163b53487137ecc92e857",
+  "bd81b91abd1039d42a9e6ae95287b5ced0ac26b873c275b92018a8082950d9f8",
+  "671c006d533b9bd0c9f2524f3f719bb3d47382ef74c39ea8b27e5b3eb1e9160e",
 ]);
 
 export type FileKind = "file" | "directory";

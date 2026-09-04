@@ -2,6 +2,10 @@ import {
   beginOwnedAgentAction,
   MACHINE_OWNERSHIP_LOST_ERROR,
 } from "../kernel/agentActionLifecycle";
+import {
+  machineAdmissionError,
+  machineInteractionBlocked,
+} from "../kernel/machineOwnership";
 import { useKernelStore } from "../kernel/store";
 
 export {
@@ -32,8 +36,9 @@ export async function runAgentAction<T>(
   },
 ): Promise<T> {
   const state = useKernelStore.getState();
-  if (state.machineConflict && !options?.allowWhileBlocked) {
-    throw new Error("webmcp-computer: machine is active in another tab; select Take over here to continue");
+  const ownershipAcquisition = options?.allowWhileBlocked === true && verb === "machine_take_over";
+  if (machineInteractionBlocked(state.machineOwnership) && !ownershipAcquisition) {
+    throw new Error(machineAdmissionError(state.machineOwnership));
   }
 
   const actionLifecycle = beginOwnedAgentAction();
@@ -51,7 +56,8 @@ export async function runAgentAction<T>(
       aborted,
     ]);
     throwIfAborted(controller.signal);
-    if (useKernelStore.getState().machineConflict && !options?.allowWhileBlocked) {
+    const currentOwnership = useKernelStore.getState().machineOwnership;
+    if (machineInteractionBlocked(currentOwnership) && !ownershipAcquisition) {
       throw ownershipError();
     }
     if (options?.resultArgs) {

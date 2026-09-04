@@ -31,9 +31,11 @@ the Browser window is open and disappear when it closes.
 
 Each machine gets at most 2 hours of remote Chrome time per 24-hour budget window.
 WebMCP Computer sends a heartbeat every 60 seconds only after recent trusted human input,
-either in the local OS or in the remote page, while the owning tab remains visible and
-focused. Agent tools may wake the screensaver but never refresh either human-presence
-signal. The Browser Session Worker owns the lease and deletes Chrome after 5 minutes
+either in the local OS or in the remote page, while the visible, focused tab holds the
+confirmed exclusive machine Web Lock. Initial lock acquisition, confirmed conflict, lock
+failure, and the explicit no-Web-Locks degraded mode are heartbeat-ineligible. Agent tools
+may wake the screensaver but never refresh either human-presence signal. The Browser Session
+Worker owns the lease and deletes Chrome after 5 minutes
 without a heartbeat; Browser Run's 10-minute inactivity timeout is the final backstop.
 Opening Browser again starts a new Chrome at the last remembered http(s) origin/path; URL
 credentials, query, and fragment are deliberately discarded.

@@ -1,14 +1,19 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import {
   MACHINE_CONFLICT_REASON,
   MACHINE_LOCK,
+  MACHINE_PENDING_REASON,
   MACHINE_TAKEN_OVER_REASON,
-  machineConflictReason,
+  machineOwnershipReason,
   resetMachineOwnershipForTests,
   startMachineOwnership,
-  subscribeMachineConflictReason,
+  subscribeMachineOwnershipReason,
   takeOverMachine,
 } from "./machineLock";
+import { isHumanActivityContext } from "./activity";
+import { resetKernelStore, useKernelStore } from "./store";
+import { runAgentAction } from "../tools/agentAction";
+import { machineTakeOverTool } from "../tools/systemTools";
 
 function abortError(): Error {
   const error = new Error("Lock broken by another request with the 'steal' option.");
@@ -17,11 +22,8 @@ function abortError(): Error {
 }
 
 async function settle(): Promise<void> {
-  for (let i = 0; i < 4; i += 1) await Promise.resolve();
+  for (let i = 0; i < 6; i += 1) await Promise.resolve();
 }
-import { resetKernelStore, useKernelStore } from "./store";
-import { runAgentAction } from "../tools/agentAction";
-import { machineTakeOverTool } from "../tools/systemTools";
 
 describe("WebMCP Computer machine ownership", () => {
   beforeEach(() => {
@@ -31,7 +33,26 @@ describe("WebMCP Computer machine ownership", () => {
 
   afterEach(() => resetMachineOwnershipForTests());
 
-  test("marks a second tab while another tab holds the machine lock", async () => {
+  test("has zero admission window while the initial lock request is pending", async () => {
+    const locks = {
+      async request<T>(): Promise<T> {
+        return await new Promise<T>(() => {});
+      },
+    } as unknown as LockManager;
+
+    startMachineOwnership(locks, { findPeer: async () => false, close() {} });
+
+    expect(useKernelStore.getState().machineOwnership).toBe("pending");
+    expect(machineOwnershipReason()).toBe(MACHINE_PENDING_REASON);
+    expect(isHumanActivityContext({ visibility: "visible", focused: true })).toBe(false);
+    let called = false;
+    await expect(runAgentAction("fs_write", { path: "~/note" }, () => {
+      called = true;
+    })).rejects.toThrow("machine ownership is still being acquired");
+    expect(called).toBe(false);
+  });
+
+  test("marks a second tab only after a peer confirms the contended lock", async () => {
     const requests: { name: string; options: LockOptions }[] = [];
     const locks = {
       async request<T>(name: string, options: LockOptions, callback: LockGrantedCallback<T>): Promise<T> {
@@ -42,17 +63,17 @@ describe("WebMCP Computer machine ownership", () => {
     } as unknown as LockManager;
 
     startMachineOwnership(locks, { findPeer: async () => true, close() {} });
-    await Promise.resolve();
-    await Promise.resolve();
+    await settle();
 
-    expect(useKernelStore.getState().machineConflict).toBe(true);
+    expect(useKernelStore.getState().machineOwnership).toBe("conflict");
     expect(requests).toEqual([
       { name: MACHINE_LOCK, options: { ifAvailable: true, mode: "exclusive" } },
       { name: MACHINE_LOCK, options: { mode: "exclusive" } },
     ]);
   });
 
-  test("does not report another tab when the lock API is unavailable", async () => {
+  test("fails closed when a Web Locks request errors", async () => {
+    const warning = spyOn(console, "warn").mockImplementation(() => undefined);
     const requests: { name: string; options: LockOptions }[] = [];
     const locks = {
       async request<T>(name: string, options: LockOptions): Promise<T> {
@@ -61,22 +82,30 @@ describe("WebMCP Computer machine ownership", () => {
       },
     } as unknown as LockManager;
 
-    startMachineOwnership(locks, { findPeer: async () => false, close() {} });
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
+    try {
+      startMachineOwnership(locks, { findPeer: async () => false, close() {} });
+      await settle();
 
-    expect(useKernelStore.getState().machineConflict).toBe(false);
-    expect(requests).toEqual([
-      { name: MACHINE_LOCK, options: { ifAvailable: true, mode: "exclusive" } },
-    ]);
+      expect(useKernelStore.getState().machineOwnership).toBe("unavailable");
+      expect(requests).toEqual([
+        { name: MACHINE_LOCK, options: { ifAvailable: true, mode: "exclusive" } },
+      ]);
+    } finally {
+      warning.mockRestore();
+    }
   });
 
-  test("does not flash another-tab conflict while a reloading page releases the lock", async () => {
-    const conflictStates: boolean[] = [];
-    const unsubscribe = useKernelStore.subscribe((state, previous) => {
-      if (state.machineConflict !== previous.machineConflict) conflictStates.push(state.machineConflict);
+  test("does not flash confirmed conflict while a reloading page releases the lock", async () => {
+    const ownershipStates: string[] = [];
+    const ownershipReasons: string[] = [];
+    const unsubscribeReason = subscribeMachineOwnershipReason(() => {
+      ownershipReasons.push(machineOwnershipReason());
     });
+    const unsubscribe = useKernelStore.subscribe((state, previous) => {
+      if (state.machineOwnership !== previous.machineOwnership) ownershipStates.push(state.machineOwnership);
+    });
+    let confirmPeer: (found: boolean) => void = () => {};
+    const peerConfirmation = new Promise<boolean>((resolve) => { confirmPeer = resolve; });
     const locks = {
       async request<T>(name: string, options: LockOptions, callback: LockGrantedCallback<T>): Promise<T> {
         if (options.ifAvailable) return await callback(null);
@@ -84,40 +113,61 @@ describe("WebMCP Computer machine ownership", () => {
       },
     } as unknown as LockManager;
 
-    startMachineOwnership(locks, { findPeer: async () => false, close() {} });
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
+    startMachineOwnership(locks, { findPeer: () => peerConfirmation, close() {} });
+    await settle();
+    confirmPeer(true);
+    await settle();
     unsubscribe();
+    unsubscribeReason();
 
-    expect(conflictStates).not.toContain(true);
-    expect(useKernelStore.getState().machineConflict).toBe(false);
+    expect(ownershipStates).not.toContain("conflict");
+    expect(ownershipReasons).not.toContain(MACHINE_CONFLICT_REASON);
+    expect(useKernelStore.getState().machineOwnership).toBe("owned");
   });
 
-  test("take over steals the lock and clears the conflict in the blocked tab", async () => {
-    const requests: LockOptions[] = [];
+  test("successful initial acquisition clears pending and enables heartbeat eligibility", async () => {
     const locks = {
-      async request<T>(_name: string, options: LockOptions, callback: LockGrantedCallback<T>): Promise<T> {
+      async request<T>(name: string, _options: LockOptions, callback: LockGrantedCallback<T>): Promise<T> {
+        return await callback({ name, mode: "exclusive" } as Lock);
+      },
+    } as unknown as LockManager;
+
+    startMachineOwnership(locks, { findPeer: async () => false, close() {} });
+    await settle();
+
+    expect(useKernelStore.getState().machineOwnership).toBe("owned");
+    expect(isHumanActivityContext({ visibility: "visible", focused: true })).toBe(true);
+  });
+
+  test("take over stays pending until steal acquisition and then clears blocking", async () => {
+    const requests: LockOptions[] = [];
+    let grantSteal: () => void = () => {};
+    const locks = {
+      async request<T>(name: string, options: LockOptions, callback: LockGrantedCallback<T>): Promise<T> {
         requests.push(options);
         if (options.ifAvailable) return await callback(null);
-        if (options.steal) return await callback({ name: MACHINE_LOCK, mode: "exclusive" } as Lock);
+        if (options.steal) {
+          grantSteal = () => { void callback({ name, mode: "exclusive" } as Lock); };
+        }
         return await new Promise<T>(() => {});
       },
     } as unknown as LockManager;
 
     startMachineOwnership(locks, { findPeer: async () => true, close() {} });
     await settle();
-    expect(useKernelStore.getState().machineConflict).toBe(true);
-    expect(machineConflictReason()).toBe(MACHINE_CONFLICT_REASON);
+    expect(useKernelStore.getState().machineOwnership).toBe("conflict");
+    expect(machineOwnershipReason()).toBe(MACHINE_CONFLICT_REASON);
 
-    void takeOverMachine();
-    await settle();
+    const takeover = takeOverMachine();
+    expect(useKernelStore.getState().machineOwnership).toBe("pending");
+    grantSteal();
+    await expect(takeover).resolves.toBe(true);
 
     expect(requests.at(-1)).toEqual({ mode: "exclusive", steal: true });
-    expect(useKernelStore.getState().machineConflict).toBe(false);
+    expect(useKernelStore.getState().machineOwnership).toBe("owned");
   });
 
-  test("machine_take_over is transact-class and can acquire ownership while blocked", async () => {
+  test("machine_take_over is transact-class and the only blocked acquisition action", async () => {
     const locks = {
       async request<T>(name: string, options: LockOptions, callback: LockGrantedCallback<T>): Promise<T> {
         if (options.ifAvailable) return await callback(null);
@@ -131,7 +181,7 @@ describe("WebMCP Computer machine ownership", () => {
     expect(machineTakeOverTool.intent).toBe("transact");
     expect(machineTakeOverTool.annotations?.consequentialHint).toBe(true);
     await expect(machineTakeOverTool.execute({})).resolves.toEqual({ taken_over: true });
-    expect(useKernelStore.getState().machineConflict).toBe(false);
+    expect(useKernelStore.getState().machineOwnership).toBe("owned");
     expect(useKernelStore.getState().events.at(-1)).toEqual(expect.objectContaining({
       verb: "machine_take_over",
       ok: true,
@@ -165,19 +215,19 @@ describe("WebMCP Computer machine ownership", () => {
         });
       },
     } as unknown as LockManager;
-    const reasons: string[] = [];
-    const unsubscribe = subscribeMachineConflictReason(() => reasons.push(machineConflictReason()));
 
     startMachineOwnership(locks, { findPeer: async () => false, close() {} });
     await settle();
-    expect(useKernelStore.getState().machineConflict).toBe(false);
+    expect(useKernelStore.getState().machineOwnership).toBe("owned");
+    const reasons: string[] = [];
+    const unsubscribe = subscribeMachineOwnershipReason(() => reasons.push(machineOwnershipReason()));
 
     breakLock(abortError());
     await settle();
     unsubscribe();
 
-    expect(useKernelStore.getState().machineConflict).toBe(true);
-    expect(machineConflictReason()).toBe(MACHINE_TAKEN_OVER_REASON);
+    expect(useKernelStore.getState().machineOwnership).toBe("conflict");
+    expect(machineOwnershipReason()).toBe(MACHINE_TAKEN_OVER_REASON);
     expect(reasons).toEqual([MACHINE_TAKEN_OVER_REASON]);
   });
 
@@ -224,15 +274,15 @@ describe("WebMCP Computer machine ownership", () => {
     await settle();
     void takeOverMachine();
     await settle();
-    expect(useKernelStore.getState().machineConflict).toBe(false);
+    expect(useKernelStore.getState().machineOwnership).toBe("owned");
 
     breakSteal(abortError());
     await settle();
-    expect(useKernelStore.getState().machineConflict).toBe(true);
-    expect(machineConflictReason()).toBe(MACHINE_TAKEN_OVER_REASON);
+    expect(useKernelStore.getState().machineOwnership).toBe("conflict");
+    expect(machineOwnershipReason()).toBe(MACHINE_TAKEN_OVER_REASON);
   });
 
-  test("ignores a stale lock holder that does not answer the tab-presence probe", async () => {
+  test("remains pending when an unconfirmed stale holder still owns the lock", async () => {
     const locks = {
       async request<T>(_name: string, options: LockOptions, callback: LockGrantedCallback<T>): Promise<T> {
         if (options.ifAvailable) return await callback(null);
@@ -241,10 +291,23 @@ describe("WebMCP Computer machine ownership", () => {
     } as unknown as LockManager;
 
     startMachineOwnership(locks, { findPeer: async () => false, close() {} });
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
+    await settle();
 
-    expect(useKernelStore.getState().machineConflict).toBe(false);
+    expect(useKernelStore.getState().machineOwnership).toBe("pending");
+  });
+
+  test("uses an honest degraded single-tab mode when Web Locks are unsupported", async () => {
+    const warning = spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      startMachineOwnership(null);
+
+      expect(useKernelStore.getState().machineOwnership).toBe("unsupported");
+      await expect(runAgentAction("sys_status", {}, () => ({ ok: true }))).resolves.toEqual({ ok: true });
+      expect(isHumanActivityContext({ visibility: "visible", focused: true })).toBe(false);
+      await expect(takeOverMachine()).resolves.toBe(false);
+      expect(warning).toHaveBeenCalled();
+    } finally {
+      warning.mockRestore();
+    }
   });
 });

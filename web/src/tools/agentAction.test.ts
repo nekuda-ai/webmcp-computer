@@ -6,11 +6,20 @@ describe("runAgentAction machine ownership", () => {
   beforeEach(() => resetKernelStore());
 
   test("refuses agent work while another tab owns the machine", async () => {
-    useKernelStore.setState({ machineConflict: true });
+    useKernelStore.setState({ machineOwnership: "conflict" });
     let called = false;
     await expect(runAgentAction("fs_write", { path: "~/note" }, () => {
       called = true;
     })).rejects.toThrow("machine is active in another tab; select Take over here to continue");
+    expect(called).toBe(false);
+  });
+
+  test("does not let ordinary verbs opt into the takeover-only exception", async () => {
+    useKernelStore.setState({ machineOwnership: "pending" });
+    let called = false;
+    await expect(runAgentAction("fs_write", { path: "~/note" }, () => {
+      called = true;
+    }, { allowWhileBlocked: true })).rejects.toThrow("machine ownership is still being acquired");
     expect(called).toBe(false);
   });
 

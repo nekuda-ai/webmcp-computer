@@ -24,11 +24,11 @@ export const AGENT_SKILL_FILES = {
 export const AGENT_SKILL_SHA256 = {
   "README.md": "f928e73abfc9913c2f4c05cbbd4c5171fe7c10902cda0676087de5dfc901f9c2",
   "apps.md": "37f3bebef6421e2bfb6a86bc218c10b1006116103c117ae46ce1def0597a63ea",
-  "browser.md": "1ac6b36339bf88ba2fffd3ecd8e0be0ab4e0c59b78b163b53487137ecc92e857",
+  "browser.md": "89dfece5fbd031babfefbd8d1e4858dcbf49b154acd95c9b118aeaf769f6da1c",
   "cloud.md": "9929d73763a6f297f1799efba8b0dd9d906970364ab85c71bc9fc78ba28aaa1d",
-  "conventions.md": "bd81b91abd1039d42a9e6ae95287b5ced0ac26b873c275b92018a8082950d9f8",
+  "conventions.md": "2cc23e3df80db8e22afcd2b751ae94dd7b7f409477c3eff88e10fd2eb259fcfe",
   "filesystem.md": "081d2e4655d8b70a51611bd49f6cf629936d27a986dcc7e30299acf1f70e2113",
   "preview.md": "91744db371a3aa17d1763d708b1e1f63f3d3e5306100fc64cbeb9bcb03cc45b4",
   "terminal.md": "c9cd83702f234905cb32b3f53d434850cfeff470e2b528252022a5628e144149",
-  "windows.md": "671c006d533b9bd0c9f2524f3f719bb3d47382ef74c39ea8b27e5b3eb1e9160e",
+  "windows.md": "97981e174406b7350f242ac59f31ce10dff0eb98135f9b92ada2f7db8dc86a7f",
 } as const;

@@ -7,6 +7,7 @@ import {
   isLimitErrorCode,
   type LimitError,
 } from "../../../shared/session-limits";
+import { machineHeartbeatEligible } from "./machineOwnership";
 import { useKernelStore } from "./store";
 
 export type HumanActivityContextOptions = {
@@ -35,7 +36,8 @@ export function isHumanActivityContext(
 ): boolean {
   const visibility = options.visibility ?? documentVisibility();
   const focused = options.focused ?? documentFocused();
-  return visibility === "visible" && focused && !useKernelStore.getState().machineConflict;
+  return visibility === "visible" && focused &&
+    machineHeartbeatEligible(useKernelStore.getState().machineOwnership);
 }
 
 /**
@@ -77,7 +79,7 @@ export function subscribeHumanActivity(listener: () => void): () => void {
   const unsubscribeStore = useKernelStore.subscribe((state, previous) => {
     if (
       state.lastHumanActivityAt !== previous.lastHumanActivityAt ||
-      state.machineConflict !== previous.machineConflict
+      state.machineOwnership !== previous.machineOwnership
     ) {
       listener();
     }

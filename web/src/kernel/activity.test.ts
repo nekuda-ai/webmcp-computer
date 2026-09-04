@@ -28,9 +28,11 @@ describe("isHumanActive", () => {
     expect(isHumanActive({ now: 1_000_000, visibility: "hidden", focused: true })).toBe(false);
     expect(isHumanActivityContext({ visibility: "visible", focused: false })).toBe(false);
     expect(isHumanActive({ now: 1_000_000, visibility: "visible", focused: false })).toBe(false);
-    useKernelStore.setState({ machineConflict: true });
-    expect(isHumanActivityContext({ visibility: "visible", focused: true })).toBe(false);
-    expect(isHumanActive({ now: 1_000_000, visibility: "visible", focused: true })).toBe(false);
+    for (const machineOwnership of ["pending", "conflict", "unsupported", "unavailable"] as const) {
+      useKernelStore.setState({ machineOwnership });
+      expect(isHumanActivityContext({ visibility: "visible", focused: true })).toBe(false);
+      expect(isHumanActive({ now: 1_000_000, visibility: "visible", focused: true })).toBe(false);
+    }
   });
 
   test("agent/general activity never establishes human presence", () => {

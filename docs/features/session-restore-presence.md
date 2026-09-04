@@ -5,10 +5,13 @@ inhabited, and everything a human can do to a window, an agent can do through th
 contract. BRIEF rules bind throughout — especially 3 (every control has a verb), 4
 (visible traces), and 6 (manual ships with the machine).
 
-> **Scale-readiness amendment:** Web Locks still prevents two tabs from operating the same
-> machine simultaneously, but a blocked tab now offers **Take over**. Stealing the lock
-> immediately blocks the previous owner with an explicit message rather than leaving two
-> active tabs.
+> **Scale-readiness amendment:** A tab is pending and fully interaction/agent/heartbeat
+> blocked until its exclusive Web Lock is granted. A confirmed competing tab offers
+> **Take over**; stealing the lock immediately blocks the previous owner and aborts its
+> in-flight local actions. The 500 ms BroadcastChannel probe distinguishes a live peer from
+> a normal reload without opening an admission window. BroadcastChannel is not a safe mutex
+> for suspended tabs, so strict enforcement requires Web Locks. Browsers without that API
+> remain visibly degraded and usable for one-tab local work, with Browser heartbeat disabled.
 
 ## Scope, in priority order
 

@@ -47,12 +47,19 @@ is true only for transact tools.
 
 ## Ownership
 
-Only one tab owns the machine. While this tab is blocked, ordinary tools fail before
-starting. `machine_take_over {}` is the deliberately consequential exception: it invokes
-the same ownership steal as the visible **Take over** button and returns
-`{taken_over: boolean}`. Losing ownership aborts cancellable transports and prevents stale
-calls from reporting success. Remote work already accepted or completed may still finish;
-takeover cannot undo it.
+A tab starts in **acquiring control**: the desktop is inert, ordinary tools fail before
+starting, and Browser heartbeat is ineligible until its exclusive Web Lock is granted.
+A confirmed competing tab shows **Take over**. `machine_take_over {}` is the only
+blocked-state exception and is deliberately consequential: it invokes the same ownership
+steal as the visible button and returns `{taken_over: boolean}`. Losing ownership aborts
+cancellable transports and prevents stale calls from reporting success. Remote work already
+accepted or completed may still finish; takeover cannot undo it.
+
+Strict multi-tab enforcement requires Web Locks. BroadcastChannel presence only confirms a
+contended lock after a short reload grace period; it is not a mutex and cannot safely replace
+Web Locks because suspended tabs may not answer. A browser without Web Locks remains usable
+in an explicitly warned single-tab degraded mode, but Browser heartbeat stays disabled and
+the user must not open a second machine tab.
 
 ## Etiquette
 
