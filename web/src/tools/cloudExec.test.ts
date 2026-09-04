@@ -10,6 +10,7 @@ import {
 } from "../kernel/terminalSessions";
 import type { CloudExecDependencies, CloudExecResult } from "../kernel/cloudExec";
 import { createCloudExecTool } from "./cloudExec";
+import { abortInFlightAgentActions } from "./agentAction";
 
 const WSID = "0123456789abcdef0123456789abcdef";
 
@@ -93,6 +94,23 @@ describe("cloud_exec", () => {
       { type: "output", text: "warning\n", tone: "error" },
       { type: "output", text: "last\n", tone: "output" },
     ]);
+  });
+
+  test("ownership loss aborts an in-flight cloud request and rejects stale success", async () => {
+    let requestSignal: AbortSignal | undefined;
+    const tool = createCloudExecTool(dependencies(async (_input, init) => {
+      requestSignal = init?.signal ?? undefined;
+      return await new Promise<Response>((_resolve, reject) => {
+        requestSignal?.addEventListener("abort", () => reject(requestSignal?.reason), { once: true });
+      });
+    }));
+    const invocation = tool.execute({ command: "sleep 60" });
+    for (let i = 0; i < 100 && !requestSignal; i += 1) await Bun.sleep(1);
+    expect(requestSignal?.aborted).toBe(false);
+
+    abortInFlightAgentActions();
+    await expect(invocation).rejects.toThrow("machine ownership was lost to another tab");
+    expect(requestSignal?.aborted).toBe(true);
   });
 
   test("caps stdout and stderr independently at 256 KB", async () => {

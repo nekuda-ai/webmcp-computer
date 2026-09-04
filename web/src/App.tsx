@@ -64,8 +64,8 @@ export function App() {
   useEffect(() => {
     const activity = (event: KeyboardEvent | PointerEvent) => {
       const state = useKernelStore.getState();
-      if (event instanceof KeyboardEvent && event.repeat) return;
-      state.recordActivity();
+      if (!event.isTrusted || (event instanceof KeyboardEvent && event.repeat)) return;
+      state.recordHumanActivity();
       if (!state.screensaverActive) return;
       const wasActive = state.wakeScreensaver();
       if (wasActive) {

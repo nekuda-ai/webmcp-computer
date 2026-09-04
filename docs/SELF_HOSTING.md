@@ -109,9 +109,12 @@ Every paid resource is leased per machine by a Durable Object, with the numbers 
 `shared/session-limits.ts` (change them there; site, Workers, and client all import it):
 
 - Remote Chrome: at most one per machine; 2 h per 24-hour accounting window; deleted server-side after
-  5 min without a client heartbeat (the client only heartbeats while the human is active
-  and the tab is visible). Browser Run's own `keep_alive` is set to its 10-minute maximum
-  as a backstop.
+  5 min without a client heartbeat (the client only heartbeats after recent trusted human
+  input while the owning tab remains visible and focused; agent calls do not count).
+  Cross-origin Live View input is checked through bounded CDP-installed isolated-world
+  listeners rather than indefinite iframe focus. This assumes Live View continues to use
+  Chromium's trusted input path; query failures fail closed. Browser Run's own `keep_alive`
+  is set to its 10-minute maximum as a backstop.
 - Cloud container: 2 h of running time per 24-hour accounting window; destroyed 5 min after the last
   exec finishes, restarted transparently by the next exec (the filesystem lives in the
   Durable Object, so nothing durable is lost). Cleanup waits for any pending container-to-DO

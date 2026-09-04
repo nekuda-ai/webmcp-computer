@@ -1,11 +1,14 @@
 import { afterEach, describe, expect, jest, spyOn, test } from "bun:test";
+import { BROWSER_IDLE_MS } from "../../../../shared/session-limits";
 import {
   BROWSER_LAST_URL_KEY,
   browserSessionState,
   closeBrowserSession,
   createBrowserSession,
   ensureBrowserSession,
+  isRecentRemoteActivity,
   rememberBrowserUrl,
+  remoteActivityProbeExpression,
   rememberedBrowserUrl,
   resetBrowserSessionForTests,
   resolveBrowserWorkerUrl,
@@ -25,6 +28,12 @@ class FakeSocket extends EventTarget implements BrowserWebSocket {
     super();
   }
 
+  frameId = "frame-1";
+  childFrameIds: string[] = [];
+  readonly remoteActivityAgeByFrame = new Map<string, number | null>();
+  readonly #contexts = new Map<string, number>();
+  readonly #contextFrames = new Map<number, string>();
+
   send(data: string): void {
     const request = JSON.parse(data) as typeof this.sent[number];
     this.sent.push(request);
@@ -34,15 +43,46 @@ class FakeSocket extends EventTarget implements BrowserWebSocket {
         result: { devtoolsFrontendUrl: this.liveViewUrl },
       }));
     }
+    if (request.method === "Page.getFrameTree") {
+      queueMicrotask(() => this.receive({
+        id: request.id,
+        result: {
+          frameTree: {
+            frame: { id: this.frameId },
+            childFrames: this.childFrameIds.map((id) => ({ frame: { id } })),
+          },
+        },
+      }));
+    }
+    if (request.method === "Page.createIsolatedWorld") {
+      const frameId = String(request.params.frameId);
+      let executionContextId = this.#contexts.get(frameId);
+      if (executionContextId === undefined) {
+        executionContextId = this.#contexts.size + 10;
+        this.#contexts.set(frameId, executionContextId);
+        this.#contextFrames.set(executionContextId, frameId);
+      }
+      queueMicrotask(() => this.receive({ id: request.id, result: { executionContextId } }));
+    }
     if (request.method === "Runtime.evaluate") {
       queueMicrotask(() => this.receive({
         id: request.id,
-        result: { result: { value: this.pageUrl } },
+        result: {
+          result: {
+            value: {
+              url: this.pageUrl,
+              trustedActivityAgeMs: this.remoteActivityAgeByFrame.get(
+                this.#contextFrames.get(Number(request.params.contextId)) ?? "",
+              ) ?? this.remoteActivityAgeMs,
+            },
+          },
+        },
       }));
     }
   }
 
   pageUrl = "https://example.com/current";
+  remoteActivityAgeMs: number | null = null;
 
   close(): void {
     if (this.readyState === WebSocket.CLOSED) return;
@@ -98,7 +138,7 @@ function fakeTimers(): FakeTimers & Pick<BrowserSessionDependencies, "setInterva
     },
     async tick() {
       for (const { callback } of [...intervals]) callback();
-      for (let i = 0; i < 6; i += 1) await Promise.resolve();
+      for (let i = 0; i < 20; i += 1) await Promise.resolve();
     },
   };
 }
@@ -131,9 +171,37 @@ function setup(
         return socket;
       },
       commandTimeoutMs: 50,
+      isEligible: () => true,
       ...extra,
     },
   };
+}
+
+type RemoteInputListener = (event: { isTrusted: boolean }) => void;
+
+class FakeRemotePage {
+  clock = 0;
+  readonly listeners = new Map<string, RemoteInputListener[]>();
+  readonly location: { href: string };
+  readonly performance = { now: () => this.clock };
+
+  constructor(href: string) {
+    this.location = { href };
+  }
+
+  addEventListener(type: string, listener: RemoteInputListener): void {
+    const listeners = this.listeners.get(type) ?? [];
+    listeners.push(listener);
+    this.listeners.set(type, listeners);
+  }
+
+  input(type: string, isTrusted: boolean): void {
+    for (const listener of this.listeners.get(type) ?? []) listener({ isTrusted });
+  }
+}
+
+function runRemoteProbe(page: FakeRemotePage, expression: string): unknown {
+  return Function("globalThis", `return (${expression});`)(page);
 }
 
 afterEach(async () => {
@@ -142,6 +210,49 @@ afterEach(async () => {
 });
 
 describe("browser session", () => {
+  test("remote activity probe accepts only recent trusted input and reinstalls after navigation", () => {
+    const expression = remoteActivityProbeExpression(
+      "__webmcpComputerTrustedActivity_test",
+    );
+    const page = new FakeRemotePage("https://example.com/one");
+
+    expect(runRemoteProbe(page, expression)).toEqual({
+      url: "https://example.com/one",
+      trustedActivityAgeMs: null,
+    });
+    page.input("pointerdown", false); // DOM .click()/dispatchEvent-style agent input.
+    page.input("keydown", false);
+    expect(isRecentRemoteActivity(runRemoteProbe(page, expression))).toBe(false);
+    expect(page.listeners.get("pointerdown")).toHaveLength(1);
+
+    page.clock = 100;
+    page.input("pointermove", true);
+    page.clock = 200;
+    const recent = runRemoteProbe(page, expression);
+    expect(recent).toEqual({ url: "https://example.com/one", trustedActivityAgeMs: 100 });
+    expect(isRecentRemoteActivity(recent)).toBe(true);
+
+    page.clock = 100 + BROWSER_IDLE_MS;
+    expect(isRecentRemoteActivity(runRemoteProbe(page, expression))).toBe(false);
+    expect(isRecentRemoteActivity({ trustedActivityAgeMs: -1 })).toBe(false);
+    expect(isRecentRemoteActivity({ trustedActivityAgeMs: Number.NaN })).toBe(false);
+
+    // A navigation gets a new global. The same heartbeat expression installs there,
+    // then observes subsequent trusted wheel/touch/pointer/keyboard input.
+    const navigated = new FakeRemotePage("https://example.com/two");
+    expect(runRemoteProbe(navigated, expression)).toEqual({
+      url: "https://example.com/two",
+      trustedActivityAgeMs: null,
+    });
+    navigated.clock = 50;
+    navigated.input("wheel", true);
+    navigated.clock = 75;
+    expect(runRemoteProbe(navigated, expression)).toEqual({
+      url: "https://example.com/two",
+      trustedActivityAgeMs: 25,
+    });
+  });
+
   test("opens webmcp.com for a fresh session unless an explicit URL is supplied", async () => {
     const homepage = setup([Response.json(descriptor()), Response.json({ status: "closed" })]);
     const homepageSession = await createBrowserSession(homepage.dependencies);
@@ -423,7 +534,7 @@ describe("browser session", () => {
   });
 
   describe("heartbeat", () => {
-    test("posts a heartbeat and one CDP evaluate each tick while the human is active", async () => {
+    test("posts a heartbeat and one CDP activity query each tick while the human is active", async () => {
       const timers = fakeTimers();
       const storage = memoryStorage();
       let active = true;
@@ -441,20 +552,86 @@ describe("browser session", () => {
         url: `http://worker.test/session/${SESSION_ID}/heartbeat`,
         init: expect.objectContaining({ method: "POST" }),
       });
-      expect(fake.sockets[0]?.sent[1]?.method).toBe("Runtime.evaluate");
-      expect(fake.sockets[0]?.sent[1]?.params.expression).toBe("/*webmcp-computer:heartbeat*/location.href");
+      expect(fake.sockets[0]?.sent[1]?.method).toBe("Page.getFrameTree");
+      expect(fake.sockets[0]?.sent[2]?.method).toBe("Page.createIsolatedWorld");
+      expect(fake.sockets[0]?.sent[2]?.params.worldName).toStartWith(
+        "__webmcpComputerTrustedActivity_",
+      );
+      expect(fake.sockets[0]?.sent[3]?.method).toBe("Runtime.evaluate");
+      expect(fake.sockets[0]?.sent[3]?.params.contextId).toBe(10);
+      const expression = String(fake.sockets[0]?.sent[3]?.params.expression);
+      expect(expression).toStartWith("/*webmcp-computer:heartbeat*/");
+      expect(expression).toContain("event?.isTrusted === true");
+      expect(expression).toContain("pointermove");
       expect(session.budget).toEqual({ remainingMs: 10, usedMs: 5, windowResetsAt: 99 });
       expect(storage.data.get(BROWSER_LAST_URL_KEY)).toBe("https://example.com/current");
 
       active = false;
       await timers.tick();
       expect(fake.calls).toHaveLength(2);
-      expect(fake.sockets[0]?.sent).toHaveLength(2);
+      expect(fake.sockets[0]?.sent).toHaveLength(7);
+      expect(fake.sockets[0]?.sent[6]?.method).toBe("Runtime.evaluate");
       expect(session.state.status).toBe("live");
 
       await session.close();
       expect(timers.intervals).toHaveLength(0);
       expect(timers.cleared).toHaveLength(1);
+    });
+
+    test("remote recent activity authorizes a beat while stale, absent, and invalid ages do not", async () => {
+      const timers = fakeTimers();
+      const fake = setup([
+        Response.json(descriptor()),
+        Response.json({ idleTimeoutMs: BROWSER_IDLE_MS }),
+        Response.json({ status: "closed" }),
+      ], undefined, { ...timers, isActive: () => false });
+      const session = await createBrowserSession(fake.dependencies);
+      const socket = fake.sockets[0];
+
+      socket!.remoteActivityAgeMs = null;
+      await timers.tick();
+      socket!.frameId = "frame-after-navigation";
+      socket!.remoteActivityAgeMs = BROWSER_IDLE_MS;
+      await timers.tick();
+      socket!.remoteActivityAgeMs = -1;
+      await timers.tick();
+      expect(fake.calls).toHaveLength(1);
+
+      socket!.remoteActivityAgeMs = BROWSER_IDLE_MS;
+      socket!.childFrameIds = ["child-frame"];
+      socket!.remoteActivityAgeByFrame.set("child-frame", BROWSER_IDLE_MS - 1);
+      await timers.tick();
+      expect(fake.calls[1]?.url).toEndWith(`/session/${SESSION_ID}/heartbeat`);
+      const evaluations = fake.sockets[0]?.sent.filter(
+        ({ method }) => method === "Runtime.evaluate",
+      ) ?? [];
+      expect(evaluations).toHaveLength(5);
+      expect(evaluations.map(({ params }) => params.contextId)).toEqual([
+        10,
+        11,
+        11,
+        11,
+        12,
+      ]);
+      await session.close();
+    });
+
+    test("does not query remote activity while the tab is hidden, unfocused, or not owner", async () => {
+      const timers = fakeTimers();
+      const fake = setup([
+        Response.json(descriptor()),
+        Response.json({ status: "closed" }),
+      ], undefined, {
+        ...timers,
+        isActive: () => true,
+        isEligible: () => false,
+      });
+      const session = await createBrowserSession(fake.dependencies);
+      await timers.tick();
+      expect(fake.calls).toHaveLength(1);
+      expect(fake.sockets[0]?.sent).toHaveLength(1);
+      expect(fake.sockets[0]?.sent[0]?.method).toBe("Cloudflare.getLiveView");
+      await session.close();
     });
 
     test("heartbeats immediately when activity resumes near the idle deadline", async () => {
@@ -478,7 +655,7 @@ describe("browser session", () => {
       const session = await createBrowserSession(fake.dependencies);
       now = 60_000;
       activity();
-      for (let i = 0; i < 6; i += 1) await Promise.resolve();
+      for (let i = 0; i < 20; i += 1) await Promise.resolve();
       expect(fake.calls[1]?.url).toEndWith(`/session/${SESSION_ID}/heartbeat`);
 
       // Ordinary activity inside the cadence is throttled.
@@ -488,6 +665,44 @@ describe("browser session", () => {
       expect(fake.calls).toHaveLength(2);
       await session.close();
       expect(unsubscribed).toBe(true);
+    });
+
+    test("aborts an in-flight heartbeat as soon as the tab loses eligibility", async () => {
+      const timers = fakeTimers();
+      let eligible = true;
+      let activity = () => {};
+      let heartbeatSignal: AbortSignal | undefined;
+      const fake = setup([
+        Response.json(descriptor()),
+        Response.json({ status: "closed" }),
+      ], undefined, {
+        ...timers,
+        isActive: () => true,
+        isEligible: () => eligible,
+        subscribeActivity(callback) {
+          activity = callback;
+          return () => {};
+        },
+      });
+      const baseFetch = fake.dependencies.fetch;
+      fake.dependencies.fetch = (async (input, init) => {
+        if (String(input).endsWith("/heartbeat")) {
+          heartbeatSignal = init?.signal ?? undefined;
+          return await new Promise<Response>((_resolve, reject) => {
+            heartbeatSignal?.addEventListener("abort", () => reject(heartbeatSignal?.reason), { once: true });
+          });
+        }
+        return await baseFetch(input, init);
+      }) as typeof fetch;
+      const session = await createBrowserSession(fake.dependencies);
+
+      await timers.tick();
+      expect(heartbeatSignal?.aborted).toBe(false);
+      eligible = false;
+      activity();
+      expect(heartbeatSignal?.aborted).toBe(true);
+
+      await session.close();
     });
 
     test("ends the session with an idle explanation when the Worker answers EIDLE", async () => {

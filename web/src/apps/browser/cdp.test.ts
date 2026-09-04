@@ -32,6 +32,19 @@ describe("CdpClient", () => {
     expect(await second).toEqual({ value: 2 });
   });
 
+  test("aborts a pending command promptly and ignores its stale response", async () => {
+    const socket = new FakeSocket();
+    const client = new CdpClient(socket);
+    const controller = new AbortController();
+    const pending = client.send("Page.navigate", { url: "https://old-owner.test" }, controller.signal);
+    const sent = JSON.parse(socket.sent[0] ?? "") as { id: number };
+
+    controller.abort(new Error("machine ownership was lost"));
+    await expect(pending).rejects.toThrow("machine ownership was lost");
+    socket.receive({ id: sent.id, result: {} });
+    expect(socket.sent).toHaveLength(1);
+  });
+
   test("times out commands and settles pending calls on close", async () => {
     const timeoutSocket = new FakeSocket();
     const timeoutClient = new CdpClient(timeoutSocket, { commandTimeoutMs: 5 });
@@ -49,7 +62,15 @@ describe("CdpClient", () => {
   test("prefixes every evaluate operation with its marker", async () => {
     const socket = new FakeSocket();
     const client = new CdpClient(socket);
-    const operations = ["identity", "read", "click", "type", "site_tools", "site_call"] as const;
+    const operations = [
+      "identity",
+      "read",
+      "click",
+      "type",
+      "site_tools",
+      "site_call",
+      "heartbeat",
+    ] as const;
     for (const operation of operations) {
       const result = client.evaluate(operation, "1 + 1");
       const sent = JSON.parse(socket.sent.at(-1) ?? "") as {

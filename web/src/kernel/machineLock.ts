@@ -1,3 +1,4 @@
+import { abortInFlightAgentActions } from "./agentActionLifecycle";
 import { useKernelStore } from "./store";
 
 export const MACHINE_LOCK = "webmcp-computer-machine";
@@ -15,11 +16,13 @@ export const MACHINE_TAKEN_OVER_REASON = "machine taken over by another tab";
 
 let started = false;
 let releaseOwner: (() => void) | undefined;
-let takeOver: (() => Promise<void>) | undefined;
+let takeOver: (() => Promise<boolean>) | undefined;
 let conflictReason = MACHINE_CONFLICT_REASON;
 const reasonListeners = new Set<() => void>();
 
 function setConflict(conflict: boolean, reason = MACHINE_CONFLICT_REASON): void {
+  const wasConflict = useKernelStore.getState().machineConflict;
+  if (conflict && !wasConflict) abortInFlightAgentActions();
   if (conflictReason !== reason) {
     conflictReason = reason;
     for (const listener of reasonListeners) listener();
@@ -45,8 +48,10 @@ function isAbort(error: unknown): boolean {
  * Steal the machine lock from the tab that holds it. That tab's lock request rejects
  * with AbortError and it moves to the blocked state; this tab becomes the owner.
  */
-export async function takeOverMachine(): Promise<void> {
-  await takeOver?.();
+export async function takeOverMachine(): Promise<boolean> {
+  if (!useKernelStore.getState().machineConflict) return false;
+  if (!takeOver) throw new Error("webmcp-computer: machine take over is unavailable in this browser");
+  return await takeOver();
 }
 
 function lockManager(): LockManager | undefined {
@@ -147,13 +152,29 @@ export function startMachineOwnership(
   });
 
   takeOver = async () => {
-    if (!useKernelStore.getState().machineConflict) return;
-    try {
-      await locks.request(MACHINE_LOCK, { mode: "exclusive", steal: true }, holdLock);
-    } catch (error) {
-      if (stolen(error)) return;
-      console.warn("WebMCP Computer machine take-over failed", error);
-    }
+    if (!useKernelStore.getState().machineConflict) return false;
+    let granted = false;
+    let resolveAcquired: (value: boolean) => void = () => {};
+    let rejectAcquired: (error: unknown) => void = () => {};
+    const acquired = new Promise<boolean>((resolve, reject) => {
+      resolveAcquired = resolve;
+      rejectAcquired = reject;
+    });
+    void locks.request(MACHINE_LOCK, { mode: "exclusive", steal: true }, async (lock) => {
+      if (lock === null) {
+        resolveAcquired(false);
+        return;
+      }
+      granted = true;
+      setConflict(false);
+      resolveAcquired(true);
+      await hold;
+    }).catch((error: unknown) => {
+      if (granted && stolen(error)) return;
+      const detail = error instanceof Error ? error.message : String(error);
+      rejectAcquired(new Error(`webmcp-computer: machine take over failed: ${detail}`));
+    });
+    return await acquired;
   };
 
   void availability.then((status) => {

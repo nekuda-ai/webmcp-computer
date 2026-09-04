@@ -34,5 +34,5 @@ Quick orientation:
    hint after it switches off. `cloud_kernel` changes mount only after reload; read
    `~/skills/cloud.md` first.
 
-Cold boot registers 30 system tools. App windows add their own tools dynamically; re-list
+Cold boot registers 31 system tools. App windows add their own tools dynamically; re-list
 after opening or closing an app.

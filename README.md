@@ -58,7 +58,7 @@ Wire names are `snake_case` verbs. Each declares an invocation class through ann
 | Apps and windows | `app_open` `app_close` `app_list` `window_focus` `window_move` `window_resize` |
 | Filesystem | `fs_read` `fs_write` `fs_edit` `fs_list` `fs_search` `fs_mkdir` `fs_delete` `fs_move` |
 | Terminal and processes | `term_exec` `term_read` `term_state` `term_history` `ps` `kill` |
-| System | `sys_status` `os_manual` `os_search` `settings_get` `settings_set` `screensaver_wake` |
+| System | `sys_status` `os_manual` `os_search` `settings_get` `settings_set` `screensaver_wake` `machine_take_over` |
 | Browser (remote Chrome) | `browser_open` `browser_goto` `browser_click` `browser_type` `browser_read` `browser_screenshot` `browser_site_tools` `browser_site_call` |
 | Cloud (opt-in) | `cloud_exec` `os_publish` |
 | Agent-made apps | `ui_open` |

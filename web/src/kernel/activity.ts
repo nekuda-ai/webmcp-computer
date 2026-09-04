@@ -9,10 +9,14 @@ import {
 } from "../../../shared/session-limits";
 import { useKernelStore } from "./store";
 
-export type HumanActivityOptions = {
+export type HumanActivityContextOptions = {
+  visibility?: DocumentVisibilityState;
+  focused?: boolean;
+};
+
+export type HumanActivityOptions = HumanActivityContextOptions & {
   now?: number;
   idleMs?: number;
-  visibility?: DocumentVisibilityState;
 };
 
 function documentVisibility(): DocumentVisibilityState {
@@ -20,33 +24,73 @@ function documentVisibility(): DocumentVisibilityState {
   return document.visibilityState ?? "visible";
 }
 
+function documentFocused(): boolean {
+  if (typeof document === "undefined") return true;
+  return document.hasFocus();
+}
+
+/** Whether this visible, focused tab currently owns the machine. */
+export function isHumanActivityContext(
+  options: HumanActivityContextOptions = {},
+): boolean {
+  const visibility = options.visibility ?? documentVisibility();
+  const focused = options.focused ?? documentFocused();
+  return visibility === "visible" && focused && !useKernelStore.getState().machineConflict;
+}
+
 /**
- * Whether a human is plausibly present: the kernel saw pointer/keyboard/tool
- * activity within `idleMs` and the tab is visible. Paid remote resources
- * (Browser Run, cloud container) are only kept alive while this holds.
+ * Whether a human is plausibly present: the kernel saw a trusted local interaction
+ * within `idleMs`, and the owning tab remains visible and focused. General activity
+ * such as agent calls may wake the screensaver but never qualifies paid-resource
+ * heartbeats. Remote-page trusted activity is checked separately over CDP.
  */
 export function isHumanActive(options: HumanActivityOptions = {}): boolean {
+  if (!isHumanActivityContext(options)) return false;
   const now = options.now ?? Date.now();
   const idleMs = options.idleMs ?? BROWSER_IDLE_MS;
-  const visibility = options.visibility ?? documentVisibility();
-  if (visibility !== "visible") return false;
-  const state = useKernelStore.getState();
-  if (state.machineConflict) return false;
-  return now - state.lastActivityAt < idleMs;
+  const { lastHumanActivityAt } = useKernelStore.getState();
+  return lastHumanActivityAt > 0 && now - lastHumanActivityAt < idleMs;
+}
+
+export type LiveViewFocusInteractionOptions = {
+  activeElement: unknown;
+  visibility: DocumentVisibilityState;
+  focused: boolean;
+  trusted: boolean;
+};
+
+/**
+ * Cross-origin iframe input cannot be observed by the parent. Its trusted transition of
+ * focus into the live viewer records one bounded local timestamp; continued input is
+ * checked independently by the Browser session's remote CDP activity probe.
+ */
+export function isLiveViewFocusInteraction(
+  iframe: unknown,
+  options: LiveViewFocusInteractionOptions,
+): boolean {
+  return options.trusted && options.visibility === "visible" && options.focused &&
+    options.activeElement === iframe;
 }
 
 /** Notify when activity, visibility, or machine ownership may make a heartbeat eligible. */
 export function subscribeHumanActivity(listener: () => void): () => void {
   const unsubscribeStore = useKernelStore.subscribe((state, previous) => {
-    if (state.lastActivityAt !== previous.lastActivityAt || state.machineConflict !== previous.machineConflict) {
+    if (
+      state.lastHumanActivityAt !== previous.lastHumanActivityAt ||
+      state.machineConflict !== previous.machineConflict
+    ) {
       listener();
     }
   });
   if (typeof document === "undefined") return unsubscribeStore;
   document.addEventListener("visibilitychange", listener);
+  window.addEventListener("focus", listener);
+  window.addEventListener("blur", listener);
   return () => {
     unsubscribeStore();
     document.removeEventListener("visibilitychange", listener);
+    window.removeEventListener("focus", listener);
+    window.removeEventListener("blur", listener);
   };
 }
 

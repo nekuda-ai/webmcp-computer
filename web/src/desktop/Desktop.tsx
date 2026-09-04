@@ -19,6 +19,7 @@ import { DesktopIcons } from "./DesktopIcons";
 import { StickyNotes } from "./StickyNotes";
 import { openHumanApp } from "./humanActions";
 import { nextUntitledName } from "./untitledName";
+import { VerbHint } from "./VerbHint";
 
 function isFileExistsError(error: unknown): boolean {
   return errorMessage(error).startsWith("webmcp-computer: file exists:");
@@ -107,13 +108,22 @@ export function Desktop() {
             <>
               {conflictReason}
               {" · "}
-              <button
-                type="button"
-                className="machine-banner__action mono"
-                onClick={() => void takeOverMachine()}
-              >
-                Take over
-              </button>
+              <VerbHint verb="machine_take_over">
+                <button
+                  type="button"
+                  className="machine-banner__action mono"
+                  onClick={() => {
+                    const state = useKernelStore.getState();
+                    const event = state.osEvent("human", "machine_take_over");
+                    void takeOverMachine().then(
+                      () => state.settleEvent(event, true),
+                      (error: unknown) => state.settleEvent(event, false, errorMessage(error)),
+                    );
+                  }}
+                >
+                  Take over
+                </button>
+              </VerbHint>
             </>
           ) : null}
           {machineConflict && fileSystemWarnings.length > 0 ? " · " : null}

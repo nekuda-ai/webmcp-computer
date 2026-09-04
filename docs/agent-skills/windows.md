@@ -22,6 +22,9 @@ Windows ARE processes: every open window has a PID (shown in its titlebar chip),
   Coordinates are relative to the work area (origin just below the 38px menu bar);
   targets are clamped so the left-side close controls stay reachable, and every window
   is re-clamped when the viewport shrinks. The returned rect is the truth.
+- `machine_take_over {}` — consequentially steal this machine's single-tab ownership
+  when this tab is blocked. It matches the visible **Take over** button and returns
+  `{takenOver: boolean}`.
 - `editor_open_file {path}` — Editor on a specific text file.
 - `files_reveal {path}` — show a file or directory in an already-open Files window.
 - `notes_append {note, text}` — append to a markdown note under `~/notes/`.
@@ -53,6 +56,9 @@ system event for each drop.
 
 ## Deliberate parity decisions
 
+- The visible **Take over** control maps to transact tool `machine_take_over`; unlike
+  ordinary tools it is intentionally callable while blocked so ownership acquisition
+  cannot deadlock behind the ownership guard.
 - Editor has no unsaved-buffer tool: its short autosave makes filesystem bytes canonical.
 - Agents may wake but not start the screensaver; this asymmetry is accepted.
 - Zoom does not exist for either user. The final titlebar dot is inert decoration.

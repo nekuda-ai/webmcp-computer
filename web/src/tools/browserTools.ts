@@ -28,7 +28,7 @@ type BrowserToolDependencies = {
 };
 
 type BrowserOpenDependencies = {
-  ensureSession(url?: string): Promise<{ cdp: BrowserTransport; keepAliveMs: number }>;
+  ensureSession(url?: string, signal?: AbortSignal): Promise<{ cdp: BrowserTransport; keepAliveMs: number }>;
 };
 
 type BrowserReadInput = { selector?: string };
@@ -75,29 +75,34 @@ function byteLength(value: unknown): number {
   return new TextEncoder().encode(JSON.stringify(value ?? null)).byteLength;
 }
 
-async function readPageIdentity(transport: BrowserTransport): Promise<PageIdentity> {
+async function readPageIdentity(transport: BrowserTransport, signal?: AbortSignal): Promise<PageIdentity> {
   const identity = await transport.evaluate<PageIdentity>(
     "identity",
     "(() => ({ title: document.title, url: location.href }))()",
+    signal,
   );
   rememberBrowserUrl(identity.url);
   return identity;
 }
 
-async function gotoPage(transport: BrowserTransport, url: string): Promise<PageIdentity> {
-  await transport.send("Page.enable");
-  const loaded = transport.waitForEvent("Page.loadEventFired");
+async function gotoPage(
+  transport: BrowserTransport,
+  url: string,
+  signal?: AbortSignal,
+): Promise<PageIdentity> {
+  await transport.send("Page.enable", {}, signal);
+  const loaded = transport.waitForEvent("Page.loadEventFired", undefined, signal);
   void loaded.catch(() => undefined);
-  const navigation = await transport.send<{ errorText?: string }>("Page.navigate", { url });
+  const navigation = await transport.send<{ errorText?: string }>("Page.navigate", { url }, signal);
   if (navigation.errorText) {
     throw new Error(`webmcp-computer: browser navigation failed: ${navigation.errorText}`);
   }
   await loaded;
-  return await readPageIdentity(transport);
+  return await readPageIdentity(transport, signal);
 }
 
 const defaultOpenDependencies: BrowserOpenDependencies = {
-  ensureSession: ensureBrowserSession,
+  ensureSession: (url, signal) => ensureBrowserSession(url, undefined, signal),
 };
 
 const defaultToolDependencies: BrowserToolDependencies = {
@@ -138,7 +143,7 @@ export function createBrowserOpenTool(
         ...(input?.width === undefined ? {} : { width: input.width }),
         ...(input?.height === undefined ? {} : { height: input.height }),
         ...(rawFocus === undefined ? {} : { focus: rawFocus }),
-      }, async () => {
+      }, async (signal) => {
         const url = rawUrl === undefined ? undefined : requireBrowserUrl(rawUrl);
         if (rawFocus !== undefined && typeof rawFocus !== "boolean") {
           throw new Error("webmcp-computer: focus must be a boolean");
@@ -152,13 +157,13 @@ export function createBrowserOpenTool(
         const existing = useKernelStore.getState().processes.find(({ appId }) => appId === "browser");
         let session: { cdp: BrowserTransport; keepAliveMs: number };
         try {
-          session = await dependencies.ensureSession(existing ? undefined : url);
+          session = await dependencies.ensureSession(existing ? undefined : url, signal);
         } catch (error) {
           throw new Error(`webmcp-computer: browser session unavailable: ${errorText(error)}`);
         }
         const identity = existing && url
-          ? await gotoPage(session.cdp, url)
-          : await readPageIdentity(session.cdp);
+          ? await gotoPage(session.cdp, url, signal)
+          : await readPageIdentity(session.cdp, signal);
         const currentUrl = identity.url;
 
         const process = useKernelStore.getState().spawn("browser", {
@@ -195,9 +200,9 @@ export function createBrowserTools(
     annotations: ACT_ANNOTATIONS,
     intent: "act",
     execute({ url: rawUrl }) {
-      return runAgentAction("browser_goto", { appId: "browser", url: rawUrl }, async () => {
+      return runAgentAction("browser_goto", { appId: "browser", url: rawUrl }, async (signal) => {
         const url = requireBrowserUrl(rawUrl);
-        return await gotoPage(dependencies.getTransport(), url);
+        return await gotoPage(dependencies.getTransport(), url, signal);
       });
     },
   });
@@ -220,7 +225,7 @@ export function createBrowserTools(
       return runAgentAction("browser_read", {
         appId: "browser",
         selector: rawSelector === undefined ? "body" : rawSelector,
-      }, async () => {
+      }, async (signal) => {
         const selector = rawSelector === undefined ? "body" : requireSelector(rawSelector);
         const output = await dependencies.getTransport().evaluate<{
           found: boolean;
@@ -253,7 +258,7 @@ export function createBrowserTools(
             text: clipped,
             truncated,
           };
-        })()`);
+        })()`, signal);
         if (!output.found) throw new Error(`webmcp-computer: browser selector not found: ${selector}`);
         const { found: _found, ...result } = output;
         return result;
@@ -276,14 +281,14 @@ export function createBrowserTools(
     annotations: ACT_ANNOTATIONS,
     intent: "act",
     execute({ selector: rawSelector }) {
-      return runAgentAction("browser_click", { appId: "browser", selector: rawSelector }, async () => {
+      return runAgentAction("browser_click", { appId: "browser", selector: rawSelector }, async (signal) => {
         const selector = requireSelector(rawSelector);
         const clicked = await dependencies.getTransport().evaluate<boolean>("click", `(() => {
           const element = document.querySelector(${JSON.stringify(selector)});
           if (!element) return false;
           element.click();
           return true;
-        })()`);
+        })()`, signal);
         if (!clicked) throw new Error(`webmcp-computer: browser selector not found: ${selector}`);
         return { selector, clicked: true };
       });
@@ -313,7 +318,7 @@ export function createBrowserTools(
     annotations: ACT_ANNOTATIONS,
     intent: "act",
     execute({ selector: rawSelector, text, submit = false }) {
-      return runAgentAction("browser_type", { appId: "browser", selector: rawSelector, submit }, async () => {
+      return runAgentAction("browser_type", { appId: "browser", selector: rawSelector, submit }, async (signal) => {
         const selector = requireSelector(rawSelector);
         if (typeof text !== "string") throw new Error("webmcp-computer: text must be a string");
         if (new TextEncoder().encode(text).byteLength > MAX_TYPE_TEXT_BYTES) {
@@ -334,7 +339,7 @@ export function createBrowserTools(
             element.form?.requestSubmit();
           }
           return true;
-        })()`);
+        })()`, signal);
         if (!typed) throw new Error(`webmcp-computer: browser selector not found or not typeable: ${selector}`);
         return { selector, characters: text.length, submit };
       });
@@ -351,13 +356,13 @@ export function createBrowserTools(
     annotations: { ...ASK_ANNOTATIONS, untrustedContentHint: true },
     intent: "answer",
     execute() {
-      return runAgentAction("browser_screenshot", { appId: "browser" }, async () => {
+      return runAgentAction("browser_screenshot", { appId: "browser" }, async (signal) => {
         const transport = dependencies.getTransport();
         const metrics = await transport.send<{
           cssVisualViewport?: { clientWidth?: number; clientHeight?: number };
           cssContentSize?: { width?: number; height?: number };
           contentSize?: { width?: number; height?: number };
-        }>("Page.getLayoutMetrics");
+        }>("Page.getLayoutMetrics", {}, signal);
         const width = Math.round(
           metrics.cssVisualViewport?.clientWidth ??
             metrics.cssContentSize?.width ??
@@ -374,7 +379,7 @@ export function createBrowserTools(
           const capture = await transport.send<{ data?: string }>("Page.captureScreenshot", {
             format: "jpeg",
             quality,
-          });
+          }, signal);
           if (typeof capture.data !== "string") {
             throw new Error("webmcp-computer: browser screenshot returned no image data");
           }
@@ -396,7 +401,7 @@ export function createBrowserTools(
     annotations: { ...ASK_ANNOTATIONS, untrustedContentHint: true },
     intent: "answer",
     execute() {
-      return runAgentAction("browser_site_tools", { appId: "browser" }, async () => {
+      return runAgentAction("browser_site_tools", { appId: "browser" }, async (signal) => {
         const result = await dependencies.getTransport().evaluate<{
           supported: boolean;
           tools?: Array<{ name: string; description?: string; inputSchema?: Record<string, unknown> }>;
@@ -422,7 +427,7 @@ export function createBrowserTools(
               inputSchema: normalizeSchema(inputSchema),
             })),
           };
-        })()`);
+        })()`, signal);
         if (!result.supported) {
           throw new Error("webmcp-computer: this browser session has no WebMCP support");
         }
@@ -449,7 +454,7 @@ export function createBrowserTools(
     annotations: { ...ACT_ANNOTATIONS, untrustedContentHint: true },
     intent: "act",
     execute({ name: rawName, input }) {
-      return runAgentAction("browser_site_call", { appId: "browser", name: rawName }, async () => {
+      return runAgentAction("browser_site_call", { appId: "browser", name: rawName }, async (signal) => {
         const name = requireSiteToolName(rawName);
         if (input === null || typeof input !== "object" || Array.isArray(input)) {
           throw new Error("webmcp-computer: site tool input must be an object");
@@ -467,7 +472,7 @@ export function createBrowserTools(
           } catch {
             return value;
           }
-        })()`);
+        })()`, signal);
         if (
           result !== null &&
           typeof result === "object" &&

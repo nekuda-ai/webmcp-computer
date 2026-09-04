@@ -38,11 +38,21 @@ JSON to safe defaults before the next read or write.
   by default, while `show: false` is silent.
 - **act** changes visible, reversible state and always leaves a human-visible trace.
 - **transact** is consequential or irreversible (`fs_delete`, `kill`, `os_publish`,
-  `cloud_exec`); take a second thought before calling it. Publishing makes selected
-  bytes public, and cloud execution runs arbitrary code with open network egress.
+  `cloud_exec`, `machine_take_over`); take a second thought before calling it. Publishing
+  makes selected bytes public, cloud execution runs arbitrary code with open network
+  egress, and takeover interrupts another tab's control.
 
 Wire annotations use WebMCP's `consequentialHint` name (`destructiveHint` in MCP); it
 is true only for transact tools.
+
+## Ownership
+
+Only one tab owns the machine. While this tab is blocked, ordinary tools fail before
+starting. `machine_take_over {}` is the deliberately consequential exception: it invokes
+the same ownership steal as the visible **Take over** button and returns
+`{takenOver: boolean}`. Losing ownership aborts cancellable transports and prevents stale
+calls from reporting success. Remote work already accepted or completed may still finish;
+takeover cannot undo it.
 
 ## Etiquette
 

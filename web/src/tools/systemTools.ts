@@ -13,9 +13,10 @@ import {
   MIN_WINDOW_HEIGHT,
   MIN_WINDOW_WIDTH,
 } from "../kernel/windowGeometry";
-import { ACT_ANNOTATIONS, ASK_ANNOTATIONS } from "./taxonomy";
+import { ACT_ANNOTATIONS, ASK_ANNOTATIONS, TRANSACT_ANNOTATIONS } from "./taxonomy";
 import { presentSpotlight } from "../kernel/spotlightPresentation";
 import { requireFinite } from "../shared";
+import { takeOverMachine } from "../kernel/machineLock";
 
 type AppInput = {
   appId: string;
@@ -476,6 +477,23 @@ export const settingsSetTool = defineTool<SettingsSetInput>({
   },
 });
 
+export const machineTakeOverTool = defineTool<EmptyInput>({
+  stableKey: "webmcp_computer.machine_take_over",
+  name: "machine_take_over",
+  title: "Take over machine control",
+  description:
+    "Consequentially take machine ownership from another WebMCP Computer tab. This is the agent equivalent of the visible Take over control and is callable while this tab is blocked. The previous owner's local in-flight actions are rejected and cancellable transports are aborted. Remote work already accepted or completed may still finish and cannot be undone. Returns whether ownership changed.",
+  inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  annotations: TRANSACT_ANNOTATIONS,
+  intent: "transact",
+  execute(input) {
+    return runAgentAction("machine_take_over", {}, async () => {
+      requireEmptyInput(input);
+      return { takenOver: await takeOverMachine() };
+    }, { allowWhileBlocked: true });
+  },
+});
+
 export const screensaverWakeTool = defineTool<EmptyInput>({
   stableKey: "webmcp_computer.screensaver_wake",
   name: "screensaver_wake",
@@ -505,6 +523,7 @@ export const systemTools = [
   windowMoveTool,
   windowResizeTool,
   sysStatusTool,
+  machineTakeOverTool,
   screensaverWakeTool,
   osManualTool,
   osSearchTool,

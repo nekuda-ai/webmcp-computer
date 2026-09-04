@@ -7,8 +7,14 @@
 > **Scale-readiness amendment:** one `BrowserLeaseObject` Durable Object per machine owns
 > the upstream Chrome and its budget. Protected routes require a short-lived capability.
 > `POST /session/{id}/heartbeat` keeps the lease alive only while the client reports a
-> visible, recently active human; silence deletes Chrome after 5 minutes. Each machine has
-> a 2-hour budget per 24-hour accounting window, Browser Run `keep_alive` is 10 minutes,
+> visible, focused, recently active human; agent calls never qualify. Cross-origin Live View
+> input is checked through CDP-installed isolated-world listeners in the current frames.
+> They accept only trusted pointer, keyboard, wheel, and touch events and return a bounded
+> monotonic age; every query safely reinstalls them after navigation and does not itself
+> count as activity. This assumes Live
+> View continues to forward controls through Chromium's trusted input path; failures skip
+> the heartbeat. Silence deletes Chrome after 5 minutes. Each machine has a 2-hour budget
+> per 24-hour accounting window, Browser Run `keep_alive` is 10 minutes,
 > and the client remembers the last http(s) URL for transparent restart. Creation and
 > action limits apply per signed subject + IP and per IP alone. Responses may include
 > `idleTimeoutMs`, `budget`, and `EBUDGET`/`EIDLE`/`EOWNER`/`ECAPACITY` errors.
@@ -105,6 +111,13 @@ and mint capability-bearing session handles for tabs.
     an injected WebSocket factory, then immediately
     `Cloudflare.getLiveView { mode: "tab", expiresInMs: 3600000 }` and use **that** URL
     for the iframe (1h ≫ session life, so no refresh loop needed).
+  - On each heartbeat cadence while this tab is visible, focused, and owns the machine,
+    `Page.getFrameTree` plus `Page.createIsolatedWorld` bounds the current frame set, then
+    `Runtime.evaluate` idempotently installs/queries each randomized, non-writable
+    trusted-input tracker. Isolated worlds prevent page scripts from forging the signal.
+    A recent remote age or recent trusted local input authorizes the Worker heartbeat; the
+    query alone never does. Navigation gets fresh worlds on the next query, and
+    evaluation/CSP/navigation failures fail closed.
   - On ws close/error: one `refresh` attempt (Worker `POST /session/{id}/refresh`,
     reconnect); if that fails → state `ended`. Idle keep_alive expiry lands here too.
   - Window close (`app_close`, dock, chrome ✕) → best-effort `DELETE /session/{id}` +
@@ -188,8 +201,10 @@ Unit (`bun test src`):
 - `cdp.test.ts`: request/response id matching, command timeout, marker prefixes on
   every evaluate the client emits, event dispatch, close settles pending calls.
 - `session.test.ts`: create → live URL comes from `getLiveView` not the 5-min REST URL;
-  ws drop → one refresh attempt → ended; window close fires DELETE; worker URL
-  resolution order (query > localStorage > env > default).
+  remote trusted-input recent/stale/absent validation, synthetic-event exclusion,
+  visibility/ownership gating, navigation reinstallation; ws drop → one refresh attempt
+  → ended; window close fires DELETE; Worker URL resolution order (query > localStorage
+  > env > default).
 - `browserTools.test.ts`: schema validation (http/https only, selector required, text
   cap), singleton `browser_open` second-call behavior, screenshot cap retry logic (fake
   transport returning oversized then small), `browser_site_tools` no-WebMCP error,

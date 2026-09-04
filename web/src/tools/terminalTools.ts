@@ -120,7 +120,7 @@ export const termExecTool = defineTool<TermExecInput>({
         ...(rawTimeout === undefined ? {} : { timeout_ms: rawTimeout }),
         appId: "terminal",
       },
-      async () => {
+      async (signal) => {
         const command = requireString(rawCommand, "command");
         const timeoutMs = rawTimeout === undefined ? DEFAULT_TIMEOUT_MS : requireTimeout(rawTimeout);
         const pid = resolveTermExecPid(rawPid);
@@ -128,7 +128,7 @@ export const termExecTool = defineTool<TermExecInput>({
         useKernelStore.getState().focus(pid);
         const session = terminalSession(pid);
         await session.waitForView();
-        const result = await session.run(command, "agent", { timeoutMs });
+        const result = await session.run(command, "agent", { timeoutMs, signal });
         const stdout = truncateTerminalOutput(result.stdout);
         const stderr = truncateTerminalOutput(result.stderr);
         return {

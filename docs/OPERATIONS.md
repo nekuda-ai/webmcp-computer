@@ -227,7 +227,7 @@ capacity remain the deployment-wide cost backstops:
 | Successful anonymous publishes | 20 / window | `EPUBLISHQUOTA` |
 | Remote Chrome idle | deleted after 5 min without heartbeat | `EIDLE` |
 | Container idle | stopped after 5 min without exec | `EIDLE` |
-| Client heartbeat | every 60 s while tab visible | |
+| Client heartbeat | every 60 s after recent trusted local or remote-page input while the owning tab is visible and focused | |
 | Browser Run `keep_alive` max | 10 min | |
 | Platform full | | `ECAPACITY` |
 | Wrong owner | | `EOWNER` |

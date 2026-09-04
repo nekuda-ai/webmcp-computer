@@ -107,7 +107,7 @@ export function createCloudExecTool(dependencies?: CloudExecDependencies) {
           ...(input?.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
           appId: "terminal",
         },
-        async () => {
+        async (signal) => {
           const request = requireInput(input);
           const pid = resolveTermExecPid(undefined);
           useKernelStore.getState().focus(pid);
@@ -116,6 +116,7 @@ export function createCloudExecTool(dependencies?: CloudExecDependencies) {
           const remote: { result?: CloudExecResult } = {};
           const result = await session.run(`cloud ${shellQuote(request.command)}`, "agent", {
             timeoutMs: (request.timeoutMs ?? DEFAULT_TIMEOUT_MS) + LOCAL_TIMEOUT_GRACE_MS,
+            signal,
             ...(dependencies === undefined ? {} : { cloudExecDependencies: dependencies }),
             cloudExecRequest: request,
             onCloudExecResult(value) {

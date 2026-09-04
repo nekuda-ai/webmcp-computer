@@ -38,6 +38,7 @@ type RunOptions = {
   inputAlreadyRendered?: boolean;
   typeDelayMs?: number;
   timeoutMs?: number;
+  signal?: AbortSignal;
   cloudExecDependencies?: CloudExecDependencies;
   cloudExecRequest?: CloudExecRequest;
   onCloudExecResult?: (result: CloudExecResult) => void;
@@ -205,6 +206,9 @@ export class TerminalSessionController {
   ): Promise<ShellResult> {
     this.syncIdentity();
     const activeRun: ActiveRun = { controller: new AbortController(), command };
+    const abortFromCaller = () => activeRun.controller.abort(options.signal?.reason);
+    if (options.signal?.aborted) abortFromCaller();
+    else options.signal?.addEventListener("abort", abortFromCaller, { once: true });
     this.activeRun = activeRun;
     const prompt = promptFor(this.shell, source);
     let timeout: ReturnType<typeof globalThis.setTimeout> | undefined;
@@ -229,6 +233,7 @@ export class TerminalSessionController {
         }
       }
 
+      if (options.signal?.aborted) throw options.signal.reason;
       if (activeRun.reason === "interrupt") {
         this.shell.lastExitCode = 130;
         return { stdout: "", stderr: "", exitCode: 130 };
@@ -277,6 +282,7 @@ export class TerminalSessionController {
           this.emit({ type: "clear" });
         },
       });
+      if (options.signal?.aborted) throw options.signal.reason;
       if (activeRun.reason === "timeout") {
         throw new Error(`webmcp-computer: command timed out after ${(options.timeoutMs ?? 0) / 1_000}s`);
       }
@@ -286,6 +292,7 @@ export class TerminalSessionController {
       }
       return result;
     } finally {
+      options.signal?.removeEventListener("abort", abortFromCaller);
       if (timeout !== undefined) globalThis.clearTimeout(timeout);
       if (this.activeRun === activeRun) this.activeRun = undefined;
       useKernelStore.getState().setProcessCwd(this.pid, this.shell.cwd);

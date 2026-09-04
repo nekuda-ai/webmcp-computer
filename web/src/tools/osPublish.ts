@@ -162,7 +162,7 @@ export function createOsPublishTool(
     intent: "transact",
     execute(input) {
       const path = input?.path;
-      return runAgentAction("os_publish", { path: path ?? "~/site" }, async () => {
+      return runAgentAction("os_publish", { path: path ?? "~/site" }, async (signal) => {
         // Resolve defaults at invocation time so a bad optional override becomes a
         // traced tool failure instead of breaking boot while tools register.
         const runtime = dependencies ?? defaultDependencies();
@@ -170,12 +170,14 @@ export function createOsPublishTool(
         let response: Response;
         try {
           const authorization = await runtime.authorization?.() ?? {};
+          if (signal.aborted) throw signal.reason;
           response = await runtime.fetch(
             `${runtime.workerBaseUrl}/ws/${runtime.workspaceId}/publish`,
             {
-            method: "POST",
-            headers: { "Content-Type": "application/json", ...authorization },
-            body: JSON.stringify({ files: collected.files }),
+              method: "POST",
+              headers: { "Content-Type": "application/json", ...authorization },
+              body: JSON.stringify({ files: collected.files }),
+              signal,
             },
           );
         } catch (error) {

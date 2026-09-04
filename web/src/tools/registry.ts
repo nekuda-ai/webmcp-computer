@@ -455,8 +455,11 @@ export function createSiteToolRegistryScope(
         annotations: { ...ACT_ANNOTATIONS, untrustedContentHint: true },
         intent: "act",
         async execute(input) {
-          return await runAgentAction(name, { appId, pid }, async () => {
+          return await runAgentAction(name, { appId, pid }, async (ownershipSignal) => {
             const controller = new AbortController();
+            const ownershipLost = () => controller.abort(ownershipSignal.reason);
+            if (ownershipSignal.aborted) ownershipLost();
+            else ownershipSignal.addEventListener("abort", ownershipLost, { once: true });
             activeCalls.set(controller, name);
             let timeout: ReturnType<typeof setTimeout> | undefined;
             const timedOut = new Promise<never>((_resolve, reject) => {
@@ -476,6 +479,7 @@ export function createSiteToolRegistryScope(
               }
               return result;
             } finally {
+              ownershipSignal.removeEventListener("abort", ownershipLost);
               if (timeout !== undefined) clearTimeout(timeout);
               activeCalls.delete(controller);
             }

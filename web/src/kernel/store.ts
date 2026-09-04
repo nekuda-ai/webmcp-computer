@@ -47,7 +47,10 @@ type KernelData = {
   settings: WebMCPComputerSettings;
   settingsLoaded: boolean;
   toolRegistryGroups: ToolRegistryGroup[];
+  /** Screensaver/general activity, including agent calls. */
   lastActivityAt: number;
+  /** Trusted human interaction only; paid-resource presence must use this timestamp. */
+  lastHumanActivityAt: number;
   machineConflict: boolean;
 };
 
@@ -88,6 +91,7 @@ type KernelActions = {
   setToolRegistryGroup: (group: ToolRegistryGroup) => void;
   removeToolRegistryGroup: (id: string) => void;
   recordActivity: () => void;
+  recordHumanActivity: () => void;
   activateScreensaver: () => void;
   setMachineConflict: (conflict: boolean) => void;
   restoreSession: (snapshot: SessionSnapshot) => void;
@@ -118,6 +122,7 @@ const createInitialData = (): KernelData => ({
   settingsLoaded: false,
   toolRegistryGroups: [],
   lastActivityAt: Date.now(),
+  lastHumanActivityAt: 0,
   machineConflict: false,
 });
 
@@ -572,6 +577,11 @@ export const useKernelStore = create<KernelState>()((set, get) => ({
 
   recordActivity() {
     set({ lastActivityAt: Date.now() });
+  },
+
+  recordHumanActivity() {
+    const now = Date.now();
+    set({ lastActivityAt: now, lastHumanActivityAt: now });
   },
 
   activateScreensaver() {
