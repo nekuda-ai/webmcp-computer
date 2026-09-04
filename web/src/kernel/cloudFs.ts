@@ -114,12 +114,13 @@ export function resolveComputerWorkerUrl(
   options: ComputerWorkerResolutionOptions = {},
 ): string {
   if (hostedSessionSnapshot().status === "active") return hostedWorkerUrl("computer");
+  const envUrl = options.envUrl ?? import.meta.env.VITE_COMPUTER_WORKER_URL;
   return resolveWorkerUrl({
     queryKey: "computer_worker",
     storageKey: "webmcp_computer.computer_worker",
     label: "computer",
     ...(options.defaultUrl === undefined ? {} : { defaultUrl: options.defaultUrl }),
-    envUrl: options.envUrl ?? import.meta.env.VITE_COMPUTER_WORKER_URL,
+    ...(envUrl === undefined ? {} : { envUrl }),
     ...(options.search === undefined ? {} : { search: options.search }),
     ...(options.storage === undefined ? {} : { storage: options.storage }),
     ...(options.production === undefined ? {} : { production: options.production }),

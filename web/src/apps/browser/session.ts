@@ -242,12 +242,13 @@ export function resolveBrowserWorkerUrl(
   options: BrowserWorkerResolutionOptions = {},
 ): string {
   if (hostedSessionSnapshot().status === "active") return hostedWorkerUrl("browser");
+  const envUrl = options.envUrl ?? import.meta.env.VITE_BROWSER_WORKER_URL;
   return resolveWorkerUrl({
     queryKey: "browser_worker",
     storageKey: "webmcp_computer.browser_worker",
     label: "browser",
     ...(options.defaultUrl === undefined ? {} : { defaultUrl: options.defaultUrl }),
-    envUrl: options.envUrl ?? import.meta.env.VITE_BROWSER_WORKER_URL,
+    ...(envUrl === undefined ? {} : { envUrl }),
     ...(options.search === undefined ? {} : { search: options.search }),
     ...(options.storage === undefined ? {} : { storage: options.storage }),
     ...(options.production === undefined ? {} : { production: options.production }),
