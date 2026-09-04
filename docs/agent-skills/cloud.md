@@ -52,9 +52,10 @@ workspace; warm execution is normally sub-second. Timeout defaults to 5 minutes 
 at 10 minutes. One command may run per workspace at a time. Each machine gets at most
 2 hours of container runtime per 24-hour budget window. The server destroys the container
 5 minutes after the last command finishes, and the next command restarts it transparently;
-workspace files persist in the Durable Object. Ctrl-C disconnects the local stream so the
-shell does not hang, but it does not cancel the remote process; that process can continue
-until its timeout.
+workspace files persist in the Durable Object. Ctrl-C disconnects the local stream and asks
+the remote process to stop with SIGINT. Signal delivery is best effort, so the process may
+still continue until its timeout; the Worker drains completion in either case so filesystem
+sync and runtime-budget release still occur.
 
 Budget and capacity refusals explain when to retry. Write, exec, and publish actions are
 rate-limited both per signed subject + IP and per IP, so clearing browser state cannot

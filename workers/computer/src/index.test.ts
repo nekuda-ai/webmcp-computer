@@ -10,7 +10,13 @@ import {
   type WorkspaceExecResult,
   type WorkspaceHandle,
 } from "./handler";
-import { MAX_EXEC_REQUEST_BYTES, MAX_FS_READ_BYTES, MAX_FS_WRITE_BYTES } from "./handler";
+import {
+  MAX_EXEC_REQUEST_BYTES,
+  MAX_FS_READ_BYTES,
+  MAX_FS_READDIR_ENTRIES,
+  MAX_FS_RESPONSE_BYTES,
+  MAX_FS_WRITE_BYTES,
+} from "./handler";
 import { BUDGET_WINDOW_MS, PUBLISH_QUOTA_LIMIT } from "../../../shared/session-limits";
 import { MAX_FS_BATCH_OPERATIONS, PUBLISHED_SITE_RETENTION_DAYS } from "./protocol";
 import { randomSlug } from "./slug";
@@ -33,6 +39,7 @@ function claimingExecHandle(
   result: WorkspaceExecResult,
   onDispose: () => void,
   onStreamEnd: () => void = () => undefined,
+  onKill: (signal: "SIGINT") => void = () => undefined,
 ): WorkspaceExecHandle {
   let index = 0;
   let streamed = false;
@@ -54,6 +61,7 @@ function claimingExecHandle(
       }
       return result;
     },
+    async kill(signal: "SIGINT" = "SIGINT") { onKill(signal); },
     [Symbol.dispose]: onDispose,
   });
 }
@@ -86,7 +94,7 @@ class MemoryWorkspace {
         return stat;
       },
       statOrNull: async (path: string) => this.stat(path) ?? null,
-      readdir: async (path: string) => {
+      readdir: async (path: string, options?: { limit?: number; offset?: number }) => {
         if (!this.directories.has(path)) {
           if (this.files.has(path)) throw coded(`not a directory: ${path}`, "ENOTDIR");
           throw coded(`no such directory: ${path}`, "ENOENT");
@@ -98,10 +106,12 @@ class MemoryWorkspace {
           const name = candidate.slice(prefix.length).split("/")[0];
           if (name) names.add(name);
         }
-        return [...names].sort().map((name) => {
+        const entries = [...names].sort().map((name) => {
           const candidate = `${path === "/" ? "" : path}/${name}`;
           return this.stat(candidate)!;
         });
+        const offset = options?.offset ?? 0;
+        return entries.slice(offset, options?.limit === undefined ? undefined : offset + options.limit);
       },
       mkdir: async (path: string, options?: { recursive?: boolean }) => {
         if (this.files.has(path)) throw coded(`file exists: ${path}`, "EEXIST");
@@ -246,6 +256,7 @@ function fixture(options: {
   const execCalls: Array<{ command: string; options: Record<string, unknown> }> = [];
   const getExecCalls: Array<{ id: string; options: Record<string, unknown> }> = [];
   let execDisposeCount = 0;
+  const killCalls: string[] = [];
   const execEvents = options.execEvents ?? [
     { name: "stdout", value: "one\n" },
     { name: "stderr", value: "warning\n" },
@@ -274,6 +285,7 @@ function fixture(options: {
             liveStream = false;
           },
           () => { liveStream = false; },
+          (signal) => { killCalls.push(signal); },
         );
       },
       async getExec(id: string, getOptions: Record<string, unknown>) {
@@ -379,6 +391,7 @@ function fixture(options: {
     execCalls,
     getExecCalls,
     execDisposeCount: () => execDisposeCount,
+    killCalls,
     leaseCalls,
     quotaCalls,
     rateCalls,
@@ -399,7 +412,7 @@ function fsRequest(body: unknown, suffix = ""): Request {
   });
 }
 
-function execRequest(body: unknown, wsid = WSID): Request {
+function execRequest(body: unknown, wsid = WSID, signal?: AbortSignal): Request {
   return new Request(`https://computer.test/ws/${wsid}/exec`, {
     method: "POST",
     headers: {
@@ -408,6 +421,7 @@ function execRequest(body: unknown, wsid = WSID): Request {
       Origin: "https://app.test",
     },
     body: JSON.stringify(body),
+    signal,
   });
 }
 
@@ -504,6 +518,67 @@ describe("computer worker", () => {
     );
     expect(response.status).toBe(413);
     expect(await response.json() as unknown).toEqual({ error: "read exceeds 2 MB", code: "EFBIG" });
+  });
+
+  test("rejects a batch before serialized read results exceed the aggregate response cap", async () => {
+    const value = fixture();
+    const bytes = new Uint8Array(MAX_FS_READ_BYTES);
+    for (let index = 0; index < 4; index += 1) {
+      value.workspace.files.set(`/workspace/part-${index}.bin`, bytes);
+    }
+
+    const response = await handleRequest(fsRequest(Array.from({ length: 4 }, (_, index) => ({
+      op: "read",
+      path: `/part-${index}.bin`,
+    })), "/batch"), value.env, value.dependencies);
+
+    expect(MAX_FS_RESPONSE_BYTES).toBe(8 * 1_024 * 1_024);
+    expect(response.status).toBe(413);
+    expect(await response.json() as unknown).toEqual({
+      error: "filesystem response exceeds 8 MB",
+      code: "EFBIG",
+    });
+    expect(value.workspace.disposeCount).toBe(1);
+  });
+
+  test("caps public readdir through the SDK limit while internal rename traverses every page", async () => {
+    const oversized = fixture();
+    for (let index = 0; index <= MAX_FS_READDIR_ENTRIES; index += 1) {
+      oversized.workspace.files.set(`/workspace/file-${String(index).padStart(4, "0")}`, encoder.encode("x"));
+    }
+    const readdirCalls: Array<{ limit?: number; offset?: number } | undefined> = [];
+    const readdir = oversized.workspace.client.fs.readdir;
+    oversized.workspace.client.fs.readdir = async (path, options) => {
+      readdirCalls.push(options);
+      return await readdir(path, options);
+    };
+
+    const publicResponse = await handleRequest(
+      fsRequest({ op: "readdir", path: "/" }),
+      oversized.env,
+      oversized.dependencies,
+    );
+    expect(publicResponse.status).toBe(413);
+    expect(await publicResponse.json() as unknown).toEqual({
+      error: `directory exceeds ${MAX_FS_READDIR_ENTRIES} entries`,
+      code: "EFBIG",
+    });
+    expect(readdirCalls[0]).toEqual({ limit: MAX_FS_READDIR_ENTRIES + 1 });
+
+    const recursive = fixture();
+    recursive.workspace.directories.add("/workspace/source");
+    for (let index = 0; index <= MAX_FS_READDIR_ENTRIES; index += 1) {
+      recursive.workspace.files.set(`/workspace/source/file-${String(index).padStart(4, "0")}`, encoder.encode("x"));
+    }
+    const moved = await handleRequest(fsRequest({
+      op: "rename",
+      path: "/source",
+      to: "/destination",
+    }), recursive.env, recursive.dependencies);
+    expect(moved.status).toBe(200);
+    expect([...recursive.workspace.files.keys()].filter((path) => path.startsWith("/workspace/destination/")))
+      .toHaveLength(MAX_FS_READDIR_ENTRIES + 1);
+    expect([...recursive.workspace.files.keys()].some((path) => path.startsWith("/workspace/source/"))).toBe(false);
   });
 
   test("rejects directory rename collisions before copying or deleting source data", async () => {
@@ -1019,58 +1094,71 @@ describe("computer worker", () => {
     expect(frames[2]?.data).toEqual({ message: "webmcp-computer: cloud output truncated after 2 MB" });
   });
 
-  test("continues the bounded remote run after the SSE client disconnects", async () => {
-    const value = fixture();
-    let release = () => {};
-    const remoteOutput = new Promise<void>((resolve) => { release = resolve; });
-    let resultCalls = 0;
-    let markFinished = () => {};
-    const remoteFinished = new Promise<void>((resolve) => { markFinished = resolve; });
-    let runDisposeCount = 0;
-    const run: WorkspaceExecHandle = Object.assign(new ReadableStream<WorkspaceExecEvent>({
-      async start(controller) {
-        await remoteOutput;
-        controller.enqueue({ name: "stdout", value: "finished\n" });
-        controller.close();
-      },
-    }), {
-      id: "run-disconnect",
-      async result() { throw new Error("result-after-stream must not be called"); },
-      [Symbol.dispose]() {
-        runDisposeCount += 1;
-        markFinished();
-      },
-    });
-    const resultRun = claimingExecHandle("run-disconnect", [], {
-      exitCode: 0,
-      pushed: 0,
-      pulled: 0,
-      sync: { status: "complete", applied: 0 },
-    }, () => {});
-    const resultMethod = resultRun.result;
-    Object.defineProperty(resultRun, "result", {
-      value: async () => {
-        resultCalls += 1;
-        return await resultMethod();
-      },
-    });
-    Object.assign(value.workspace.client, {
-      runtime: {
-        async exec() { return run; },
-        async getExec() { return resultRun; },
-      },
-    });
+  for (const cancellation of ["response stream", "request signal"] as const) {
+    test(`best-effort kills, drains, syncs, and releases once on ${cancellation} cancellation`, async () => {
+      const value = fixture();
+      let finishRemote = () => {};
+      const remoteOutput = new Promise<void>((resolve) => { finishRemote = resolve; });
+      let resultCalls = 0;
+      let markFinished = () => {};
+      const remoteFinished = new Promise<void>((resolve) => { markFinished = resolve; });
+      let runDisposeCount = 0;
+      const killCalls: string[] = [];
+      const run: WorkspaceExecHandle = Object.assign(new ReadableStream<WorkspaceExecEvent>({
+        async start(controller) {
+          await remoteOutput;
+          controller.enqueue({ name: "stdout", value: "interrupted\n" });
+          controller.close();
+        },
+      }), {
+        id: "run-cancel",
+        async result() { throw new Error("result-after-stream must not be called"); },
+        async kill(signal: "SIGINT" = "SIGINT") {
+          killCalls.push(signal);
+          finishRemote();
+        },
+        [Symbol.dispose]() {
+          runDisposeCount += 1;
+          markFinished();
+        },
+      });
+      const resultRun = claimingExecHandle("run-cancel", [], {
+        exitCode: 130,
+        pushed: 0,
+        pulled: 1,
+        sync: { status: "complete", applied: 1 },
+      }, () => {});
+      const resultMethod = resultRun.result;
+      Object.defineProperty(resultRun, "result", {
+        value: async () => {
+          resultCalls += 1;
+          return await resultMethod();
+        },
+      });
+      Object.assign(value.workspace.client, {
+        runtime: {
+          async exec() { return run; },
+          async getExec() { return resultRun; },
+        },
+      });
+      const abort = new AbortController();
 
-    const response = await handleRequest(execRequest({ command: "sleep 60" }), value.env, value.dependencies);
-    const canceling = response.body?.cancel();
-    release();
-    await canceling;
-    await remoteFinished;
+      const response = await handleRequest(
+        execRequest({ command: "sleep 60" }, WSID, abort.signal),
+        value.env,
+        value.dependencies,
+      );
+      if (cancellation === "response stream") await response.body?.cancel("client disconnected");
+      else abort.abort("ownership lost");
+      await remoteFinished;
 
-    expect(resultCalls).toBe(1);
-    expect(runDisposeCount).toBe(1);
-    expect(value.workspace.disposeCount).toBe(1);
-  });
+      expect(killCalls).toEqual(["SIGINT"]);
+      expect(resultCalls).toBe(1);
+      expect(runDisposeCount).toBe(1);
+      expect(value.leaseCalls).toEqual(["acquire:360000", "started", "release"]);
+      expect(value.workspace.disposeCount).toBe(1);
+    });
+  }
 
   test("turns upstream exec failures into one SSE error event", async () => {
     const value = fixture({ execError: new Error("computerd exited with code 137\nretry later") });

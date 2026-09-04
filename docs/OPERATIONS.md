@@ -240,6 +240,7 @@ capacity remain the deployment-wide cost backstops:
 | Per file | 256 KB |
 | Per site | 2 MB |
 | Filesystem API read/copy | 2 MB per file; oversized container-created files return HTTP 413 with `code: EFBIG` and rename refuses them before deleting the source |
+| Filesystem API response | 8 MB aggregate serialized JSON; public `readdir` is capped at 1,000 entries and oversized responses return HTTP 413 with `code: EFBIG` (internal rename traversal remains paginated and complete) |
 | Exec request body | 16 KB streamed limit; command remains capped at 8 KB |
 | Per machine/workspace | 20 successful publishes per fixed 24-hour accounting window (workspace Durable Object ledger) |
 | Quota response | HTTP 429 JSON with `code: EPUBLISHQUOTA` and `retryAfterMs` |
@@ -268,6 +269,13 @@ count is hard-capped by `max_instances`; Browser Run is capped at 200 concurrent
 
 Both Workers have `observability.enabled` with `head_sampling_rate: 1`.
 
+Container cleanup precedence is deliberate: pending sync beats the 5-minute idle deadline,
+including across repeated bounded SDK retry cycles, but the 2-hour runtime budget beats sync.
+At that hard deadline the Worker performs a final retry before stopping the paid runtime. If
+that retry cannot recover the bytes, the durable intent is retained for diagnosis but cannot
+keep scheduling a billable container indefinitely; operators must treat the terminal log as
+possible loss of files that existed only in the container.
+
 ```sh
 wr tail webmcp-computer-cloud                        # production
 wr tail webmcp-computer-cloud --env staging
@@ -294,7 +302,8 @@ notifications (verify the exact product name available on the account). Recommen
 | 429 spike | status 429 rate up | abuse or a client loop; check per-IP |
 | Browser API failures | browser Worker 5xx, log lines mentioning Browser Rendering / session creation | token revoked, Browser Run concurrency cap (200) or launch rate (3/s), Cloudflare incident |
 | Container start failures | computer Worker `ECAPACITY` responses or container errors | `max_instances` reached, image rollout, account vCPU limit |
-| Exhausted / lost sync retries | log `WebMCP Computer workspace sync retry` with a failed result, or `sync retry rescheduled` repeating | container unreachable; cleanup remains deferred while durable retry intent exists, preserving the container copy for investigation/recovery |
+| Exhausted / lost sync retries | log `WebMCP Computer workspace sync retry` with a failed result, or `sync retry rescheduled` repeating | container unreachable; SDK exhaustion starts another bounded retry cycle and idle cleanup remains deferred while runtime budget remains |
+| Terminal sync failure at runtime budget | log `workspace sync terminal failure: runtime budget takes precedence` | the 2 h paid-runtime limit is absolute: the alarm makes one final pull attempt, retains the intent for diagnostics, disarms its wakeup, and destroys the container even if files remain unsynced; this unavoidable case can lose the container-only copy |
 | Repeated `cleanup-retry` lease outcomes | log `WebMCP Computer runtime lease` | container destroy is failing; the DO keeps charging runtime and durably schedules another cleanup attempt |
 | Budget/cost | Cloudflare billing threshold notification | runaway usage |
 

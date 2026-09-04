@@ -58,6 +58,7 @@ describe("workspace alarm coordination", () => {
         await scheduler.clear("container");
         return { status: "complete" };
       },
+      async runtimeCleanupReason() { return "idle" as const; },
       async handleRuntimeLease() {
         events.push("cleanup");
         await alarms.clear(RUNTIME_LEASE_ALARM);
@@ -93,6 +94,7 @@ describe("workspace alarm coordination", () => {
         await scheduler.clear("container");
         return { status: "complete" as const };
       },
+      async runtimeCleanupReason() { return "idle" as const; },
       async handleRuntimeLease() {
         events.push(`cleanup:${now}`);
         await alarms.clear(RUNTIME_LEASE_ALARM);
@@ -114,6 +116,28 @@ describe("workspace alarm coordination", () => {
     expect(memory.getAlarm()).toBeNull();
   });
 
+  test("never defers idle cleanup past the hard runtime budget deadline", async () => {
+    const memory = memoryAlarmStorage();
+    const alarms = new AlarmSlots(memory.storage);
+    const scheduler = new DurableSyncRetryScheduler(memory.storage, alarms);
+    await scheduler.schedule({ backend: "container", attempt: 1, notBefore: 50_000 });
+    await alarms.set(RUNTIME_LEASE_ALARM, 1_000);
+
+    await coordinateWorkspaceAlarm({
+      alarms,
+      backend: "container",
+      now: 1_000,
+      getPendingSync: () => scheduler.get("container"),
+      async retryPendingSync() { return { status: "pending" }; },
+      async runtimeCleanupReason() { return "idle"; },
+      async runtimeHardBudgetDeadline() { return 10_000; },
+      async handleRuntimeLease() { throw new Error("cleanup must remain deferred"); },
+    });
+
+    expect(await alarms.get(RUNTIME_LEASE_ALARM)).toBe(10_000);
+    expect(memory.getAlarm()).toBe(10_000);
+  });
+
   test("rearms the multiplexed alarm even when an unexpected handler error escapes", async () => {
     const memory = memoryAlarmStorage();
     const alarms = new AlarmSlots(memory.storage);
@@ -127,6 +151,7 @@ describe("workspace alarm coordination", () => {
       now: 1_000,
       async getPendingSync() { return undefined; },
       async retryPendingSync() { return { status: "idle" }; },
+      async runtimeCleanupReason() { return "idle" as const; },
       async handleRuntimeLease() { throw new Error("unexpected cleanup error"); },
     })).rejects.toThrow("unexpected cleanup error");
 
@@ -149,6 +174,7 @@ describe("workspace alarm coordination", () => {
       now: 1_000,
       getPendingSync: () => scheduler.get("container"),
       async retryPendingSync() { throw new Error("transport failed"); },
+      async runtimeCleanupReason() { return "idle" as const; },
       async handleRuntimeLease() { cleanupCalls += 1; },
       onSyncError(error) { errors.push(error); },
     });
@@ -158,6 +184,88 @@ describe("workspace alarm coordination", () => {
     expect(await alarms.get(syncRetryAlarmSlot("container"))).toBe(31_000);
     expect(await alarms.get(RUNTIME_LEASE_ALARM)).toBe(31_000);
     expect(memory.getAlarm()).toBe(31_000);
+  });
+
+  test("starts another bounded SDK retry cycle after exhaustion and eventually syncs", async () => {
+    const memory = memoryAlarmStorage();
+    const alarms = new AlarmSlots(memory.storage);
+    const scheduler = new DurableSyncRetryScheduler(memory.storage, alarms);
+    await scheduler.schedule({ backend: "container", runtimeId: "runtime-1", attempt: 12, notBefore: 1_000 });
+    await alarms.set(RUNTIME_LEASE_ALARM, 1_000);
+    const events: string[] = [];
+    let retries = 0;
+    const options = (now: number) => ({
+      alarms,
+      backend: "container",
+      now,
+      getPendingSync: () => scheduler.get("container"),
+      async retryPendingSync() {
+        retries += 1;
+        events.push(`sync:${now}:${retries}`);
+        if (retries === 1) return { status: "exhausted" as const };
+        await scheduler.clear("container");
+        return { status: "complete" as const };
+      },
+      async runtimeCleanupReason() { return "idle" as const; },
+      async handleRuntimeLease() {
+        events.push(`cleanup:${now}`);
+        await alarms.clear(RUNTIME_LEASE_ALARM);
+      },
+    });
+
+    await coordinateWorkspaceAlarm(options(1_000));
+    expect(events).toEqual(["sync:1000:1"]);
+    expect(await scheduler.get("container")).toEqual({
+      backend: "container",
+      runtimeId: "runtime-1",
+      attempt: 12,
+      notBefore: 1_000,
+    });
+    expect(await alarms.get(RUNTIME_LEASE_ALARM)).toBe(31_000);
+
+    await coordinateWorkspaceAlarm(options(31_000));
+    expect(events).toEqual(["sync:1000:1", "sync:31000:2", "cleanup:31000"]);
+    expect(await scheduler.get("container")).toBeUndefined();
+    expect(memory.getAlarm()).toBeNull();
+  });
+
+  test("hard budget forces one final retry and cleanup even while exhausted intent remains", async () => {
+    const memory = memoryAlarmStorage();
+    const alarms = new AlarmSlots(memory.storage);
+    const scheduler = new DurableSyncRetryScheduler(memory.storage, alarms);
+    await scheduler.schedule({ backend: "container", runtimeId: "runtime-1", attempt: 12, notBefore: 60_000 });
+    await alarms.set(RUNTIME_LEASE_ALARM, 1_000);
+    const events: string[] = [];
+    const terminal: unknown[] = [];
+    let retries = 0;
+
+    await coordinateWorkspaceAlarm({
+      alarms,
+      backend: "container",
+      now: 1_000,
+      getPendingSync: () => scheduler.get("container"),
+      async retryPendingSync() {
+        retries += 1;
+        events.push(`sync:${retries}`);
+        return { status: "exhausted" as const };
+      },
+      async runtimeCleanupReason() { return "budget" as const; },
+      async handleRuntimeLease() {
+        events.push("cleanup");
+        await alarms.clear(RUNTIME_LEASE_ALARM);
+      },
+      onTerminalSyncFailure(event) { terminal.push(event); },
+    });
+
+    expect(events).toEqual(["sync:1", "cleanup"]);
+    expect(terminal).toEqual([expect.objectContaining({
+      reason: "runtime-budget",
+      status: "exhausted",
+      intent: expect.objectContaining({ attempt: 12 }),
+    })]);
+    expect(await scheduler.get("container")).toEqual(expect.objectContaining({ attempt: 12 }));
+    expect(await alarms.get(syncRetryAlarmSlot("container"))).toBeUndefined();
+    expect(memory.getAlarm()).toBeNull();
   });
 });
 

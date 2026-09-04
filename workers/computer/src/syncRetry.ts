@@ -12,7 +12,8 @@ export function syncRetryAlarmSlot(backend: string): string {
 /**
  * The SDK leaves exhausted retry intent for diagnostics, but that must not leave its
  * already-due alarm slot armed forever. Pending results schedule themselves; every terminal
- * or idle result releases the slot.
+ * or idle result releases the slot. The alarm coordinator explicitly rearms exhausted intent
+ * while runtime budget remains, because SDK 0.2.1 will retry that retained cursor when called.
  */
 export async function settleSyncRetryAlarm(
   alarms: AlarmSlots,

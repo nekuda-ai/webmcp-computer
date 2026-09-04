@@ -139,7 +139,8 @@ export class WebMCPComputerWorkspace extends ContainerBase {
 
   // SIGKILL rather than SIGTERM: the platform otherwise waits up to 15 minutes for the
   // process to exit, and we would pay for every one of them. The next exec relaunches;
-  // the filesystem is authoritative in this DO, so nothing durable is lost.
+  // the DO filesystem is normally authoritative because cleanup waits for sync. The hard
+  // budget's explicitly logged terminal-sync path is the unavoidable exception.
   async #stopContainer(): Promise<void> {
     const container = this.ctx.container;
     if (!container?.running) return;
@@ -153,6 +154,8 @@ export class WebMCPComputerWorkspace extends ContainerBase {
       now: Date.now(),
       getPendingSync: () => this.syncRetries.get(this.backend.id),
       retryPendingSync: () => this.workspace.retryPendingSync(this.backend.id),
+      runtimeCleanupReason: () => this.#withLease(() => this.lease.cleanupReason()),
+      runtimeHardBudgetDeadline: () => this.#withLease(() => this.lease.hardBudgetDeadline()),
       handleRuntimeLease: async () => {
         const outcome = await this.#withLease(() => this.lease.onAlarm(() => this.#stopContainer()));
         if (outcome !== "kept") console.log("WebMCP Computer runtime lease", JSON.stringify({ outcome }));
@@ -162,6 +165,13 @@ export class WebMCPComputerWorkspace extends ContainerBase {
       },
       onSyncError(error) {
         console.error("WebMCP Computer workspace sync retry rescheduled", error);
+      },
+      onTerminalSyncFailure(failure) {
+        console.error(
+          "WebMCP Computer workspace sync terminal failure: runtime budget takes precedence; " +
+          "destroying container after final retry while retaining diagnostic intent",
+          failure,
+        );
       },
     });
   }
@@ -185,7 +195,7 @@ function handlerWorkspace(client: WorkspaceClient): WorkspaceHandle {
     exists: (path) => workspaceFs(client).exists(path),
     stat: (path) => workspaceFs(client).stat(path),
     statOrNull: (path) => workspaceFs(client).statOrNull(path),
-    readdir: (path) => workspaceFs(client).readdir(path),
+    readdir: (path, options) => workspaceFs(client).readdir(path, options),
     mkdir: (path, options) => workspaceFs(client).mkdir(path, options),
     rm: (path, options) => workspaceFs(client).rm(path, options),
   };

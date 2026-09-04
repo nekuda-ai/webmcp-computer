@@ -138,6 +138,23 @@ export class RuntimeLease {
     return budgetSnapshot(await this.#load(now), this.#budgetMs, now);
   }
 
+  /** Why the current lease alarm may clean up, without mutating the ledger. */
+  async cleanupReason(): Promise<"none" | "wait" | "idle" | "budget"> {
+    const now = this.#now();
+    const state = await this.#load(now);
+    if (state.runningSince === undefined) return "none";
+    const verdict = judgeRun(state, this.#budgetMs, this.#idleMs, now);
+    return verdict.action === "keep" ? "wait" : verdict.reason;
+  }
+
+  /** Absolute deadline after which pending sync may no longer defer paid cleanup. */
+  async hardBudgetDeadline(): Promise<number> {
+    const now = this.#now();
+    const state = await this.#load(now);
+    if (state.runningSince === undefined) return Number.POSITIVE_INFINITY;
+    return now + budgetSnapshot(state, this.#budgetMs, now).remainingMs;
+  }
+
   /**
    * Alarm handler. `stop` must make the container not running; it is awaited before the
    * run is booked so a failing stop keeps charging (and keeps the alarm armed).

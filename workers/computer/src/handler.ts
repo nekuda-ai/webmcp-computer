@@ -24,6 +24,9 @@ const EXEC_LEASE_GRACE_MS = 60_000;
 export const MAX_FS_WRITE_BYTES = 2 * 1_024 * 1_024;
 export const MAX_FS_READ_BYTES = 2 * 1_024 * 1_024;
 export const MAX_FS_REQUEST_BYTES = 8 * 1_024 * 1_024;
+export const MAX_FS_RESPONSE_BYTES = 8 * 1_024 * 1_024;
+export const MAX_FS_READDIR_ENTRIES = 1_000;
+const INTERNAL_READDIR_PAGE_ENTRIES = 1_000;
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
@@ -78,7 +81,7 @@ export type WorkspaceFileSystem = {
   exists(path: string): Promise<boolean>;
   stat(path: string): Promise<WorkspaceStat>;
   statOrNull(path: string): Promise<WorkspaceStat | null>;
-  readdir(path: string): Promise<WorkspaceDirent[]>;
+  readdir(path: string, options?: { limit?: number; offset?: number }): Promise<WorkspaceDirent[]>;
   mkdir(path: string, options?: { recursive?: boolean }): Promise<void>;
   rm(path: string, options?: { recursive?: boolean }): Promise<void>;
 };
@@ -124,6 +127,7 @@ export type WorkspaceExecResult = {
 export type WorkspaceExecHandle = ReadableStream<WorkspaceExecEvent> & {
   readonly id: string;
   result(): Promise<WorkspaceExecResult>;
+  kill(signal?: "SIGINT"): Promise<void>;
   [Symbol.dispose](): void;
 };
 
@@ -435,6 +439,17 @@ function serializableStat(stat: WorkspaceStat) {
   };
 }
 
+async function* readdirAll(
+  fs: WorkspaceFileSystem,
+  path: string,
+): AsyncGenerator<WorkspaceDirent> {
+  for (let offset = 0;; offset += INTERNAL_READDIR_PAGE_ENTRIES) {
+    const page = await fs.readdir(path, { limit: INTERNAL_READDIR_PAGE_ENTRIES, offset });
+    for (const entry of page) yield entry;
+    if (page.length < INTERNAL_READDIR_PAGE_ENTRIES) return;
+  }
+}
+
 async function copyTree(
   fs: WorkspaceFileSystem,
   from: string,
@@ -445,7 +460,7 @@ async function copyTree(
     const destination = await fs.statOrNull(to);
     if (destination && !destination.isDirectory) throw coded(`not a directory: ${to}`, "ENOTDIR");
     if (!destination) await fs.mkdir(to, { recursive: true });
-    for (const entry of await fs.readdir(from)) {
+    for await (const entry of readdirAll(fs, from)) {
       await copyTree(fs, `${from === "/" ? "" : from}/${entry.name}`, `${to === "/" ? "" : to}/${entry.name}`);
     }
     return;
@@ -472,7 +487,7 @@ async function preflightCopySize(
     }
     return;
   }
-  for (const entry of await fs.readdir(path)) {
+  for await (const entry of readdirAll(fs, path)) {
     await preflightCopySize(fs, `${path === "/" ? "" : path}/${entry.name}`, entry);
   }
 }
@@ -491,7 +506,7 @@ async function preflightRename(
     if (!source.isDirectory && destination.isDirectory) {
       throw coded(`webmcp-computer: is a directory: ${from}`, "EISDIR");
     }
-    if (source.isDirectory && (await fs.readdir(to)).length > 0) {
+    if (source.isDirectory && (await fs.readdir(to, { limit: 1 })).length > 0) {
       throw coded(`webmcp-computer: directory not empty: ${to}`, "ENOTEMPTY");
     }
   }
@@ -521,9 +536,13 @@ async function executeFsOperation(
     case "mkdir":
       await fs.mkdir(operation.path, { recursive: operation.recursive ?? false });
       return { ok: true };
-    case "readdir":
+    case "readdir": {
+      const entries = await fs.readdir(operation.path, { limit: MAX_FS_READDIR_ENTRIES + 1 });
+      if (entries.length > MAX_FS_READDIR_ENTRIES) {
+        throw coded(`directory exceeds ${MAX_FS_READDIR_ENTRIES} entries`, "EFBIG");
+      }
       return {
-        entries: (await fs.readdir(operation.path)).map((entry) => ({
+        entries: entries.map((entry) => ({
           name: entry.name,
           size: entry.size,
           mtime: entry.mtime,
@@ -532,6 +551,7 @@ async function executeFsOperation(
           isSymbolicLink: entry.isSymbolicLink,
         })),
       };
+    }
     case "rm":
       await fs.rm(operation.path, { recursive: operation.recursive ?? false });
       return { ok: true };
@@ -600,16 +620,27 @@ async function workspaceResponse(
     // operation needs it (idempotent when present).
     await workspace.fs.mkdir(WORKSPACE_MOUNT_ROOT, { recursive: true });
     const responses: Array<Record<string, unknown>> = [];
+    let serializedBytes = batch ? 2 : 0; // JSON array brackets.
     for (const operation of operations) {
+      let result: Record<string, unknown>;
       try {
-        responses.push(await executeFsOperation(workspace.fs, operation));
+        result = await executeFsOperation(workspace.fs, operation);
       } catch (error) {
         if (!batch) throw error;
-        responses.push({
+        result = {
           error: oneLine(error instanceof Error ? error.message : error),
           code: errorCode(error),
-        });
+        };
       }
+      const resultBytes = textEncoder.encode(JSON.stringify(result)).byteLength;
+      serializedBytes += resultBytes + (batch && responses.length > 0 ? 1 : 0);
+      if (serializedBytes > MAX_FS_RESPONSE_BYTES) {
+        throw coded(
+          `filesystem response exceeds ${MAX_FS_RESPONSE_BYTES / 1_024 / 1_024} MB`,
+          "EFBIG",
+        );
+      }
+      responses.push(result);
     }
     return json(batch ? responses : responses[0]);
   } catch (error) {
@@ -837,6 +868,21 @@ async function execResponse(
     }
   }
 
+  let activeRun: WorkspaceExecHandle | undefined;
+  let killRequested = request.signal.aborted;
+  let killPromise: Promise<void> | undefined;
+  const requestRemoteKill = (): Promise<void> => {
+    killRequested = true;
+    if (activeRun === undefined) return Promise.resolve();
+    // SDK 0.2.1 exposes kill on the RPC-backed handle. Signalling is best effort:
+    // regardless of delivery, the worker keeps draining so post-command pull/sync and
+    // the single lease release still happen.
+    killPromise ??= activeRun.kill("SIGINT").catch(() => undefined);
+    return killPromise;
+  };
+  const onRequestAbort = () => { void requestRemoteKill(); };
+  request.signal.addEventListener("abort", onRequestAbort, { once: true });
+
   const body = new ReadableStream<Uint8Array>({
     async start(controller) {
       const send = (frame: Uint8Array) => {
@@ -858,8 +904,10 @@ async function execResponse(
           encoding: "utf8",
           timeoutMs: operation.timeoutMs,
         });
+        activeRun = run;
         runStarted = true;
         await lease?.started();
+        if (killRequested) await requestRemoteKill();
         let outputBytes = 0;
         let outputTruncated = false;
         const frames = new TransformStream<WorkspaceExecEvent, Uint8Array>({
@@ -919,6 +967,8 @@ async function execResponse(
         }
         send(sseFrame("error", failure));
       } finally {
+        activeRun = undefined;
+        request.signal.removeEventListener("abort", onRequestAbort);
         if (lease && !leaseSettled) await lease.release().catch(() => undefined);
         workspace[Symbol.dispose]();
         try {
@@ -927,6 +977,9 @@ async function execResponse(
           // Already closed by a disconnected client.
         }
       }
+    },
+    async cancel() {
+      await requestRemoteKill();
     },
   });
 

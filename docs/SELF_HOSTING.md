@@ -117,8 +117,10 @@ Every paid resource is leased per machine by a Durable Object, with the numbers 
   is set to its 10-minute maximum as a backstop.
 - Cloud container: 2 h of running time per 24-hour accounting window; destroyed 5 min after the last
   exec finishes, restarted transparently by the next exec (the filesystem lives in the
-  Durable Object, so nothing durable is lost). Cleanup waits for any pending container-to-DO
-  filesystem sync, and failed destroys are durably retried while runtime continues charging.
+  Durable Object). Idle cleanup waits for pending container-to-DO filesystem sync, including
+  repeated bounded retry cycles, and failed destroys are durably retried while runtime continues
+  charging. The hard 2 h budget takes precedence after one final sync retry; if that fails, the
+  diagnostic intent remains but container-only unsynced files are unavoidably lost on destruction.
 - Every action is rate-limited per signed subject + IP and per IP alone.
 
 Refusals are JSON `{ error, code, retryAfterMs? }` with `code` in `EBUDGET`, `EIDLE`,
@@ -199,8 +201,10 @@ Only Browser Worker needs `BROWSER_RENDERING_API_TOKEN`; Computer uses native bi
 - See `docs/OPERATIONS.md` for the runbook: deploys, cutover, secrets rotation,
   capacity, cost model, alerts, and published-site takedown.
 - Computer filesystem is authoritative in Durable Object SQLite. Container sync
-  failures persist retry intent and schedule DO alarm with bounded backoff. Runtime cleanup
-  is deferred to that sync deadline and never destroys the container while an intent remains.
+  failures persist retry intent and schedule DO alarms in bounded cycles. Idle cleanup is
+  deferred while an intent remains. At the hard 2 h runtime budget, one final pull runs before
+  cleanup; failure is logged explicitly and intent is retained for diagnosis, but cannot extend
+  paid runtime indefinitely.
 - Worker observability is enabled. Alert on 401 spikes, 429 spikes, Browser API
   failures, Container startup failures, and exhausted/lost sync retries.
 - Rotate gateway secret across site and both Workers together. Existing
