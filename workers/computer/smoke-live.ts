@@ -35,7 +35,13 @@ function check(name: string, ok: boolean, detail?: unknown): void {
   if (!ok) failures += 1;
 }
 
-async function post(path: string, body: unknown): Promise<{ status: number; text: string; json: any; headers: Headers }> {
+function record(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+async function post(path: string, body: unknown): Promise<{ status: number; text: string; json: unknown; headers: Headers }> {
   const response = await fetch(`${API}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Origin: ORIGIN, Authorization: `Bearer ${capability}` },
@@ -53,11 +59,11 @@ const unauthorized = await fetch(`${API}/ws/${workspace}/fs`, { method: "POST", 
 check("rejects a request without a capability", unauthorized.status === 401);
 
 const mkdir = await post(`/ws/${workspace}/fs`, { op: "mkdir", path: "/smoke", recursive: true });
-check("fs mkdir", mkdir.status === 200 && mkdir.json?.ok === true, mkdir.text);
+check("fs mkdir", mkdir.status === 200 && record(mkdir.json)?.ok === true, mkdir.text);
 const write = await post(`/ws/${workspace}/fs`, { op: "write", path: "/smoke/hello.txt", data: btoa("hello from smoke\n") });
 check("fs write", write.status === 200, write.text);
 const tooBig = await post(`/ws/${workspace}/fs`, { op: "write", path: "/smoke/big.bin", data: "A".repeat(3 * 1_024 * 1_024) });
-check("fs write over 2 MB is refused with 413", tooBig.status === 413 && tooBig.json?.code === "EFBIG", tooBig.text);
+check("fs write over 2 MB is refused with 413", tooBig.status === 413 && record(tooBig.json)?.code === "EFBIG", tooBig.text);
 
 console.log("  …   exec (container cold start; may take 10-40 s)");
 const startedAt = Date.now();
@@ -66,19 +72,23 @@ const elapsed = Math.round((Date.now() - startedAt) / 1_000);
 check(`exec streams SSE (${elapsed}s)`, exec.status === 200 && exec.headers.get("content-type")?.startsWith("text/event-stream") === true, exec.text.slice(0, 300));
 check("exec stdout contains the file we wrote", exec.text.includes("hello from smoke"), exec.text.slice(0, 500));
 const exitLine = exec.text.split("\n").find((line) => line.startsWith("data: {\"code\""));
-const exit = exitLine ? JSON.parse(exitLine.slice("data: ".length)) : undefined;
-check("exit frame carries code 0 and a budget snapshot", exit?.code === 0 && typeof exit?.budget?.remainingMs === "number", exit ?? exec.text.slice(-400));
-if (exit?.budget) console.log(`       budget: ${Math.round(exit.budget.remainingMs / 60_000)} min left, ${Math.round(exit.budget.usedMs / 1_000)} s used`);
+const exit = record(exitLine ? JSON.parse(exitLine.slice("data: ".length)) as unknown : undefined);
+const exitBudget = record(exit?.budget);
+check("exit frame carries code 0 and a budget snapshot", exit?.code === 0 && typeof exitBudget?.remainingMs === "number", exit ?? exec.text.slice(-400));
+if (typeof exitBudget?.remainingMs === "number" && typeof exitBudget.usedMs === "number") {
+  console.log(`       budget: ${Math.round(exitBudget.remainingMs / 60_000)} min left, ${Math.round(exitBudget.usedMs / 1_000)} s used`);
+}
 
 const publish = await post(`/ws/${workspace}/publish`, {
   files: [{ path: "index.html", content: "<!doctype html><title>smoke</title><h1>smoke ok</h1>" }],
 });
-check("publish returns a site URL", publish.status === 200 && typeof publish.json?.url === "string", publish.text);
-if (publish.json?.url) {
-  const site = await fetch(publish.json.url);
+const publishJson = record(publish.json);
+check("publish returns a site URL", publish.status === 200 && typeof publishJson?.url === "string", publish.text);
+if (typeof publishJson?.url === "string") {
+  const site = await fetch(publishJson.url);
   check("published site is served", site.status === 200 && (await site.text()).includes("smoke ok"));
   check("published site is noindex + sandboxed", site.headers.get("x-robots-tag")?.includes("noindex") === true && site.headers.get("content-security-policy")?.startsWith("sandbox") === true);
-  console.log(`       site: ${publish.json.url}`);
+  console.log(`       site: ${publishJson.url}`);
 }
 
 console.log(failures === 0 ? "smoke-live: all checks passed" : `smoke-live: ${failures} check(s) failed`);

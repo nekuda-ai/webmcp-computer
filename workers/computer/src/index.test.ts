@@ -10,7 +10,7 @@ import {
   type WorkspaceExecResult,
   type WorkspaceHandle,
 } from "./handler";
-import { MAX_FS_WRITE_BYTES } from "./handler";
+import { MAX_EXEC_REQUEST_BYTES, MAX_FS_READ_BYTES, MAX_FS_WRITE_BYTES } from "./handler";
 import { BUDGET_WINDOW_MS, PUBLISH_QUOTA_LIMIT } from "../../../shared/session-limits";
 import { MAX_FS_BATCH_OPERATIONS, PUBLISHED_SITE_RETENTION_DAYS } from "./protocol";
 import { randomSlug } from "./slug";
@@ -466,6 +466,46 @@ describe("computer worker", () => {
     expect(workspace.files.has("/workspace/site/index.html")).toBe(false);
   });
 
+  test("refuses oversized reads and rename copies without deleting or overwriting", async () => {
+    const value = fixture();
+    value.workspace.directories.add("/workspace/site");
+    value.workspace.files.set("/workspace/site/huge.bin", new Uint8Array(MAX_FS_READ_BYTES + 1));
+    value.workspace.files.set("/workspace/site/destination.bin", encoder.encode("keep"));
+
+    const read = await handleRequest(
+      fsRequest({ op: "read", path: "/site/huge.bin" }),
+      value.env,
+      value.dependencies,
+    );
+    expect(read.status).toBe(413);
+    expect(await read.json() as unknown).toEqual(expect.objectContaining({ code: "EFBIG" }));
+
+    const rename = await handleRequest(fsRequest({
+      op: "rename",
+      path: "/site/huge.bin",
+      to: "/site/destination.bin",
+    }), value.env, value.dependencies);
+    expect(rename.status).toBe(413);
+    expect(await rename.json() as unknown).toEqual(expect.objectContaining({ code: "EFBIG" }));
+    expect(value.workspace.files.has("/workspace/site/huge.bin")).toBe(true);
+    expect(decoder.decode(value.workspace.files.get("/workspace/site/destination.bin"))).toBe("keep");
+  });
+
+  test("bounds file streams even when a container file grows after stat", async () => {
+    const value = fixture();
+    value.workspace.files.set("/workspace/growing.bin", new Uint8Array(MAX_FS_READ_BYTES + 1));
+    const stat = value.workspace.client.fs.stat;
+    value.workspace.client.fs.stat = async (path) => ({ ...await stat(path), size: 1 });
+
+    const response = await handleRequest(
+      fsRequest({ op: "read", path: "/growing.bin" }),
+      value.env,
+      value.dependencies,
+    );
+    expect(response.status).toBe(413);
+    expect(await response.json() as unknown).toEqual({ error: "read exceeds 2 MB", code: "EFBIG" });
+  });
+
   test("rejects directory rename collisions before copying or deleting source data", async () => {
     const directoryFixture = fixture();
     directoryFixture.workspace.directories.add("/workspace/source");
@@ -874,6 +914,24 @@ describe("computer worker", () => {
     expect(MAX_FS_BATCH_OPERATIONS).toBe(128);
   });
 
+  test("bounds streamed exec JSON before parsing regardless of Content-Length", async () => {
+    const value = fixture();
+    const oversizedBody = JSON.stringify({ command: "x".repeat(MAX_EXEC_REQUEST_BYTES) });
+    const response = await handleRequest(new Request(`https://computer.test/ws/${WSID}/exec`, {
+      method: "POST",
+      headers: {
+        "Content-Length": "1",
+        "Content-Type": "application/json",
+      },
+      body: stream(encoder.encode(oversizedBody)),
+    }), value.env, value.dependencies);
+
+    expect(response.status).toBe(413);
+    expect(await response.json() as unknown).toEqual(expect.objectContaining({ code: "EFBIG" }));
+    expect(value.rateCalls.exec).toBe(0);
+    expect(value.workspace.disposeCount).toBe(0);
+  });
+
   test("validates capability-scoped exec input and clamps timeout", async () => {
     const { env, dependencies, execCalls } = fixture();
     expect((await handleRequest(execRequest({ command: "pwd" }, "bad"), env, dependencies)).status)
@@ -1096,8 +1154,9 @@ describe("computer worker", () => {
     expect(workspace.files.size).toBe(0);
   });
 
-  test("records a pseudonymous publisher in the site manifest and honours PUBLIC_SITE_ORIGIN", async () => {
-    const { env, dependencies, sites } = fixture({ publicSiteOrigin: "https://sites.example" });
+  test("records a pseudonymous publisher on an isolated workers.dev origin", async () => {
+    const publicOrigin = "https://webmcp-computer-cloud.account.workers.dev";
+    const { env, dependencies, sites } = fixture({ publicSiteOrigin: publicOrigin });
     const response = await handleRequest(
       new Request(`https://computer.test/ws/${WSID}/publish`, {
         method: "POST",
@@ -1110,7 +1169,7 @@ describe("computer worker", () => {
     expect(await response.json() as unknown).toEqual({
       expiresInDays: PUBLISHED_SITE_RETENTION_DAYS,
       id: "aaaaaaaa",
-      url: "https://sites.example/s/aaaaaaaa/",
+      url: `${publicOrigin}/s/aaaaaaaa/`,
     });
     const manifest = JSON.parse(decoder.decode(sites.values.get("sites/aaaaaaaa/.webmcp-computer-site")?.bytes)) as Record<string, unknown>;
     expect(manifest).toEqual({
@@ -1129,18 +1188,47 @@ describe("computer worker", () => {
       dependencies,
     );
     expect(trustedOrigin.status).toBe(404);
-    const publicOrigin = await handleRequest(
-      new Request("https://sites.example/s/aaaaaaaa/"),
+    const servedFromPublicOrigin = await handleRequest(
+      new Request(`${publicOrigin}/s/aaaaaaaa/`),
       env,
       dependencies,
     );
-    expect(publicOrigin.status).toBe(200);
+    expect(servedFromPublicOrigin.status).toBe(200);
   });
 
-  test("fails closed before uploading when PUBLIC_SITE_ORIGIN is invalid", async () => {
-    const { env, dependencies, sites } = fixture({ publicSiteOrigin: "http://trusted.example/path" });
+  test("fails closed before uploading for non-workers.dev publishing origins", async () => {
+    for (const configured of [
+      "https://cloud.webmcp.com",
+      "https://workers.dev.evil.example",
+      "http://sites.account.workers.dev",
+      "https://sites.account.workers.dev/",
+      "https://sites.account.workers.dev:8443",
+      "https://sites.account.workers.dev/path",
+      "https://sites.account.workers.dev?query=yes",
+      "https://sites.account.workers.dev#fragment",
+    ]) {
+      const { env, dependencies, sites } = fixture({ publicSiteOrigin: configured });
+      const response = await handleRequest(
+        new Request(`https://computer.test/ws/${WSID}/publish`, {
+          method: "POST",
+          body: JSON.stringify({ files: [{ path: "index.html", content: "x" }] }),
+        }),
+        env,
+        dependencies,
+      );
+      expect(response.status).toBe(502);
+      expect(await response.json() as unknown).toEqual({
+        error: "PUBLIC_SITE_ORIGIN must be an isolated workers.dev HTTPS origin",
+        code: "EIO",
+      });
+      expect(sites.values.size).toBe(0);
+    }
+  });
+
+  test("requires PUBLIC_SITE_ORIGIN outside explicit local and test hosts", async () => {
+    const { env, dependencies, sites } = fixture();
     const response = await handleRequest(
-      new Request(`https://computer.test/ws/${WSID}/publish`, {
+      new Request(`https://cloud.example/ws/${WSID}/publish`, {
         method: "POST",
         body: JSON.stringify({ files: [{ path: "index.html", content: "x" }] }),
       }),
@@ -1149,7 +1237,7 @@ describe("computer worker", () => {
     );
     expect(response.status).toBe(502);
     expect(await response.json() as unknown).toEqual({
-      error: "PUBLIC_SITE_ORIGIN must be an HTTPS origin without a path",
+      error: "PUBLIC_SITE_ORIGIN is required outside localhost and .test hosts",
       code: "EIO",
     });
     expect(sites.values.size).toBe(0);

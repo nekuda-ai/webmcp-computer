@@ -69,13 +69,31 @@ describe("runtime lease", () => {
     expect(fixture.stops).toHaveLength(1);
   });
 
-  test("a failing stop keeps charging and keeps the alarm armed", async () => {
+  test("durably retries repeated stop failures, keeps charging, and eventually books success", async () => {
     const fixture = leaseFixture();
     await fixture.lease.acquire(MINUTE);
     fixture.advance(10 * MINUTE);
-    await expect(fixture.lease.onAlarm(async () => { throw new Error("destroy failed"); })).rejects.toThrow("destroy failed");
+    let attempts = 0;
+    const stop = async () => {
+      attempts += 1;
+      if (attempts < 3) throw new Error("destroy failed");
+      fixture.stops.push(attempts);
+    };
+
+    expect(await fixture.lease.onAlarm(stop)).toBe("cleanup-retry");
     expect((await fixture.lease.budget()).usedMs).toBe(10 * MINUTE);
-    expect(await fixture.alarms.get(RUNTIME_LEASE_ALARM)).toBe(6 * MINUTE);
+    expect(await fixture.alarms.get(RUNTIME_LEASE_ALARM)).toBe(10 * MINUTE + 30_000);
+
+    fixture.advance(30_000);
+    expect(await fixture.lease.onAlarm(stop)).toBe("cleanup-retry");
+    expect((await fixture.lease.budget()).usedMs).toBe(10 * MINUTE + 30_000);
+    expect(await fixture.alarms.get(RUNTIME_LEASE_ALARM)).toBe(11 * MINUTE);
+
+    fixture.advance(30_000);
+    expect(await fixture.lease.onAlarm(stop)).toBe("stopped-idle");
+    expect(fixture.stops).toEqual([3]);
+    expect((await fixture.lease.budget()).usedMs).toBe(11 * MINUTE);
+    expect(await fixture.alarms.get(RUNTIME_LEASE_ALARM)).toBeUndefined();
   });
 
   test("the hard budget stops a busy container and refuses new execs until the window resets", async () => {

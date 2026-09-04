@@ -55,8 +55,12 @@ target with its own Worker name (`-staging` suffix), custom domain, Durable Obje
 namespace, R2 bucket, and rate-limit namespaces. Add `--env staging` to every
 `wrangler secret put` and `wrangler deploy` below to provision staging instead. Change
 the `routes` patterns to hostnames on a zone in your account, or delete them to use
-`workers.dev` only. Set `PUBLIC_SITE_ORIGIN` to that environment's `workers.dev` origin
-so anonymous user content never inherits your trusted app domain.
+`workers.dev` only. Set `PUBLIC_SITE_ORIGIN` to that environment's exact `workers.dev`
+HTTPS origin (for example, `https://<worker>.<account-subdomain>.workers.dev`, with no
+path, query, fragment, or trailing slash). The Worker rejects custom domains here so
+anonymous user content can never inherit your trusted app domain. Only local development
+requests on localhost/loopback and automated requests on `.test` hosts may omit the value
+and deliberately use their request origin.
 
 Create Browser Rendering API token with only Browser Rendering Edit permission.
 This runtime token is separate from Wrangler deployment authentication.
@@ -110,7 +114,8 @@ Every paid resource is leased per machine by a Durable Object, with the numbers 
   as a backstop.
 - Cloud container: 2 h of running time per 24-hour accounting window; destroyed 5 min after the last
   exec finishes, restarted transparently by the next exec (the filesystem lives in the
-  Durable Object, so nothing durable is lost).
+  Durable Object, so nothing durable is lost). Cleanup waits for any pending container-to-DO
+  filesystem sync, and failed destroys are durably retried while runtime continues charging.
 - Every action is rate-limited per signed subject + IP and per IP alone.
 
 Refusals are JSON `{ error, code, retryAfterMs? }` with `code` in `EBUDGET`, `EIDLE`,
@@ -191,7 +196,8 @@ Only Browser Worker needs `BROWSER_RENDERING_API_TOKEN`; Computer uses native bi
 - See `docs/OPERATIONS.md` for the runbook: deploys, cutover, secrets rotation,
   capacity, cost model, alerts, and published-site takedown.
 - Computer filesystem is authoritative in Durable Object SQLite. Container sync
-  failures persist retry intent and schedule DO alarm with bounded backoff.
+  failures persist retry intent and schedule DO alarm with bounded backoff. Runtime cleanup
+  is deferred to that sync deadline and never destroys the container while an intent remains.
 - Worker observability is enabled. Alert on 401 spikes, 429 spikes, Browser API
   failures, Container startup failures, and exhausted/lost sync retries.
 - Rotate gateway secret across site and both Workers together. Existing

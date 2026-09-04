@@ -30,7 +30,7 @@ export type LeaseAcquireResult =
   | { ok: true; budget: BudgetSnapshot }
   | { ok: false; error: LimitError; budget: BudgetSnapshot };
 
-export type LeaseAlarmOutcome = "none" | "kept" | "stopped-idle" | "stopped-budget";
+export type LeaseAlarmOutcome = "none" | "kept" | "cleanup-retry" | "stopped-idle" | "stopped-budget";
 
 export type RuntimeLeaseOptions = {
   budgetMs: number;
@@ -154,7 +154,14 @@ export class RuntimeLease {
       await this.#alarms.set(RUNTIME_LEASE_ALARM, verdict.checkAt);
       return "kept";
     }
-    await stop();
+    try {
+      await stop();
+    } catch {
+      // A failed destroy leaves the container billable. Persist another cleanup attempt
+      // instead of depending on the platform's finite retries of a rejected alarm.
+      await this.#alarms.set(RUNTIME_LEASE_ALARM, now + 30_000);
+      return "cleanup-retry";
+    }
     const { execActive: _execActive, provisional: _provisional, ...ledger } = state;
     await this.#save(endRun(ledger, this.#budgetMs, now));
     await this.#alarms.clear(RUNTIME_LEASE_ALARM);

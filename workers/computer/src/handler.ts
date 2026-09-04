@@ -15,14 +15,17 @@ const MAX_FILE_BYTES = 256 * 1_024;
 const MAX_TOTAL_BYTES = 2 * 1_024 * 1_024;
 const MAX_PUBLISH_REQUEST_BYTES = 3 * 1_024 * 1_024;
 const MAX_EXEC_COMMAND_BYTES = 8 * 1_024;
+export const MAX_EXEC_REQUEST_BYTES = 16 * 1_024;
 const MAX_EXEC_OUTPUT_BYTES = 2 * 1_024 * 1_024;
 const DEFAULT_EXEC_TIMEOUT_MS = 300_000;
 const MAX_EXEC_TIMEOUT_MS = 600_000;
 // Container start plus sync can outlast the command itself; never idle-stop inside this.
 const EXEC_LEASE_GRACE_MS = 60_000;
 export const MAX_FS_WRITE_BYTES = 2 * 1_024 * 1_024;
+export const MAX_FS_READ_BYTES = 2 * 1_024 * 1_024;
 export const MAX_FS_REQUEST_BYTES = 8 * 1_024 * 1_024;
 const textEncoder = new TextEncoder();
+const textDecoder = new TextDecoder();
 
 export type RateLimitBinding = {
   limit(options: { key: string }): Promise<{ success: boolean }>;
@@ -45,7 +48,7 @@ export type SiteStore = {
 export type HandlerEnv = {
   GATEWAY_SIGNING_SECRET: string;
   SITES: SiteStore;
-  /** HTTPS origin for user sites; deployed configs require it, tests may omit it. */
+  /** Isolated workers.dev HTTPS origin for user sites; local and .test requests may omit it. */
   PUBLIC_SITE_ORIGIN?: string;
   // Each action is limited twice: per signed subject+IP (fair share between machines on
   // one network) and per IP alone (a subject is free to mint, an IP is not).
@@ -183,7 +186,7 @@ function errorCode(error: unknown): string {
 function errorResponse(error: unknown, status?: number): Response {
   const code = errorCode(error);
   const message = oneLine(error instanceof Error ? error.message : error) || code;
-  return json({ error: message, code }, status ?? (code === "EINVAL" ? 400 : 409));
+  return json({ error: message, code }, status ?? (code === "EINVAL" ? 400 : code === "EFBIG" ? 413 : 409));
 }
 
 function coded(message: string, code: string): Error {
@@ -375,7 +378,11 @@ function base64ToBytes(value: string): Uint8Array {
   }
 }
 
-async function streamBytes(stream: ReadableStream<Uint8Array>): Promise<Uint8Array> {
+async function streamBytes(
+  stream: ReadableStream<Uint8Array>,
+  maxBytes = Number.POSITIVE_INFINITY,
+  tooLargeMessage = "stream is too large",
+): Promise<Uint8Array> {
   const chunks: Uint8Array[] = [];
   let length = 0;
   const reader = stream.getReader();
@@ -383,8 +390,12 @@ async function streamBytes(stream: ReadableStream<Uint8Array>): Promise<Uint8Arr
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-      chunks.push(value);
       length += value.byteLength;
+      if (length > maxBytes) {
+        await reader.cancel(tooLargeMessage).catch(() => undefined);
+        throw coded(tooLargeMessage, "EFBIG");
+      }
+      chunks.push(value);
     }
   } finally {
     reader.releaseLock();
@@ -396,6 +407,21 @@ async function streamBytes(stream: ReadableStream<Uint8Array>): Promise<Uint8Arr
     offset += chunk.byteLength;
   }
   return bytes;
+}
+
+async function boundedJsonBody(request: Request, maxBytes: number, tooLargeMessage: string): Promise<unknown> {
+  const contentLength = request.headers.get("Content-Length");
+  if (contentLength !== null && /^\d+$/.test(contentLength) && Number(contentLength) > maxBytes) {
+    throw coded(tooLargeMessage, "EFBIG");
+  }
+  const bytes = request.body === null
+    ? new Uint8Array()
+    : await streamBytes(request.body, maxBytes, tooLargeMessage);
+  try {
+    return JSON.parse(textDecoder.decode(bytes)) as unknown;
+  } catch {
+    throw coded("invalid JSON body", "EINVAL");
+  }
 }
 
 function serializableStat(stat: WorkspaceStat) {
@@ -426,8 +452,29 @@ async function copyTree(
   }
   const destination = await fs.statOrNull(to);
   if (destination?.isDirectory) throw coded(`is a directory: ${to}`, "EISDIR");
-  const bytes = await streamBytes(await fs.readFile(from));
+  const bytes = await streamBytes(
+    await fs.readFile(from),
+    MAX_FS_READ_BYTES,
+    `copy exceeds ${MAX_FS_READ_BYTES / 1_024 / 1_024} MB`,
+  );
   await fs.writeFile(to, bytes);
+}
+
+async function preflightCopySize(
+  fs: WorkspaceFileSystem,
+  path: string,
+  knownStat?: WorkspaceStat,
+): Promise<void> {
+  const stat = knownStat ?? await fs.stat(path);
+  if (!stat.isDirectory) {
+    if (stat.size > MAX_FS_READ_BYTES) {
+      throw coded(`copy exceeds ${MAX_FS_READ_BYTES / 1_024 / 1_024} MB`, "EFBIG");
+    }
+    return;
+  }
+  for (const entry of await fs.readdir(path)) {
+    await preflightCopySize(fs, `${path === "/" ? "" : path}/${entry.name}`, entry);
+  }
 }
 
 async function preflightRename(
@@ -437,16 +484,18 @@ async function preflightRename(
 ): Promise<void> {
   const source = await fs.stat(from);
   const destination = await fs.statOrNull(to);
-  if (!destination) return;
-  if (source.isDirectory && !destination.isDirectory) {
-    throw coded(`webmcp-computer: not a directory: ${from}`, "ENOTDIR");
+  if (destination) {
+    if (source.isDirectory && !destination.isDirectory) {
+      throw coded(`webmcp-computer: not a directory: ${from}`, "ENOTDIR");
+    }
+    if (!source.isDirectory && destination.isDirectory) {
+      throw coded(`webmcp-computer: is a directory: ${from}`, "EISDIR");
+    }
+    if (source.isDirectory && (await fs.readdir(to)).length > 0) {
+      throw coded(`webmcp-computer: directory not empty: ${to}`, "ENOTEMPTY");
+    }
   }
-  if (!source.isDirectory && destination.isDirectory) {
-    throw coded(`webmcp-computer: is a directory: ${from}`, "EISDIR");
-  }
-  if (source.isDirectory && (await fs.readdir(to)).length > 0) {
-    throw coded(`webmcp-computer: directory not empty: ${to}`, "ENOTEMPTY");
-  }
+  await preflightCopySize(fs, from, source);
 }
 
 async function executeFsOperation(
@@ -455,7 +504,15 @@ async function executeFsOperation(
 ): Promise<Record<string, unknown>> {
   switch (operation.op) {
     case "read": {
-      const data = await streamBytes(await fs.readFile(operation.path));
+      const stat = await fs.stat(operation.path);
+      if (stat.size > MAX_FS_READ_BYTES) {
+        throw coded(`read exceeds ${MAX_FS_READ_BYTES / 1_024 / 1_024} MB`, "EFBIG");
+      }
+      const data = await streamBytes(
+        await fs.readFile(operation.path),
+        MAX_FS_READ_BYTES,
+        `read exceeds ${MAX_FS_READ_BYTES / 1_024 / 1_024} MB`,
+      );
       return { data: bytesToBase64(data) };
     }
     case "write":
@@ -502,19 +559,15 @@ async function workspaceResponse(
   batch: boolean,
   keys: RateKeys,
 ): Promise<Response> {
-  const declaredLength = Number(request.headers.get("Content-Length") ?? "0");
-  if (Number.isFinite(declaredLength) && declaredLength > MAX_FS_REQUEST_BYTES) {
-    return errorResponse(coded(`request exceeds ${MAX_FS_REQUEST_BYTES / 1_024 / 1_024} MB`, "EFBIG"), 413);
-  }
   let parsed: unknown;
   try {
-    const text = await request.text();
-    if (textEncoder.encode(text).byteLength > MAX_FS_REQUEST_BYTES) {
-      return errorResponse(coded(`request exceeds ${MAX_FS_REQUEST_BYTES / 1_024 / 1_024} MB`, "EFBIG"), 413);
-    }
-    parsed = JSON.parse(text) as unknown;
-  } catch {
-    return errorResponse(coded("invalid JSON body", "EINVAL"), 400);
+    parsed = await boundedJsonBody(
+      request,
+      MAX_FS_REQUEST_BYTES,
+      `request exceeds ${MAX_FS_REQUEST_BYTES / 1_024 / 1_024} MB`,
+    );
+  } catch (error) {
+    return errorResponse(error, errorCode(error) === "EFBIG" ? 413 : 400);
   }
 
   let operations: FsOperation[];
@@ -619,14 +672,25 @@ async function allocateSiteId(store: SiteStore, randomSlug: () => string): Promi
 }
 
 function publicSiteOrigin(request: Request, env: HandlerEnv): string {
-  if (env.PUBLIC_SITE_ORIGIN === undefined) return new URL(request.url).origin;
+  if (env.PUBLIC_SITE_ORIGIN === undefined) {
+    const requestUrl = new URL(request.url);
+    const localOrTest = requestUrl.hostname === "localhost" ||
+      requestUrl.hostname === "127.0.0.1" || requestUrl.hostname === "[::1]" ||
+      requestUrl.hostname.endsWith(".localhost") || requestUrl.hostname.endsWith(".test");
+    if (localOrTest) return requestUrl.origin;
+    throw coded("PUBLIC_SITE_ORIGIN is required outside localhost and .test hosts", "EIO");
+  }
   try {
     const configured = new URL(env.PUBLIC_SITE_ORIGIN);
-    if (configured.protocol === "https:" && configured.origin === env.PUBLIC_SITE_ORIGIN) return configured.origin;
+    const workersDev = configured.hostname === "workers.dev" || configured.hostname.endsWith(".workers.dev");
+    if (
+      configured.protocol === "https:" && configured.port === "" && workersDev &&
+      configured.origin === env.PUBLIC_SITE_ORIGIN
+    ) return configured.origin;
   } catch {
     // Report the configuration error below without reflecting its value.
   }
-  throw coded("PUBLIC_SITE_ORIGIN must be an HTTPS origin without a path", "EIO");
+  throw coded("PUBLIC_SITE_ORIGIN must be an isolated workers.dev HTTPS origin", "EIO");
 }
 
 async function retryOnce<T>(operation: () => Promise<T>): Promise<T> {
@@ -646,19 +710,11 @@ async function publishResponse(
 ): Promise<Response> {
   if (await rateLimited(env.PUBLISH_RATE, env.PUBLISH_RATE_IP, keys)) return rateLimitedResponse();
 
-  const declaredLength = Number(request.headers.get("Content-Length") ?? "0");
-  if (Number.isFinite(declaredLength) && declaredLength > MAX_PUBLISH_REQUEST_BYTES) {
-    return errorResponse(coded("publish request exceeds 3 MB", "EFBIG"), 413);
-  }
   let value: unknown;
   try {
-    const text = await request.text();
-    if (textEncoder.encode(text).byteLength > MAX_PUBLISH_REQUEST_BYTES) {
-      return errorResponse(coded("publish request exceeds 3 MB", "EFBIG"), 413);
-    }
-    value = JSON.parse(text) as unknown;
-  } catch {
-    return errorResponse(coded("invalid JSON body", "EINVAL"), 400);
+    value = await boundedJsonBody(request, MAX_PUBLISH_REQUEST_BYTES, "publish request exceeds 3 MB");
+  } catch (error) {
+    return errorResponse(error, errorCode(error) === "EFBIG" ? 413 : 400);
   }
   try {
     const { files, bytes } = parsePublishFiles(value);
@@ -748,9 +804,9 @@ async function execResponse(
 ): Promise<Response> {
   let parsed: unknown;
   try {
-    parsed = await request.json();
-  } catch {
-    return errorResponse(coded("invalid JSON body", "EINVAL"), 400);
+    parsed = await boundedJsonBody(request, MAX_EXEC_REQUEST_BYTES, "exec request exceeds 16 KB");
+  } catch (error) {
+    return errorResponse(error, errorCode(error) === "EFBIG" ? 413 : 400);
   }
 
   let operation: ExecOperation;

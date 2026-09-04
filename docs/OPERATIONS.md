@@ -28,8 +28,10 @@ alias wr='bunx wrangler@4.128.0'
 
 The Site selects Workers through server-side `BROWSER_WORKER_URL` and
 `COMPUTER_WORKER_URL` settings. Keep staging private at the hosting layer. Published user
-content should use a separate, untrusted origin: set `PUBLIC_SITE_ORIGIN` to the Computer
-Worker's `workers.dev` origin rather than its custom application domain.
+content must use a separate, untrusted origin: set `PUBLIC_SITE_ORIGIN` to the Computer
+Worker's exact HTTPS `workers.dev` origin rather than its custom application domain. The
+value must have no path, query, fragment, port, or trailing slash; the Worker rejects all
+non-`workers.dev` hostnames.
 
 Both R2 buckets must carry a 30-day lifecycle rule on prefix `sites/`:
 
@@ -137,7 +139,7 @@ repository. Do these steps in order and do not skip observation.
 | `GATEWAY_SIGNING_SECRET` | site backend (OpenAI Sites), browser Worker, computer Worker | >= 32 bytes. `openssl rand -base64 48`. Must be identical on all three per environment. |
 | `CF_ACCOUNT_ID` | browser Worker | Cloudflare's 32-character account ID; set as a secret, not source. |
 | `BROWSER_RENDERING_API_TOKEN` | browser Worker | Cloudflare API token, permission **Browser Rendering: Edit** only. |
-| `PUBLIC_SITE_ORIGIN` | computer Worker | Its untrusted `workers.dev` HTTPS origin; keeps user HTML off the custom API domain. |
+| `PUBLIC_SITE_ORIGIN` | computer Worker | Exact untrusted `https://<worker>.<account-subdomain>.workers.dev` origin, without a trailing slash; custom domains are rejected. |
 | `BROWSER_WORKER_URL`, `COMPUTER_WORKER_URL` | site backend | HTTPS origins of the Workers. |
 | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` | GitHub environments `staging`, `production` | Deploy-only; never a runtime secret. |
 
@@ -237,6 +239,8 @@ capacity remain the deployment-wide cost backstops:
 | Files per site | 64 |
 | Per file | 256 KB |
 | Per site | 2 MB |
+| Filesystem API read/copy | 2 MB per file; oversized container-created files return HTTP 413 with `code: EFBIG` and rename refuses them before deleting the source |
+| Exec request body | 16 KB streamed limit; command remains capped at 8 KB |
 | Per machine/workspace | 20 successful publishes per fixed 24-hour accounting window (workspace Durable Object ledger) |
 | Quota response | HTTP 429 JSON with `code: EPUBLISHQUOTA` and `retryAfterMs` |
 | Reservation safety | Caller-ID retries are idempotent; abandoned pre-upload reservations stop blocking after 5 min. Immediately before the first R2 put they become active and cannot expire within that accounting window. Any attempted put is conservatively committed because bytes may have become public. |
@@ -290,7 +294,8 @@ notifications (verify the exact product name available on the account). Recommen
 | 429 spike | status 429 rate up | abuse or a client loop; check per-IP |
 | Browser API failures | browser Worker 5xx, log lines mentioning Browser Rendering / session creation | token revoked, Browser Run concurrency cap (200) or launch rate (3/s), Cloudflare incident |
 | Container start failures | computer Worker `ECAPACITY` responses or container errors | `max_instances` reached, image rollout, account vCPU limit |
-| Exhausted / lost sync retries | log `WebMCP Computer workspace sync retry` with a failed result, or `sync retry rescheduled` repeating | container unreachable; DO alarm backoff exhausted; workspace and container diverging |
+| Exhausted / lost sync retries | log `WebMCP Computer workspace sync retry` with a failed result, or `sync retry rescheduled` repeating | container unreachable; cleanup remains deferred while durable retry intent exists, preserving the container copy for investigation/recovery |
+| Repeated `cleanup-retry` lease outcomes | log `WebMCP Computer runtime lease` | container destroy is failing; the DO keeps charging runtime and durably schedules another cleanup attempt |
 | Budget/cost | Cloudflare billing threshold notification | runaway usage |
 
 ---

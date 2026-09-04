@@ -30,9 +30,10 @@ import {
   type WorkspaceLease,
 } from "./handler";
 import { PublishQuota } from "./publishQuota";
-import { RUNTIME_LEASE_ALARM, RuntimeLease } from "./runtimeLease";
+import { RuntimeLease } from "./runtimeLease";
 import { randomSlug } from "./slug";
-import { DurableSyncRetryScheduler, settleSyncRetryAlarm, syncRetryAlarmSlot } from "./syncRetry";
+import { DurableSyncRetryScheduler } from "./syncRetry";
+import { coordinateWorkspaceAlarm } from "./workspaceAlarm";
 
 export { WorkspaceProxy } from "@cloudflare/computer";
 
@@ -49,7 +50,10 @@ class ContainerBase extends withWorkspaceContainer(class extends DurableObject<E
   });
 }
 
-function workspaceOptions(self: InstanceType<typeof ContainerBase>, alarms: AlarmSlots): WorkspaceOptions {
+function workspaceOptions(
+  self: InstanceType<typeof ContainerBase>,
+  syncRetries: DurableSyncRetryScheduler,
+): WorkspaceOptions {
   // @cloudflare/computer 0.2.1 and current workers-types carry structurally
   // equivalent SQL generics that TypeScript cannot unify across package copies.
   const { ctx } = self as unknown as { ctx: DurableObjectState };
@@ -59,7 +63,7 @@ function workspaceOptions(self: InstanceType<typeof ContainerBase>, alarms: Alar
     storage: ctx.storage as unknown as DurableObjectStorageLike,
     backends: [self.backend],
     observer: createCloudflareObserver({ tracing }),
-    retryScheduler: new DurableSyncRetryScheduler(ctx.storage, alarms),
+    retryScheduler: syncRetries,
     retry: {
       initialDelayMs: 2_000,
       maxDelayMs: 60_000,
@@ -75,7 +79,8 @@ export class WebMCPComputerWorkspace extends ContainerBase {
     idleMs: CLOUD_IDLE_MS,
   });
   readonly publishQuota = new PublishQuota(this.ctx.storage);
-  readonly workspace = new Workspace(workspaceOptions(this, this.alarms));
+  readonly syncRetries = new DurableSyncRetryScheduler(this.ctx.storage, this.alarms);
+  readonly workspace = new Workspace(workspaceOptions(this, this.syncRetries));
   #leaseOperation: Promise<void> = Promise.resolve();
 
   #withLease<T>(operation: () => Promise<T>): Promise<T> {
@@ -141,31 +146,24 @@ export class WebMCPComputerWorkspace extends ContainerBase {
     await container.destroy();
   }
 
-  override async alarm(alarmInfo?: { retryCount: number; isRetry: boolean }): Promise<void> {
-    const now = Date.now();
-    const due = new Set(await this.alarms.due(now));
-
-    if (due.has(RUNTIME_LEASE_ALARM)) {
-      const outcome = await this.#withLease(() => this.lease.onAlarm(() => this.#stopContainer()));
-      if (outcome !== "kept") console.log("WebMCP Computer runtime lease", JSON.stringify({ outcome }));
-    }
-
-    if (due.has(syncRetryAlarmSlot(this.backend.id))) {
-      try {
-        const result = await this.workspace.retryPendingSync(this.backend.id);
-        await settleSyncRetryAlarm(this.alarms, this.backend.id, result.status);
+  override async alarm(): Promise<void> {
+    await coordinateWorkspaceAlarm({
+      alarms: this.alarms,
+      backend: this.backend.id,
+      now: Date.now(),
+      getPendingSync: () => this.syncRetries.get(this.backend.id),
+      retryPendingSync: () => this.workspace.retryPendingSync(this.backend.id),
+      handleRuntimeLease: async () => {
+        const outcome = await this.#withLease(() => this.lease.onAlarm(() => this.#stopContainer()));
+        if (outcome !== "kept") console.log("WebMCP Computer runtime lease", JSON.stringify({ outcome }));
+      },
+      onSyncResult(result) {
         console.log("WebMCP Computer workspace sync retry", JSON.stringify(result));
-      } catch (error) {
-        if ((alarmInfo?.retryCount ?? 0) >= 5) {
-          await this.alarms.set(syncRetryAlarmSlot(this.backend.id), Date.now() + 30_000);
-          console.error("WebMCP Computer workspace sync retry rescheduled", error);
-          return;
-        }
-        throw error;
-      }
-    }
-
-    await this.alarms.rearm();
+      },
+      onSyncError(error) {
+        console.error("WebMCP Computer workspace sync retry rescheduled", error);
+      },
+    });
   }
 }
 
