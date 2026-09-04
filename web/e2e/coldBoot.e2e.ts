@@ -16,6 +16,7 @@ export const BOOT_TOOL_NAMES = [
   "window_move",
   "window_resize",
   "sys_status",
+  "machine_take_over",
   "screensaver_wake",
   "os_manual",
   "os_search",
