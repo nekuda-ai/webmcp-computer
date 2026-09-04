@@ -4,6 +4,7 @@ import type {
   CloudExecRequest,
   CloudExecResult,
 } from "../cloudExec";
+import type { MachineMutationAdmission } from "../ownershipAdmission";
 
 export type ShellExecutionSource = Extract<EventSource, "agent" | "human">;
 
@@ -54,8 +55,18 @@ export type ShellProcessContext = {
   finish(pid: number): void;
   list(): ShellProcess[];
   kill(pid: number): ShellProcess | undefined;
-  open(target: string, cwd: string, source: ShellExecutionSource): Promise<ShellProcess>;
-  serve(target: string, cwd: string, source: ShellExecutionSource): Promise<ServedShellProcess>;
+  open(
+    target: string,
+    cwd: string,
+    source: ShellExecutionSource,
+    admission: MachineMutationAdmission,
+  ): Promise<ShellProcess>;
+  serve(
+    target: string,
+    cwd: string,
+    source: ShellExecutionSource,
+    admission: MachineMutationAdmission,
+  ): Promise<ServedShellProcess>;
   events(): readonly ShellEvent[];
 };
 
@@ -63,6 +74,7 @@ export type CommandContext = {
   session: ShellSession;
   stdin: string;
   source: ShellExecutionSource;
+  ownershipAdmission: MachineMutationAdmission;
   processes: ShellProcessContext;
   signal?: AbortSignal;
   cloudExecDependencies?: CloudExecDependencies;

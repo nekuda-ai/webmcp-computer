@@ -7,6 +7,10 @@ import type {
   ShellProcess,
   ShellProcessContext,
 } from "./shell/types";
+import {
+  assertMachineMutationAdmission,
+  type MachineMutationAdmission,
+} from "./ownershipAdmission";
 
 function windowProcess(pid: number): ShellProcess | undefined {
   const state = useKernelStore.getState();
@@ -69,16 +73,19 @@ async function openTarget(
   target: string,
   cwd: string,
   source: ShellExecutionSource,
+  admission: MachineMutationAdmission,
 ): Promise<ShellProcess> {
   const state = useKernelStore.getState();
   const appId = APP_IDS.find((candidate) => candidate === target);
   let process;
   if (appId) {
     if (appId === "ui") throw new Error("webmcp-computer: agent-made App windows open through ui_open");
+    assertMachineMutationAdmission(admission);
     process = state.spawn(appId);
   } else {
     const path = resolveShellPath(cwd, target);
     const targetStat = await stat(path);
+    assertMachineMutationAdmission(admission);
     if (targetStat.kind === "file") {
       if (!isTextFile(path)) throw new Error(`webmcp-computer: not a text file: ${path} (${targetStat.size} bytes)`);
       process = state.spawn("editor", { path });
@@ -98,6 +105,7 @@ async function serveTarget(
   target: string,
   cwd: string,
   source: ShellExecutionSource,
+  admission: MachineMutationAdmission,
 ) {
   const root = resolveShellPath(cwd, target);
   const targetStat = await stat(root);
@@ -111,6 +119,7 @@ async function serveTarget(
     }
     throw error;
   }
+  assertMachineMutationAdmission(admission);
   const state = useKernelStore.getState();
   const existing = state.processes.find((process) => process.appId === "preview");
   const process = existing ?? state.spawn("preview", { path: root });

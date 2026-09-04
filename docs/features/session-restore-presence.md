@@ -5,6 +5,23 @@ inhabited, and everything a human can do to a window, an agent can do through th
 contract. BRIEF rules bind throughout — especially 3 (every control has a verb), 4
 (visible traces), and 6 (manual ships with the machine).
 
+> **Scale-readiness amendment:** A tab is pending and fully interaction/agent/heartbeat
+> blocked until its exclusive Web Lock is granted. A confirmed competing tab offers
+> **Take over**; stealing the lock immediately blocks the previous owner, aborts agent work
+> and every active human Terminal command, and discards queued human Terminal commands.
+> Human- and agent-attributed filesystem mutations carry the ownership epoch captured when
+> they were invoked and recheck it immediately before changing canonical bytes, including
+> after filesystem locks, preflight reads, and asynchronous update callbacks. Reacquiring
+> ownership never revives an old ticket. System seed and repair writes remain admitted while
+> ownership is pending. Editor and Notes autosaves retain the ticket from scheduling, so a
+> pending save fails without marking its stale snapshot clean. A remote mutation already
+> accepted by a Worker cannot be undone; cancellation and the final admission check only
+> prevent further local work and stale success reporting. The 500 ms BroadcastChannel probe
+> distinguishes a live peer from a normal reload without opening an admission window.
+> BroadcastChannel is not a safe mutex
+> for suspended tabs, so strict enforcement requires Web Locks. Browsers without that API
+> remain visibly degraded and usable for one-tab local work, with Browser heartbeat disabled.
+
 ## Scope, in priority order
 
 1. **Browser-installation session restore.** Refreshing or reopening the browser restores the machine's exact desktop:

@@ -170,3 +170,15 @@ describe("Sites demo session broker", () => {
     expect(await method.json()).toEqual({ error: "method not allowed" });
   });
 });
+
+describe("Sites response hardening", () => {
+  test("adds security headers to assets and API responses", async () => {
+    const asset = await handleRequest(new Request("https://webmcp-computer.example/app.js"), env());
+    expect(asset.headers.get("Strict-Transport-Security")).toBe("max-age=31536000; includeSubDomains");
+    expect(asset.headers.get("X-Content-Type-Options")).toBe("nosniff");
+    expect(asset.headers.get("Referrer-Policy")).toBe("strict-origin-when-cross-origin");
+    const session = await handleRequest(sessionRequest(), env());
+    expect(session.headers.get("Strict-Transport-Security")).toBe("max-age=31536000; includeSubDomains");
+  });
+
+});

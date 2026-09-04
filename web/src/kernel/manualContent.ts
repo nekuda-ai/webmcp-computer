@@ -22,13 +22,13 @@ export const AGENT_SKILL_FILES = {
 
 // Intentional review pin: changing shipped manual bytes requires updating this map.
 export const AGENT_SKILL_SHA256 = {
-  "README.md": "4cbb848863f3aa0c997cfc1d42fde34c9cbed8fbdc9bc27cbc9d5e610257ad61",
+  "README.md": "f928e73abfc9913c2f4c05cbbd4c5171fe7c10902cda0676087de5dfc901f9c2",
   "apps.md": "37f3bebef6421e2bfb6a86bc218c10b1006116103c117ae46ce1def0597a63ea",
-  "browser.md": "f49f9d6e14113ba2be2ac358f23404cc360c18c10e3425d8f61539929f38cdac",
-  "cloud.md": "f1d2d527da48110c55041e892dca9590dd88bfd7d446deab074ca626a5edc14c",
-  "conventions.md": "103b28b4cfa1f62d259880f445c6269df13f8a7fec448d5d1f3ff50f36836dbd",
+  "browser.md": "89dfece5fbd031babfefbd8d1e4858dcbf49b154acd95c9b118aeaf769f6da1c",
+  "cloud.md": "d29ab133e72eb99557469a1b2631b0ccebafd9ada782bae9da774b87999c6ccc",
+  "conventions.md": "d09cbdf9df7e735bb91f0f99baba854c36c25fc913ff24d18d0a095d1bdaec0e",
   "filesystem.md": "081d2e4655d8b70a51611bd49f6cf629936d27a986dcc7e30299acf1f70e2113",
   "preview.md": "91744db371a3aa17d1763d708b1e1f63f3d3e5306100fc64cbeb9bcb03cc45b4",
   "terminal.md": "c9cd83702f234905cb32b3f53d434850cfeff470e2b528252022a5628e144149",
-  "windows.md": "e0604e5076e4217b34f5f5a718ef52ab915050af5432431aef83100625dac8a5",
+  "windows.md": "97981e174406b7350f242ac59f31ce10dff0eb98135f9b92ada2f7db8dc86a7f",
 } as const;

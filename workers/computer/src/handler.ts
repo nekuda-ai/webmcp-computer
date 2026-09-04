@@ -1,5 +1,7 @@
 import { MAX_FS_BATCH_OPERATIONS, PUBLISHED_SITE_RETENTION_DAYS } from "./protocol";
 import type { GatewayCapabilityClaims } from "../../../shared/gateway-capability";
+import type { BudgetSnapshot, LimitError } from "../../../shared/session-limits";
+import type { PublishQuotaResult } from "./publishQuota";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Headers": "Authorization, Content-Type",
@@ -11,11 +13,22 @@ const SITE_ID = /^[a-z0-9]{8}$/;
 const MAX_FILES = 64;
 const MAX_FILE_BYTES = 256 * 1_024;
 const MAX_TOTAL_BYTES = 2 * 1_024 * 1_024;
+const MAX_PUBLISH_REQUEST_BYTES = 3 * 1_024 * 1_024;
 const MAX_EXEC_COMMAND_BYTES = 8 * 1_024;
+export const MAX_EXEC_REQUEST_BYTES = 16 * 1_024;
 const MAX_EXEC_OUTPUT_BYTES = 2 * 1_024 * 1_024;
 const DEFAULT_EXEC_TIMEOUT_MS = 300_000;
 const MAX_EXEC_TIMEOUT_MS = 600_000;
+// Container start plus sync can outlast the command itself; never idle-stop inside this.
+const EXEC_LEASE_GRACE_MS = 60_000;
+export const MAX_FS_WRITE_BYTES = 2 * 1_024 * 1_024;
+export const MAX_FS_READ_BYTES = 2 * 1_024 * 1_024;
+export const MAX_FS_REQUEST_BYTES = 8 * 1_024 * 1_024;
+export const MAX_FS_RESPONSE_BYTES = 8 * 1_024 * 1_024;
+export const MAX_FS_READDIR_ENTRIES = 1_000;
+const INTERNAL_READDIR_PAGE_ENTRIES = 1_000;
 const textEncoder = new TextEncoder();
+const textDecoder = new TextDecoder();
 
 export type RateLimitBinding = {
   limit(options: { key: string }): Promise<{ success: boolean }>;
@@ -38,10 +51,29 @@ export type SiteStore = {
 export type HandlerEnv = {
   GATEWAY_SIGNING_SECRET: string;
   SITES: SiteStore;
+  /** Isolated workers.dev HTTPS origin for user sites; local and .test requests may omit it. */
+  PUBLIC_SITE_ORIGIN?: string;
+  // Each action is limited twice: per signed subject+IP (fair share between machines on
+  // one network) and per IP alone (a subject is free to mint, an IP is not).
   EXEC_RATE: RateLimitBinding;
+  EXEC_RATE_IP: RateLimitBinding;
   PUBLISH_RATE: RateLimitBinding;
+  PUBLISH_RATE_IP: RateLimitBinding;
   WORKSPACE_WRITE_RATE: RateLimitBinding;
+  WORKSPACE_WRITE_RATE_IP: RateLimitBinding;
 };
+
+/** Budget authority for the workspace container; see `runtimeLease.ts`. */
+export type WorkspaceLease = {
+  acquire(busyForMs: number): Promise<
+    { ok: true; budget: BudgetSnapshot } | { ok: false; error: LimitError; budget: BudgetSnapshot }
+  >;
+  started(): Promise<void>;
+  release(): Promise<BudgetSnapshot>;
+  abandon(): Promise<BudgetSnapshot>;
+};
+
+export type RateKeys = { subject: string; ip: string };
 
 export type WorkspaceFileSystem = {
   readFile(path: string): Promise<ReadableStream<Uint8Array>>;
@@ -49,7 +81,7 @@ export type WorkspaceFileSystem = {
   exists(path: string): Promise<boolean>;
   stat(path: string): Promise<WorkspaceStat>;
   statOrNull(path: string): Promise<WorkspaceStat | null>;
-  readdir(path: string): Promise<WorkspaceDirent[]>;
+  readdir(path: string, options?: { limit?: number; offset?: number }): Promise<WorkspaceDirent[]>;
   mkdir(path: string, options?: { recursive?: boolean }): Promise<void>;
   rm(path: string, options?: { recursive?: boolean }): Promise<void>;
 };
@@ -67,6 +99,7 @@ export type WorkspaceDirent = WorkspaceStat;
 
 export type WorkspaceHandle = {
   fs: WorkspaceFileSystem;
+  lease?: WorkspaceLease;
   runtime?: {
     exec(
       command: string,
@@ -94,12 +127,22 @@ export type WorkspaceExecResult = {
 export type WorkspaceExecHandle = ReadableStream<WorkspaceExecEvent> & {
   readonly id: string;
   result(): Promise<WorkspaceExecResult>;
+  kill(signal?: "SIGINT"): Promise<void>;
   [Symbol.dispose](): void;
+};
+
+export type PublishQuotaHandle = {
+  reserve(reservationId: string): Promise<PublishQuotaResult>;
+  begin(reservationId: string): Promise<void>;
+  commit(reservationId: string): Promise<void>;
+  release(reservationId: string): Promise<void>;
 };
 
 export type WorkerDependencies = {
   authenticate(request: Request, env: HandlerEnv, workspaceId: string): Promise<GatewayCapabilityClaims>;
   openWorkspace(wsid: string, env: HandlerEnv): Promise<WorkspaceHandle>;
+  openPublishQuota(wsid: string, env: HandlerEnv): PublishQuotaHandle;
+  randomReservationId(): string;
   randomSlug(): string;
 };
 
@@ -147,11 +190,69 @@ function errorCode(error: unknown): string {
 function errorResponse(error: unknown, status?: number): Response {
   const code = errorCode(error);
   const message = oneLine(error instanceof Error ? error.message : error) || code;
-  return json({ error: message, code }, status ?? (code === "EINVAL" ? 400 : 409));
+  return json({ error: message, code }, status ?? (code === "EINVAL" ? 400 : code === "EFBIG" ? 413 : 409));
 }
 
 function coded(message: string, code: string): Error {
   return Object.assign(new Error(message), { code });
+}
+
+async function rateLimited(
+  perSubject: RateLimitBinding,
+  perIp: RateLimitBinding,
+  keys: RateKeys,
+): Promise<boolean> {
+  const [subject, ip] = await Promise.all([
+    perSubject.limit({ key: `${keys.subject}:${keys.ip}` }),
+    perIp.limit({ key: keys.ip }),
+  ]);
+  return !subject.success || !ip.success;
+}
+
+function rateLimitedResponse(): Response {
+  return json({ error: "rate limited" }, 429);
+}
+
+function limitErrorResponse(error: LimitError, status: number): Response {
+  const response = json(error, status);
+  if (error.retryAfterMs !== undefined) {
+    response.headers.set("Retry-After", String(Math.max(1, Math.ceil(error.retryAfterMs / 1_000))));
+  }
+  return response;
+}
+
+// Container placement failures from the Cloudflare backend read like transport errors.
+// Name them so the client can say "busy, try again" instead of echoing internals.
+const CAPACITY_FAILURE = /connect failed|no capacity|max_instances|scheduling|placement|not enough|could not schedule|unavailable/i;
+
+export function classifyExecFailure(error: unknown): LimitError | { error: string } {
+  const message = oneLine(error instanceof Error ? error.message : error);
+  if (CAPACITY_FAILURE.test(message)) {
+    return {
+      error: "cloud is at capacity: every container slot is busy right now",
+      code: "ECAPACITY",
+      retryAfterMs: 60_000,
+    };
+  }
+  return { error: message };
+}
+
+/** Stable, secret-keyed pseudonym for an IP so a manifest supports takedowns without storing the IP. */
+async function pseudonymousIp(secret: string, ip: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    textEncoder.encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const digest = new Uint8Array(await crypto.subtle.sign("HMAC", key, textEncoder.encode(`ip:v1:${ip}`)));
+  return Array.from(digest.subarray(0, 16), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function base64ByteLength(value: string): number {
+  const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0;
+  return Math.floor((value.length * 3) / 4) - padding;
 }
 
 function requireRecord(value: unknown, label: string): Record<string, unknown> {
@@ -248,6 +349,9 @@ function parseFsOperation(value: unknown): FsOperation {
   if (body.to !== undefined) operation.to = workspaceFsPath(requireAbsolutePath(body.to));
   if (body.data !== undefined) {
     if (typeof body.data !== "string") throw coded("data must be base64 text", "EINVAL");
+    if (base64ByteLength(body.data) > MAX_FS_WRITE_BYTES) {
+      throw coded(`write exceeds ${MAX_FS_WRITE_BYTES / 1_024 / 1_024} MB`, "EFBIG");
+    }
     operation.data = body.data;
   }
   if (body.recursive !== undefined) {
@@ -278,7 +382,11 @@ function base64ToBytes(value: string): Uint8Array {
   }
 }
 
-async function streamBytes(stream: ReadableStream<Uint8Array>): Promise<Uint8Array> {
+async function streamBytes(
+  stream: ReadableStream<Uint8Array>,
+  maxBytes = Number.POSITIVE_INFINITY,
+  tooLargeMessage = "stream is too large",
+): Promise<Uint8Array> {
   const chunks: Uint8Array[] = [];
   let length = 0;
   const reader = stream.getReader();
@@ -286,8 +394,12 @@ async function streamBytes(stream: ReadableStream<Uint8Array>): Promise<Uint8Arr
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-      chunks.push(value);
       length += value.byteLength;
+      if (length > maxBytes) {
+        await reader.cancel(tooLargeMessage).catch(() => undefined);
+        throw coded(tooLargeMessage, "EFBIG");
+      }
+      chunks.push(value);
     }
   } finally {
     reader.releaseLock();
@@ -301,6 +413,21 @@ async function streamBytes(stream: ReadableStream<Uint8Array>): Promise<Uint8Arr
   return bytes;
 }
 
+async function boundedJsonBody(request: Request, maxBytes: number, tooLargeMessage: string): Promise<unknown> {
+  const contentLength = request.headers.get("Content-Length");
+  if (contentLength !== null && /^\d+$/.test(contentLength) && Number(contentLength) > maxBytes) {
+    throw coded(tooLargeMessage, "EFBIG");
+  }
+  const bytes = request.body === null
+    ? new Uint8Array()
+    : await streamBytes(request.body, maxBytes, tooLargeMessage);
+  try {
+    return JSON.parse(textDecoder.decode(bytes)) as unknown;
+  } catch {
+    throw coded("invalid JSON body", "EINVAL");
+  }
+}
+
 function serializableStat(stat: WorkspaceStat) {
   return {
     name: stat.name,
@@ -310,6 +437,17 @@ function serializableStat(stat: WorkspaceStat) {
     isDirectory: stat.isDirectory,
     isSymbolicLink: stat.isSymbolicLink,
   };
+}
+
+async function* readdirAll(
+  fs: WorkspaceFileSystem,
+  path: string,
+): AsyncGenerator<WorkspaceDirent> {
+  for (let offset = 0;; offset += INTERNAL_READDIR_PAGE_ENTRIES) {
+    const page = await fs.readdir(path, { limit: INTERNAL_READDIR_PAGE_ENTRIES, offset });
+    for (const entry of page) yield entry;
+    if (page.length < INTERNAL_READDIR_PAGE_ENTRIES) return;
+  }
 }
 
 async function copyTree(
@@ -322,15 +460,36 @@ async function copyTree(
     const destination = await fs.statOrNull(to);
     if (destination && !destination.isDirectory) throw coded(`not a directory: ${to}`, "ENOTDIR");
     if (!destination) await fs.mkdir(to, { recursive: true });
-    for (const entry of await fs.readdir(from)) {
+    for await (const entry of readdirAll(fs, from)) {
       await copyTree(fs, `${from === "/" ? "" : from}/${entry.name}`, `${to === "/" ? "" : to}/${entry.name}`);
     }
     return;
   }
   const destination = await fs.statOrNull(to);
   if (destination?.isDirectory) throw coded(`is a directory: ${to}`, "EISDIR");
-  const bytes = await streamBytes(await fs.readFile(from));
+  const bytes = await streamBytes(
+    await fs.readFile(from),
+    MAX_FS_READ_BYTES,
+    `copy exceeds ${MAX_FS_READ_BYTES / 1_024 / 1_024} MB`,
+  );
   await fs.writeFile(to, bytes);
+}
+
+async function preflightCopySize(
+  fs: WorkspaceFileSystem,
+  path: string,
+  knownStat?: WorkspaceStat,
+): Promise<void> {
+  const stat = knownStat ?? await fs.stat(path);
+  if (!stat.isDirectory) {
+    if (stat.size > MAX_FS_READ_BYTES) {
+      throw coded(`copy exceeds ${MAX_FS_READ_BYTES / 1_024 / 1_024} MB`, "EFBIG");
+    }
+    return;
+  }
+  for await (const entry of readdirAll(fs, path)) {
+    await preflightCopySize(fs, `${path === "/" ? "" : path}/${entry.name}`, entry);
+  }
 }
 
 async function preflightRename(
@@ -340,16 +499,18 @@ async function preflightRename(
 ): Promise<void> {
   const source = await fs.stat(from);
   const destination = await fs.statOrNull(to);
-  if (!destination) return;
-  if (source.isDirectory && !destination.isDirectory) {
-    throw coded(`webmcp-computer: not a directory: ${from}`, "ENOTDIR");
+  if (destination) {
+    if (source.isDirectory && !destination.isDirectory) {
+      throw coded(`webmcp-computer: not a directory: ${from}`, "ENOTDIR");
+    }
+    if (!source.isDirectory && destination.isDirectory) {
+      throw coded(`webmcp-computer: is a directory: ${from}`, "EISDIR");
+    }
+    if (source.isDirectory && (await fs.readdir(to, { limit: 1 })).length > 0) {
+      throw coded(`webmcp-computer: directory not empty: ${to}`, "ENOTEMPTY");
+    }
   }
-  if (!source.isDirectory && destination.isDirectory) {
-    throw coded(`webmcp-computer: is a directory: ${from}`, "EISDIR");
-  }
-  if (source.isDirectory && (await fs.readdir(to)).length > 0) {
-    throw coded(`webmcp-computer: directory not empty: ${to}`, "ENOTEMPTY");
-  }
+  await preflightCopySize(fs, from, source);
 }
 
 async function executeFsOperation(
@@ -358,7 +519,15 @@ async function executeFsOperation(
 ): Promise<Record<string, unknown>> {
   switch (operation.op) {
     case "read": {
-      const data = await streamBytes(await fs.readFile(operation.path));
+      const stat = await fs.stat(operation.path);
+      if (stat.size > MAX_FS_READ_BYTES) {
+        throw coded(`read exceeds ${MAX_FS_READ_BYTES / 1_024 / 1_024} MB`, "EFBIG");
+      }
+      const data = await streamBytes(
+        await fs.readFile(operation.path),
+        MAX_FS_READ_BYTES,
+        `read exceeds ${MAX_FS_READ_BYTES / 1_024 / 1_024} MB`,
+      );
       return { data: bytesToBase64(data) };
     }
     case "write":
@@ -367,9 +536,13 @@ async function executeFsOperation(
     case "mkdir":
       await fs.mkdir(operation.path, { recursive: operation.recursive ?? false });
       return { ok: true };
-    case "readdir":
+    case "readdir": {
+      const entries = await fs.readdir(operation.path, { limit: MAX_FS_READDIR_ENTRIES + 1 });
+      if (entries.length > MAX_FS_READDIR_ENTRIES) {
+        throw coded(`directory exceeds ${MAX_FS_READDIR_ENTRIES} entries`, "EFBIG");
+      }
       return {
-        entries: (await fs.readdir(operation.path)).map((entry) => ({
+        entries: entries.map((entry) => ({
           name: entry.name,
           size: entry.size,
           mtime: entry.mtime,
@@ -378,6 +551,7 @@ async function executeFsOperation(
           isSymbolicLink: entry.isSymbolicLink,
         })),
       };
+    }
     case "rm":
       await fs.rm(operation.path, { recursive: operation.recursive ?? false });
       return { ok: true };
@@ -403,13 +577,17 @@ async function workspaceResponse(
   dependencies: WorkerDependencies,
   wsid: string,
   batch: boolean,
-  rateKey: string,
+  keys: RateKeys,
 ): Promise<Response> {
   let parsed: unknown;
   try {
-    parsed = await request.json();
-  } catch {
-    return errorResponse(coded("invalid JSON body", "EINVAL"), 400);
+    parsed = await boundedJsonBody(
+      request,
+      MAX_FS_REQUEST_BYTES,
+      `request exceeds ${MAX_FS_REQUEST_BYTES / 1_024 / 1_024} MB`,
+    );
+  } catch (error) {
+    return errorResponse(error, errorCode(error) === "EFBIG" ? 413 : 400);
   }
 
   let operations: FsOperation[];
@@ -426,13 +604,14 @@ async function workspaceResponse(
       operations = [parseFsOperation(parsed)];
     }
   } catch (error) {
-    return errorResponse(error, 400);
+    return errorResponse(error, errorCode(error) === "EFBIG" ? 413 : 400);
   }
 
   const mutationCount = operations.filter(mutates).length;
   if (mutationCount > 0) {
-    const rate = await env.WORKSPACE_WRITE_RATE.limit({ key: rateKey });
-    if (!rate.success) return json({ error: "rate limited" }, 429);
+    if (await rateLimited(env.WORKSPACE_WRITE_RATE, env.WORKSPACE_WRITE_RATE_IP, keys)) {
+      return rateLimitedResponse();
+    }
   }
 
   try {
@@ -441,16 +620,27 @@ async function workspaceResponse(
     // operation needs it (idempotent when present).
     await workspace.fs.mkdir(WORKSPACE_MOUNT_ROOT, { recursive: true });
     const responses: Array<Record<string, unknown>> = [];
+    let serializedBytes = batch ? 2 : 0; // JSON array brackets.
     for (const operation of operations) {
+      let result: Record<string, unknown>;
       try {
-        responses.push(await executeFsOperation(workspace.fs, operation));
+        result = await executeFsOperation(workspace.fs, operation);
       } catch (error) {
         if (!batch) throw error;
-        responses.push({
+        result = {
           error: oneLine(error instanceof Error ? error.message : error),
           code: errorCode(error),
-        });
+        };
       }
+      const resultBytes = textEncoder.encode(JSON.stringify(result)).byteLength;
+      serializedBytes += resultBytes + (batch && responses.length > 0 ? 1 : 0);
+      if (serializedBytes > MAX_FS_RESPONSE_BYTES) {
+        throw coded(
+          `filesystem response exceeds ${MAX_FS_RESPONSE_BYTES / 1_024 / 1_024} MB`,
+          "EFBIG",
+        );
+      }
+      responses.push(result);
     }
     return json(batch ? responses : responses[0]);
   } catch (error) {
@@ -512,37 +702,123 @@ async function allocateSiteId(store: SiteStore, randomSlug: () => string): Promi
   throw coded("could not allocate a unique site id", "EEXIST");
 }
 
+function publicSiteOrigin(request: Request, env: HandlerEnv): string {
+  if (env.PUBLIC_SITE_ORIGIN === undefined) {
+    const requestUrl = new URL(request.url);
+    const localOrTest = requestUrl.hostname === "localhost" ||
+      requestUrl.hostname === "127.0.0.1" || requestUrl.hostname === "[::1]" ||
+      requestUrl.hostname.endsWith(".localhost") || requestUrl.hostname.endsWith(".test");
+    if (localOrTest) return requestUrl.origin;
+    throw coded("PUBLIC_SITE_ORIGIN is required outside localhost and .test hosts", "EIO");
+  }
+  try {
+    const configured = new URL(env.PUBLIC_SITE_ORIGIN);
+    const workersDev = configured.hostname === "workers.dev" || configured.hostname.endsWith(".workers.dev");
+    if (
+      configured.protocol === "https:" && configured.port === "" && workersDev &&
+      configured.origin === env.PUBLIC_SITE_ORIGIN
+    ) return configured.origin;
+  } catch {
+    // Report the configuration error below without reflecting its value.
+  }
+  throw coded("PUBLIC_SITE_ORIGIN must be an isolated workers.dev HTTPS origin", "EIO");
+}
+
+async function retryOnce<T>(operation: () => Promise<T>): Promise<T> {
+  try {
+    return await operation();
+  } catch {
+    return await operation();
+  }
+}
+
 async function publishResponse(
   request: Request,
   env: HandlerEnv,
   dependencies: WorkerDependencies,
-  rateKey: string,
+  wsid: string,
+  keys: RateKeys,
 ): Promise<Response> {
-  const rate = await env.PUBLISH_RATE.limit({ key: rateKey });
-  if (!rate.success) return json({ error: "rate limited" }, 429);
+  if (await rateLimited(env.PUBLISH_RATE, env.PUBLISH_RATE_IP, keys)) return rateLimitedResponse();
 
   let value: unknown;
   try {
-    value = await request.json();
-  } catch {
-    return errorResponse(coded("invalid JSON body", "EINVAL"), 400);
+    value = await boundedJsonBody(request, MAX_PUBLISH_REQUEST_BYTES, "publish request exceeds 3 MB");
+  } catch (error) {
+    return errorResponse(error, errorCode(error) === "EFBIG" ? 413 : 400);
   }
   try {
-    const { files } = parsePublishFiles(value);
-    const id = await allocateSiteId(env.SITES, dependencies.randomSlug);
-    await env.SITES.put(`sites/${id}/.webmcp-computer-site`, id);
-    for (const file of files) {
-      await env.SITES.put(`sites/${id}/${file.path}`, file.content, {
-        httpMetadata: { contentType: contentType(file.path) },
-      });
+    const { files, bytes } = parsePublishFiles(value);
+    const origin = publicSiteOrigin(request, env);
+    // Reserve in the workspace DO only after the whole request is valid. Pending reservations
+    // consume capacity, making the daily cap exact even when many R2 uploads overlap.
+    const quota = dependencies.openPublishQuota(wsid, env);
+    const reservationId = dependencies.randomReservationId();
+    let reservation: PublishQuotaResult;
+    try {
+      // The caller-generated ID makes an ambiguous reserve safe to retry: the DO returns
+      // the original reservation instead of consuming another slot.
+      reservation = await retryOnce(() => quota.reserve(reservationId));
+    } catch (error) {
+      // No R2 write can have started. Best-effort reconciliation removes a reserve whose
+      // response was lost; otherwise its short pre-upload expiry bounds the orphan.
+      await quota.release(reservationId).catch(() => undefined);
+      throw error;
     }
-    return json({
-      id,
-      url: `${new URL(request.url).origin}/s/${id}/`,
-      expiresInDays: PUBLISHED_SITE_RETENTION_DAYS,
-    });
+    if (!reservation.ok) return limitErrorResponse(reservation.error, 429);
+    let r2WriteAttempted = false;
+    try {
+      const id = await allocateSiteId(env.SITES, dependencies.randomSlug);
+      const ipHash = await pseudonymousIp(env.GATEWAY_SIGNING_SECRET, keys.ip);
+      // begin() is idempotent and is confirmed before the first put. Once active, this
+      // reservation cannot expire while an upload is in progress.
+      await retryOnce(() => quota.begin(reservationId));
+      // Set this before invoking R2: a rejected put may still have reached durable storage.
+      r2WriteAttempted = true;
+      // The manifest doubles as the takedown record: who published, from where (pseudonymous), when.
+      await env.SITES.put(
+        `sites/${id}/.webmcp-computer-site`,
+        JSON.stringify({
+          id,
+          publishedAt: new Date().toISOString(),
+          subject: keys.subject,
+          ipHash,
+          files: files.length,
+          bytes,
+        }),
+        { httpMetadata: { contentType: "application/json; charset=utf-8" } },
+      );
+      for (const file of files) {
+        await env.SITES.put(`sites/${id}/${file.path}`, file.content, {
+          httpMetadata: { contentType: contentType(file.path) },
+        });
+      }
+      await quota.commit(reservationId);
+      return json({
+        id,
+        url: `${origin}/s/${id}/`,
+        expiresInDays: PUBLISHED_SITE_RETENTION_DAYS,
+      });
+    } catch (error) {
+      if (r2WriteAttempted) {
+        // Any attempted put may have made bytes public. Count it conservatively; if this
+        // commit is also ambiguous, the active reservation continues consuming capacity.
+        await quota.commit(reservationId).catch(() => undefined);
+      } else {
+        await quota.release(reservationId).catch(() => undefined);
+      }
+      throw error;
+    }
   } catch (error) {
-    return errorResponse(error, errorCode(error) === "EINVAL" ? 400 : 413);
+    const code = errorCode(error);
+    const status = code === "EINVAL"
+      ? 400
+      : code === "EFBIG" || code === "E2BIG"
+        ? 413
+        : code === "EEXIST"
+          ? 409
+          : 502;
+    return errorResponse(error, status);
   }
 }
 
@@ -555,13 +831,13 @@ async function execResponse(
   env: HandlerEnv,
   dependencies: WorkerDependencies,
   wsid: string,
-  rateKey: string,
+  keys: RateKeys,
 ): Promise<Response> {
   let parsed: unknown;
   try {
-    parsed = await request.json();
-  } catch {
-    return errorResponse(coded("invalid JSON body", "EINVAL"), 400);
+    parsed = await boundedJsonBody(request, MAX_EXEC_REQUEST_BYTES, "exec request exceeds 16 KB");
+  } catch (error) {
+    return errorResponse(error, errorCode(error) === "EFBIG" ? 413 : 400);
   }
 
   let operation: ExecOperation;
@@ -571,8 +847,41 @@ async function execResponse(
     return errorResponse(error, 400);
   }
 
-  const rate = await env.EXEC_RATE.limit({ key: rateKey });
-  if (!rate.success) return json({ error: "rate limited" }, 429);
+  if (await rateLimited(env.EXEC_RATE, env.EXEC_RATE_IP, keys)) return rateLimitedResponse();
+
+  let workspace: WorkspaceHandle;
+  try {
+    workspace = await dependencies.openWorkspace(wsid, env);
+  } catch (error) {
+    return errorResponse(error, 502);
+  }
+
+  // Budget is decided before any byte streams so the client gets a plain 429, not a
+  // half-open event stream. The lease stays busy for the command's own timeout plus
+  // start/sync grace, so the idle alarm cannot kill a legitimately long run.
+  const lease = workspace.lease;
+  if (lease) {
+    const acquired = await lease.acquire(operation.timeoutMs + EXEC_LEASE_GRACE_MS);
+    if (!acquired.ok) {
+      workspace[Symbol.dispose]();
+      return limitErrorResponse(acquired.error, 429);
+    }
+  }
+
+  let activeRun: WorkspaceExecHandle | undefined;
+  let killRequested = request.signal.aborted;
+  let killPromise: Promise<void> | undefined;
+  const requestRemoteKill = (): Promise<void> => {
+    killRequested = true;
+    if (activeRun === undefined) return Promise.resolve();
+    // SDK 0.2.1 exposes kill on the RPC-backed handle. Signalling is best effort:
+    // regardless of delivery, the worker keeps draining so post-command pull/sync and
+    // the single lease release still happen.
+    killPromise ??= activeRun.kill("SIGINT").catch(() => undefined);
+    return killPromise;
+  };
+  const onRequestAbort = () => { void requestRemoteKill(); };
+  request.signal.addEventListener("abort", onRequestAbort, { once: true });
 
   const body = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -584,8 +893,9 @@ async function execResponse(
           // only closes the local stream; runtime timeout still owns execution.
         }
       };
+      let leaseSettled = lease === undefined;
+      let runStarted = false;
       try {
-        using workspace = await dependencies.openWorkspace(wsid, env);
         if (!workspace.runtime) throw new Error("workspace exec runtime unavailable");
         // Fresh workspace: the mounted subtree must exist for cwd and sync.
         await workspace.fs.mkdir(WORKSPACE_MOUNT_ROOT, { recursive: true });
@@ -594,6 +904,10 @@ async function execResponse(
           encoding: "utf8",
           timeoutMs: operation.timeoutMs,
         });
+        activeRun = run;
+        runStarted = true;
+        await lease?.started();
+        if (killRequested) await requestRemoteKill();
         let outputBytes = 0;
         let outputTruncated = false;
         const frames = new TransformStream<WorkspaceExecEvent, Uint8Array>({
@@ -631,24 +945,41 @@ async function execResponse(
           resume: "tail",
         });
         const result = await resultRun.result();
+        let budget: BudgetSnapshot | undefined;
+        if (lease) {
+          budget = await lease.release();
+          leaseSettled = true;
+        }
         send(sseFrame("exit", {
           code: result.exitCode,
           pushed: result.pushed,
           pulled: result.pulled,
           applied: result.sync.applied,
           syncStatus: result.sync.status,
+          ...(budget === undefined ? {} : { budget }),
         }));
       } catch (error) {
-        send(sseFrame("error", {
-          error: oneLine(error instanceof Error ? error.message : error),
-        }));
+        const failure = classifyExecFailure(error);
+        if (lease && !leaseSettled) {
+          leaseSettled = true;
+          // A run that never started (no capacity) must not keep charging until the idle alarm.
+          await (runStarted ? lease.release() : lease.abandon()).catch(() => undefined);
+        }
+        send(sseFrame("error", failure));
       } finally {
+        activeRun = undefined;
+        request.signal.removeEventListener("abort", onRequestAbort);
+        if (lease && !leaseSettled) await lease.release().catch(() => undefined);
+        workspace[Symbol.dispose]();
         try {
           controller.close();
         } catch {
           // Already closed by a disconnected client.
         }
       }
+    },
+    async cancel() {
+      await requestRemoteKill();
     },
   });
 
@@ -683,6 +1014,18 @@ async function siteResponse(request: Request, env: HandlerEnv, id: string, rawPa
       },
     });
   }
+  // Takedown metadata shares the R2 prefix for operational convenience but is never a
+  // public site asset. Publishers cannot create the root manifest path either.
+  if (path === ".webmcp-computer-site") {
+    return new Response("not found", {
+      status: 404,
+      headers: {
+        "Content-Type": "text/plain; charset=utf-8",
+        "X-Content-Type-Options": "nosniff",
+        ...CORS_HEADERS,
+      },
+    });
+  }
   const object = await env.SITES.get(`sites/${id}/${path}`);
   if (!object) {
     return new Response("not found", {
@@ -699,10 +1042,20 @@ async function siteResponse(request: Request, env: HandlerEnv, id: string, rawPa
       "Cache-Control": "public, max-age=31536000, immutable",
       "Content-Type": object.httpMetadata?.contentType ?? contentType(path),
       "X-Content-Type-Options": "nosniff",
+      ...PUBLISHED_SITE_HEADERS,
       ...CORS_HEADERS,
     },
   });
 }
+
+// Anonymous visitors publish arbitrary HTML here. Keep it out of search engines (no SEO-spam
+// incentive) and give every site an opaque origin so sites cannot read each other's storage
+// or act as this Worker's origin. Scripts, forms, and popups still work for real demos.
+export const PUBLISHED_SITE_HEADERS = {
+  "X-Robots-Tag": "noindex, nofollow, noarchive",
+  "Content-Security-Policy": "sandbox allow-scripts allow-forms allow-popups allow-modals",
+  "Referrer-Policy": "no-referrer",
+} as const;
 
 export async function handleRequest(
   request: Request,
@@ -725,7 +1078,7 @@ export async function handleRequest(
         return withCors(json({ error: "unauthorized" }, 401), request);
       }
       const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
-      return withCors(await execResponse(request, env, dependencies, wsid, `${claims.subject}:${ip}`), request);
+      return withCors(await execResponse(request, env, dependencies, wsid, { subject: claims.subject, ip }), request);
     }
     const publish = /^\/ws\/([^/]+)\/publish$/.exec(pathname);
     if (request.method === "POST" && publish) {
@@ -738,7 +1091,7 @@ export async function handleRequest(
         return withCors(json({ error: "unauthorized" }, 401), request);
       }
       const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
-      return withCors(await publishResponse(request, env, dependencies, `${claims.subject}:${ip}`), request);
+      return withCors(await publishResponse(request, env, dependencies, wsid, { subject: claims.subject, ip }), request);
     }
     const workspace = /^\/ws\/([^/]+)\/fs(\/batch)?$/.exec(pathname);
     if (request.method === "POST" && workspace) {
@@ -752,14 +1105,19 @@ export async function handleRequest(
       }
       const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
       return withCors(
-        await workspaceResponse(request, env, dependencies, wsid, workspace[2] === "/batch", `${claims.subject}:${ip}`),
+        await workspaceResponse(request, env, dependencies, wsid, workspace[2] === "/batch", { subject: claims.subject, ip }),
         request,
       );
     }
     const site = /^\/s\/([^/]+)\/?(.*)$/.exec(pathname);
     if (request.method === "GET" && site) {
       const id = site[1] ?? "";
-      if (!SITE_ID.test(id)) return withCors(new Response("not found", { status: 404, headers: CORS_HEADERS }), request, true);
+      const expectedOrigin = publicSiteOrigin(request, env);
+      // Even if a caller guesses the path, arbitrary user HTML must never render on the
+      // trusted API custom domain when a separate publishing origin is configured.
+      if (new URL(request.url).origin !== expectedOrigin || !SITE_ID.test(id)) {
+        return withCors(new Response("not found", { status: 404, headers: CORS_HEADERS }), request, true);
+      }
       return withCors(await siteResponse(request, env, id, site[2] ?? ""), request, true);
     }
     return withCors(json({ error: "not found" }, 404), request);

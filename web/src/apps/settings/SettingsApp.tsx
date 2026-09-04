@@ -24,7 +24,7 @@ function ToolMonitor() {
   }), [groups]);
 
   return (
-    <section className="tool-monitor" aria-label="Tool Monitor">
+    <section className="tool-monitor" data-analytics-block="" aria-label="Tool Monitor">
       <span className="micro">TOOL MONITOR — LIVE</span>
       {groups.length === 0 ? <p className="tool-monitor__empty mono">NO REGISTERED TOOLS</p> : null}
       {groups.map((group) => {
@@ -217,7 +217,9 @@ export function SettingsApp({ process }: AppComponentProps) {
               </select>
             </VerbHint>
           </div>
-          {error === "" ? null : <p className="settings-error mono">{error}</p>}
+          {error === "" ? null : (
+            <p className="settings-error mono" data-analytics-block="">{error}</p>
+          )}
         </div>
       )}
     </section>

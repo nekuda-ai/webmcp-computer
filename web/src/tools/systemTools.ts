@@ -2,6 +2,7 @@ import { defineTool } from "@nekuda/webmcp-sdk";
 import { isTextFile, normalizePath, stat } from "../kernel/fs";
 import { APP_IDS, type AppId, type WindowRect } from "../kernel/types";
 import { useKernelStore } from "../kernel/store";
+import { assertMachineMutationAdmission } from "../kernel/ownershipAdmission";
 import { runAgentAction } from "./agentAction";
 import { readManual, requireManualTopic } from "../kernel/manual";
 import { searchOSDetailed } from "../kernel/osSearch";
@@ -13,9 +14,10 @@ import {
   MIN_WINDOW_HEIGHT,
   MIN_WINDOW_WIDTH,
 } from "../kernel/windowGeometry";
-import { ACT_ANNOTATIONS, ASK_ANNOTATIONS } from "./taxonomy";
+import { ACT_ANNOTATIONS, ASK_ANNOTATIONS, TRANSACT_ANNOTATIONS } from "./taxonomy";
 import { presentSpotlight } from "../kernel/spotlightPresentation";
 import { requireFinite } from "../shared";
+import { takeOverMachine } from "../kernel/machineLock";
 
 type AppInput = {
   appId: string;
@@ -132,7 +134,7 @@ export const appOpenTool = defineTool<AppInput>({
         ...(rawHeight === undefined ? {} : { height: rawHeight }),
         ...(rawFocus === undefined ? {} : { focus: rawFocus }),
       },
-      async () => {
+      async (_signal, mutationAdmission) => {
         const appId = requireAppId(rawAppId);
         if (appId === "ui") {
           throw new Error("webmcp-computer: agent-made App windows open through ui_open");
@@ -159,6 +161,7 @@ export const appOpenTool = defineTool<AppInput>({
         const existing = useKernelStore.getState().processes.find(
           (process) => process.appId === appId,
         );
+        assertMachineMutationAdmission(mutationAdmission);
         const process = useKernelStore.getState().spawn(appId, {
           ...(path === undefined ? {} : { path }),
           ...(Object.keys(placement).length === 0 ? {} : { placement }),
@@ -205,9 +208,10 @@ export const appCloseTool = defineTool<PidInput>({
           ? {}
           : { appId: closingProcess.appId, rect: closingProcess.windowRect }),
       },
-      () => {
+      (_signal, mutationAdmission) => {
         const pid = requirePid(rawPid);
         const process = requireProcess(pid);
+        assertMachineMutationAdmission(mutationAdmission);
         const closed = useKernelStore.getState().kill(pid);
         if (!closed) throw new Error(`webmcp-computer: process PID ${pid} not found`);
         return { closed: true, pid: closed.pid, appId: process.appId };
@@ -259,9 +263,10 @@ export const windowFocusTool = defineTool<PidInput>({
   annotations: ACT_ANNOTATIONS,
   intent: "act",
   execute({ pid: rawPid }) {
-    return runAgentAction("window_focus", { pid: rawPid }, () => {
+    return runAgentAction("window_focus", { pid: rawPid }, (_signal, mutationAdmission) => {
       const pid = requirePid(rawPid);
       requireProcess(pid);
+      assertMachineMutationAdmission(mutationAdmission);
       const process = useKernelStore.getState().focus(pid);
       if (!process) throw new Error(`webmcp-computer: process PID ${pid} not found`);
       return process;
@@ -288,7 +293,7 @@ export const windowMoveTool = defineTool<MoveInput>({
   annotations: ACT_ANNOTATIONS,
   intent: "act",
   execute({ pid: rawPid, x: rawX, y: rawY }) {
-    return runAgentAction("window_move", { pid: rawPid, x: rawX, y: rawY }, () => {
+    return runAgentAction("window_move", { pid: rawPid, x: rawX, y: rawY }, (_signal, mutationAdmission) => {
       const pid = requirePid(rawPid);
       const targetX = requireFinite(rawX, "x");
       const targetY = requireFinite(rawY, "y");
@@ -299,6 +304,7 @@ export const windowMoveTool = defineTool<MoveInput>({
         { ...current.windowRect, x: targetX, y: targetY },
         { width: viewportWidth, height: viewportHeight },
       );
+      assertMachineMutationAdmission(mutationAdmission);
       const process = useKernelStore.getState().move(pid, rect.x, rect.y);
       if (!process) throw new Error(`webmcp-computer: process PID ${pid} not found`);
       return process;
@@ -328,7 +334,7 @@ export const windowResizeTool = defineTool<ResizeInput>({
     return runAgentAction(
       "window_resize",
       { pid: rawPid, width: rawWidth, height: rawHeight },
-      () => {
+      (_signal, mutationAdmission) => {
         const pid = requirePid(rawPid);
         const targetWidth = requireFinite(rawWidth, "width");
         const targetHeight = requireFinite(rawHeight, "height");
@@ -336,6 +342,7 @@ export const windowResizeTool = defineTool<ResizeInput>({
         const width = Math.min(workarea.width, Math.max(MIN_WINDOW_WIDTH, targetWidth));
         const height = Math.min(workarea.height, Math.max(MIN_WINDOW_HEIGHT, targetHeight));
         requireProcess(pid);
+        assertMachineMutationAdmission(mutationAdmission);
         const process = useKernelStore.getState().resize(pid, width, height);
         if (!process) throw new Error(`webmcp-computer: process PID ${pid} not found`);
         return process;
@@ -426,11 +433,12 @@ export const osSearchTool = defineTool<OSSearchInput>({
       query,
       ...(limit === undefined ? {} : { limit }),
       ...(rawShow === undefined ? {} : { show: rawShow }),
-    }, async () => {
+    }, async (_signal, mutationAdmission) => {
       if (rawShow !== undefined && typeof rawShow !== "boolean") {
         throw new Error("webmcp-computer: show must be a boolean");
       }
       const output = await searchOSDetailed(query, limit);
+      assertMachineMutationAdmission(mutationAdmission);
       if (rawShow !== false) presentSpotlight({ query, ...output });
       return { query, ...output };
     });
@@ -472,7 +480,28 @@ export const settingsSetTool = defineTool<SettingsSetInput>({
   annotations: ACT_ANNOTATIONS,
   intent: "act",
   execute({ key, value }) {
-    return runAgentAction("settings_set", { key, value }, async () => await setSetting(key, value, "agent"));
+    return runAgentAction(
+      "settings_set",
+      { key, value },
+      async (_signal, mutationAdmission) => await setSetting(key, value, mutationAdmission),
+    );
+  },
+});
+
+export const machineTakeOverTool = defineTool<EmptyInput>({
+  stableKey: "webmcp_computer.machine_take_over",
+  name: "machine_take_over",
+  title: "Take over machine control",
+  description:
+    "Consequentially take machine ownership from another WebMCP Computer tab. This is the agent equivalent of the visible Take over control and is callable while this tab is blocked. The previous owner's local in-flight actions are rejected and cancellable transports are aborted. Remote work already accepted or completed may still finish and cannot be undone. Returns whether ownership changed.",
+  inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  annotations: TRANSACT_ANNOTATIONS,
+  intent: "transact",
+  execute(input) {
+    return runAgentAction("machine_take_over", {}, async () => {
+      requireEmptyInput(input);
+      return { taken_over: await takeOverMachine() };
+    }, { allowWhileBlocked: true });
   },
 });
 
@@ -505,6 +534,7 @@ export const systemTools = [
   windowMoveTool,
   windowResizeTool,
   sysStatusTool,
+  machineTakeOverTool,
   screensaverWakeTool,
   osManualTool,
   osSearchTool,

@@ -10,6 +10,14 @@ import {
   type WorkspaceExecResult,
   type WorkspaceHandle,
 } from "./handler";
+import {
+  MAX_EXEC_REQUEST_BYTES,
+  MAX_FS_READ_BYTES,
+  MAX_FS_READDIR_ENTRIES,
+  MAX_FS_RESPONSE_BYTES,
+  MAX_FS_WRITE_BYTES,
+} from "./handler";
+import { BUDGET_WINDOW_MS, PUBLISH_QUOTA_LIMIT } from "../../../shared/session-limits";
 import { MAX_FS_BATCH_OPERATIONS, PUBLISHED_SITE_RETENTION_DAYS } from "./protocol";
 import { randomSlug } from "./slug";
 
@@ -31,6 +39,7 @@ function claimingExecHandle(
   result: WorkspaceExecResult,
   onDispose: () => void,
   onStreamEnd: () => void = () => undefined,
+  onKill: (signal: "SIGINT") => void = () => undefined,
 ): WorkspaceExecHandle {
   let index = 0;
   let streamed = false;
@@ -52,6 +61,7 @@ function claimingExecHandle(
       }
       return result;
     },
+    async kill(signal: "SIGINT" = "SIGINT") { onKill(signal); },
     [Symbol.dispose]: onDispose,
   });
 }
@@ -84,7 +94,7 @@ class MemoryWorkspace {
         return stat;
       },
       statOrNull: async (path: string) => this.stat(path) ?? null,
-      readdir: async (path: string) => {
+      readdir: async (path: string, options?: { limit?: number; offset?: number }) => {
         if (!this.directories.has(path)) {
           if (this.files.has(path)) throw coded(`not a directory: ${path}`, "ENOTDIR");
           throw coded(`no such directory: ${path}`, "ENOENT");
@@ -96,10 +106,12 @@ class MemoryWorkspace {
           const name = candidate.slice(prefix.length).split("/")[0];
           if (name) names.add(name);
         }
-        return [...names].sort().map((name) => {
+        const entries = [...names].sort().map((name) => {
           const candidate = `${path === "/" ? "" : path}/${name}`;
           return this.stat(candidate)!;
         });
+        const offset = options?.offset ?? 0;
+        return entries.slice(offset, options?.limit === undefined ? undefined : offset + options.limit);
       },
       mkdir: async (path: string, options?: { recursive?: boolean }) => {
         if (this.files.has(path)) throw coded(`file exists: ${path}`, "EEXIST");
@@ -151,8 +163,13 @@ class MemoryWorkspace {
 
 class MemorySiteStore implements SiteStore {
   readonly values = new Map<string, { bytes: Uint8Array; contentType?: string }>();
+  getCalls = 0;
+  putCalls = 0;
+
+  constructor(readonly failPutAt?: number) {}
 
   async get(key: string): Promise<SiteObject | null> {
+    this.getCalls += 1;
     const value = this.values.get(key);
     return value ? {
       body: stream(value.bytes),
@@ -165,6 +182,8 @@ class MemorySiteStore implements SiteStore {
     value: ReadableStream<Uint8Array> | string | Uint8Array,
     options?: { httpMetadata?: { contentType?: string } },
   ): Promise<void> {
+    this.putCalls += 1;
+    if (this.putCalls === this.failPutAt) throw new Error("test: R2 put failed");
     let bytes: Uint8Array;
     if (typeof value === "string") bytes = encoder.encode(value);
     else if (value instanceof Uint8Array) bytes = Uint8Array.from(value);
@@ -175,20 +194,69 @@ class MemorySiteStore implements SiteStore {
 
 function fixture(options: {
   execRate?: boolean;
+  execRateIp?: boolean;
   execError?: Error;
   execEvents?: readonly WorkspaceExecEvent[];
   writeRate?: boolean;
+  writeRateIp?: boolean;
   writeRates?: boolean[];
   publishRate?: boolean;
+  publishRateIp?: boolean;
+  publishQuota?: "exhausted";
+  reserveFailures?: number;
+  beginFailures?: number;
+  commitFailures?: number;
+  sitePutFailureAt?: number;
   slugs?: string[];
+  lease?: "exhausted" | "none";
+  publicSiteOrigin?: string;
 } = {}) {
   const workspace = new MemoryWorkspace();
-  const sites = new MemorySiteStore();
+  const sites = new MemorySiteStore(options.sitePutFailureAt);
   const slugs = options.slugs ?? ["aaaaaaaa"];
-  const rateCalls = { exec: 0, publish: 0, write: 0 };
+  const rateCalls = { exec: 0, publish: 0, write: 0, execIp: 0, publishIp: 0, writeIp: 0 };
+  const quotaCalls = {
+    reserve: [] as string[],
+    begin: [] as string[],
+    commit: [] as string[],
+    release: [] as string[],
+  };
+  let reserveFailures = options.reserveFailures ?? 0;
+  let beginFailures = options.beginFailures ?? 0;
+  let commitFailures = options.commitFailures ?? 0;
+  let nextReservation = 1;
+  const leaseCalls: string[] = [];
+  const budget = { remainingMs: 7_000_000, usedMs: 200_000, windowResetsAt: 9_000_000 };
+  if (options.lease !== "none") {
+    workspace.client.lease = {
+      async acquire(busyForMs: number) {
+        leaseCalls.push(`acquire:${busyForMs}`);
+        if (options.lease === "exhausted") {
+          return {
+            ok: false,
+            error: { error: "resource budget for this machine is exhausted for now", code: "EBUDGET", retryAfterMs: 61_000 },
+            budget: { ...budget, remainingMs: 0 },
+          };
+        }
+        return { ok: true, budget };
+      },
+      async started() {
+        leaseCalls.push("started");
+      },
+      async release() {
+        leaseCalls.push("release");
+        return budget;
+      },
+      async abandon() {
+        leaseCalls.push("abandon");
+        return budget;
+      },
+    };
+  }
   const execCalls: Array<{ command: string; options: Record<string, unknown> }> = [];
   const getExecCalls: Array<{ id: string; options: Record<string, unknown> }> = [];
   let execDisposeCount = 0;
+  const killCalls: string[] = [];
   const execEvents = options.execEvents ?? [
     { name: "stdout", value: "one\n" },
     { name: "stderr", value: "warning\n" },
@@ -217,6 +285,7 @@ function fixture(options: {
             liveStream = false;
           },
           () => { liveStream = false; },
+          (signal) => { killCalls.push(signal); },
         );
       },
       async getExec(id: string, getOptions: Record<string, unknown>) {
@@ -231,18 +300,31 @@ function fixture(options: {
   const env = {
     GATEWAY_SIGNING_SECRET: "test-only-gateway-secret-with-at-least-32-characters",
     SITES: sites,
+    ...(options.publicSiteOrigin === undefined ? {} : { PUBLIC_SITE_ORIGIN: options.publicSiteOrigin }),
     EXEC_RATE: { async limit() {
       rateCalls.exec += 1;
       return { success: options.execRate ?? true };
+    } },
+    EXEC_RATE_IP: { async limit() {
+      rateCalls.execIp += 1;
+      return { success: options.execRateIp ?? true };
     } },
     PUBLISH_RATE: { async limit() {
       rateCalls.publish += 1;
       return { success: options.publishRate ?? true };
     } },
+    PUBLISH_RATE_IP: { async limit() {
+      rateCalls.publishIp += 1;
+      return { success: options.publishRateIp ?? true };
+    } },
     WORKSPACE_WRITE_RATE: { async limit() {
       const success = options.writeRates?.[rateCalls.write] ?? options.writeRate ?? true;
       rateCalls.write += 1;
       return { success };
+    } },
+    WORKSPACE_WRITE_RATE_IP: { async limit() {
+      rateCalls.writeIp += 1;
+      return { success: options.writeRateIp ?? true };
     } },
   } satisfies HandlerEnv;
   const dependencies = {
@@ -259,6 +341,44 @@ function fixture(options: {
       };
     },
     async openWorkspace() { return workspace.client; },
+    openPublishQuota() {
+      return {
+        async reserve(reservationId: string) {
+          quotaCalls.reserve.push(reservationId);
+          if (reserveFailures > 0) {
+            reserveFailures -= 1;
+            throw new Error("test: ambiguous reserve RPC");
+          }
+          if (options.publishQuota === "exhausted") {
+            return {
+              ok: false as const,
+              error: {
+                error: `anonymous publish limit of ${PUBLISH_QUOTA_LIMIT} per 24-hour accounting window is exhausted`,
+                code: "EPUBLISHQUOTA" as const,
+                retryAfterMs: BUDGET_WINDOW_MS / 2,
+              },
+            };
+          }
+          return { ok: true as const, reservationId, windowResetsAt: BUDGET_WINDOW_MS };
+        },
+        async begin(reservationId: string) {
+          quotaCalls.begin.push(reservationId);
+          if (beginFailures > 0) {
+            beginFailures -= 1;
+            throw new Error("test: ambiguous begin RPC");
+          }
+        },
+        async commit(reservationId: string) {
+          quotaCalls.commit.push(reservationId);
+          if (commitFailures > 0) {
+            commitFailures -= 1;
+            throw new Error("test: ambiguous commit RPC");
+          }
+        },
+        async release(reservationId: string) { quotaCalls.release.push(reservationId); },
+      };
+    },
+    randomReservationId: () => `reservation-${nextReservation++}`,
     randomSlug() {
       const slug = slugs.shift();
       if (!slug) throw new Error("test: no slug left");
@@ -271,6 +391,9 @@ function fixture(options: {
     execCalls,
     getExecCalls,
     execDisposeCount: () => execDisposeCount,
+    killCalls,
+    leaseCalls,
+    quotaCalls,
     rateCalls,
     sites,
     workspace,
@@ -289,7 +412,7 @@ function fsRequest(body: unknown, suffix = ""): Request {
   });
 }
 
-function execRequest(body: unknown, wsid = WSID): Request {
+function execRequest(body: unknown, wsid = WSID, signal?: AbortSignal): Request {
   return new Request(`https://computer.test/ws/${wsid}/exec`, {
     method: "POST",
     headers: {
@@ -298,6 +421,7 @@ function execRequest(body: unknown, wsid = WSID): Request {
       Origin: "https://app.test",
     },
     body: JSON.stringify(body),
+    signal,
   });
 }
 
@@ -354,6 +478,107 @@ describe("computer worker", () => {
     expect(response.status).toBe(200);
     expect(decoder.decode(workspace.files.get("/workspace/site/home.html"))).toBe("<h1>one</h1>");
     expect(workspace.files.has("/workspace/site/index.html")).toBe(false);
+  });
+
+  test("refuses oversized reads and rename copies without deleting or overwriting", async () => {
+    const value = fixture();
+    value.workspace.directories.add("/workspace/site");
+    value.workspace.files.set("/workspace/site/huge.bin", new Uint8Array(MAX_FS_READ_BYTES + 1));
+    value.workspace.files.set("/workspace/site/destination.bin", encoder.encode("keep"));
+
+    const read = await handleRequest(
+      fsRequest({ op: "read", path: "/site/huge.bin" }),
+      value.env,
+      value.dependencies,
+    );
+    expect(read.status).toBe(413);
+    expect(await read.json() as unknown).toEqual(expect.objectContaining({ code: "EFBIG" }));
+
+    const rename = await handleRequest(fsRequest({
+      op: "rename",
+      path: "/site/huge.bin",
+      to: "/site/destination.bin",
+    }), value.env, value.dependencies);
+    expect(rename.status).toBe(413);
+    expect(await rename.json() as unknown).toEqual(expect.objectContaining({ code: "EFBIG" }));
+    expect(value.workspace.files.has("/workspace/site/huge.bin")).toBe(true);
+    expect(decoder.decode(value.workspace.files.get("/workspace/site/destination.bin"))).toBe("keep");
+  });
+
+  test("bounds file streams even when a container file grows after stat", async () => {
+    const value = fixture();
+    value.workspace.files.set("/workspace/growing.bin", new Uint8Array(MAX_FS_READ_BYTES + 1));
+    const stat = value.workspace.client.fs.stat;
+    value.workspace.client.fs.stat = async (path) => ({ ...await stat(path), size: 1 });
+
+    const response = await handleRequest(
+      fsRequest({ op: "read", path: "/growing.bin" }),
+      value.env,
+      value.dependencies,
+    );
+    expect(response.status).toBe(413);
+    expect(await response.json() as unknown).toEqual({ error: "read exceeds 2 MB", code: "EFBIG" });
+  });
+
+  test("rejects a batch before serialized read results exceed the aggregate response cap", async () => {
+    const value = fixture();
+    const bytes = new Uint8Array(MAX_FS_READ_BYTES);
+    for (let index = 0; index < 4; index += 1) {
+      value.workspace.files.set(`/workspace/part-${index}.bin`, bytes);
+    }
+
+    const response = await handleRequest(fsRequest(Array.from({ length: 4 }, (_, index) => ({
+      op: "read",
+      path: `/part-${index}.bin`,
+    })), "/batch"), value.env, value.dependencies);
+
+    expect(MAX_FS_RESPONSE_BYTES).toBe(8 * 1_024 * 1_024);
+    expect(response.status).toBe(413);
+    expect(await response.json() as unknown).toEqual({
+      error: "filesystem response exceeds 8 MB",
+      code: "EFBIG",
+    });
+    expect(value.workspace.disposeCount).toBe(1);
+  });
+
+  test("caps public readdir through the SDK limit while internal rename traverses every page", async () => {
+    const oversized = fixture();
+    for (let index = 0; index <= MAX_FS_READDIR_ENTRIES; index += 1) {
+      oversized.workspace.files.set(`/workspace/file-${String(index).padStart(4, "0")}`, encoder.encode("x"));
+    }
+    const readdirCalls: Array<{ limit?: number; offset?: number } | undefined> = [];
+    const readdir = oversized.workspace.client.fs.readdir;
+    oversized.workspace.client.fs.readdir = async (path, options) => {
+      readdirCalls.push(options);
+      return await readdir(path, options);
+    };
+
+    const publicResponse = await handleRequest(
+      fsRequest({ op: "readdir", path: "/" }),
+      oversized.env,
+      oversized.dependencies,
+    );
+    expect(publicResponse.status).toBe(413);
+    expect(await publicResponse.json() as unknown).toEqual({
+      error: `directory exceeds ${MAX_FS_READDIR_ENTRIES} entries`,
+      code: "EFBIG",
+    });
+    expect(readdirCalls[0]).toEqual({ limit: MAX_FS_READDIR_ENTRIES + 1 });
+
+    const recursive = fixture();
+    recursive.workspace.directories.add("/workspace/source");
+    for (let index = 0; index <= MAX_FS_READDIR_ENTRIES; index += 1) {
+      recursive.workspace.files.set(`/workspace/source/file-${String(index).padStart(4, "0")}`, encoder.encode("x"));
+    }
+    const moved = await handleRequest(fsRequest({
+      op: "rename",
+      path: "/source",
+      to: "/destination",
+    }), recursive.env, recursive.dependencies);
+    expect(moved.status).toBe(200);
+    expect([...recursive.workspace.files.keys()].filter((path) => path.startsWith("/workspace/destination/")))
+      .toHaveLength(MAX_FS_READDIR_ENTRIES + 1);
+    expect([...recursive.workspace.files.keys()].some((path) => path.startsWith("/workspace/source/"))).toBe(false);
   });
 
   test("rejects directory rename collisions before copying or deleting source data", async () => {
@@ -427,6 +652,157 @@ describe("computer worker", () => {
     expect(publish.status).toBe(429);
   });
 
+  test("returns a structured daily publish-quota error before touching R2 or the container", async () => {
+    const scoped = fixture({ publishQuota: "exhausted" });
+    const response = await handleRequest(
+      new Request(`https://computer.test/ws/${WSID}/publish`, {
+        method: "POST",
+        body: JSON.stringify({ files: [{ path: "index.html", content: "ok" }] }),
+      }),
+      scoped.env,
+      scoped.dependencies,
+    );
+
+    expect(response.status).toBe(429);
+    expect(await response.json() as unknown).toEqual({
+      error: `anonymous publish limit of ${PUBLISH_QUOTA_LIMIT} per 24-hour accounting window is exhausted`,
+      code: "EPUBLISHQUOTA",
+      retryAfterMs: BUDGET_WINDOW_MS / 2,
+    });
+    expect(response.headers.get("Retry-After")).toBe(String(BUDGET_WINDOW_MS / 2 / 1_000));
+    expect(scoped.rateCalls.publish).toBe(1);
+    expect(scoped.rateCalls.publishIp).toBe(1);
+    expect(scoped.quotaCalls.reserve).toEqual(["reservation-1"]);
+    expect(scoped.quotaCalls.begin).toEqual([]);
+    expect(scoped.sites.getCalls).toBe(0);
+    expect(scoped.sites.putCalls).toBe(0);
+    expect(scoped.workspace.disposeCount).toBe(0);
+  });
+
+  test("releases quota only when failure is certainly before any R2 put", async () => {
+    const invalid = fixture();
+    const invalidResponse = await handleRequest(
+      new Request(`https://computer.test/ws/${WSID}/publish`, {
+        method: "POST",
+        body: JSON.stringify({ files: [{ path: "../index.html", content: "no" }] }),
+      }),
+      invalid.env,
+      invalid.dependencies,
+    );
+    expect(invalidResponse.status).toBe(400);
+    expect(invalid.quotaCalls.reserve).toEqual([]);
+
+    const failed = fixture({ slugs: ["INVALID"] });
+    const failedResponse = await handleRequest(
+      new Request(`https://computer.test/ws/${WSID}/publish`, {
+        method: "POST",
+        body: JSON.stringify({ files: [{ path: "index.html", content: "ok" }] }),
+      }),
+      failed.env,
+      failed.dependencies,
+    );
+    expect(failedResponse.status).toBe(502);
+    expect(failed.quotaCalls).toEqual({
+      reserve: ["reservation-1"],
+      begin: [],
+      commit: [],
+      release: ["reservation-1"],
+    });
+    expect(failed.sites.putCalls).toBe(0);
+  });
+
+  test("conservatively charges quota when a late R2 put may have published bytes", async () => {
+    const failed = fixture({ sitePutFailureAt: 3 });
+    const response = await handleRequest(
+      new Request(`https://computer.test/ws/${WSID}/publish`, {
+        method: "POST",
+        body: JSON.stringify({ files: [
+          { path: "index.html", content: "public" },
+          { path: "late.js", content: "failed" },
+        ] }),
+      }),
+      failed.env,
+      failed.dependencies,
+    );
+
+    expect(response.status).toBe(502);
+    expect(failed.sites.values.has("sites/aaaaaaaa/index.html")).toBe(true);
+    expect(failed.quotaCalls).toEqual({
+      reserve: ["reservation-1"],
+      begin: ["reservation-1"],
+      commit: ["reservation-1"],
+      release: [],
+    });
+  });
+
+  test("never refunds quota when the final commit RPC remains ambiguous", async () => {
+    const failed = fixture({ commitFailures: 2 });
+    const response = await handleRequest(
+      new Request(`https://computer.test/ws/${WSID}/publish`, {
+        method: "POST",
+        body: JSON.stringify({ files: [{ path: "index.html", content: "public" }] }),
+      }),
+      failed.env,
+      failed.dependencies,
+    );
+
+    expect(response.status).toBe(502);
+    expect(failed.sites.values.has("sites/aaaaaaaa/index.html")).toBe(true);
+    expect(failed.quotaCalls.commit).toEqual(["reservation-1", "reservation-1"]);
+    expect(failed.quotaCalls.release).toEqual([]);
+  });
+
+  test("retries an ambiguous reserve with one caller-generated id before uploading", async () => {
+    const ambiguous = fixture({ reserveFailures: 1 });
+    const response = await handleRequest(
+      new Request(`https://computer.test/ws/${WSID}/publish`, {
+        method: "POST",
+        body: JSON.stringify({ files: [{ path: "index.html", content: "ok" }] }),
+      }),
+      ambiguous.env,
+      ambiguous.dependencies,
+    );
+
+    expect(response.status).toBe(200);
+    expect(ambiguous.quotaCalls.reserve).toEqual(["reservation-1", "reservation-1"]);
+    expect(ambiguous.quotaCalls.begin).toEqual(["reservation-1"]);
+    expect(ambiguous.quotaCalls.commit).toEqual(["reservation-1"]);
+  });
+
+  test("retries an ambiguous begin and still confirms it before writing", async () => {
+    const ambiguous = fixture({ beginFailures: 1 });
+    const response = await handleRequest(
+      new Request(`https://computer.test/ws/${WSID}/publish`, {
+        method: "POST",
+        body: JSON.stringify({ files: [{ path: "index.html", content: "ok" }] }),
+      }),
+      ambiguous.env,
+      ambiguous.dependencies,
+    );
+
+    expect(response.status).toBe(200);
+    expect(ambiguous.quotaCalls.begin).toEqual(["reservation-1", "reservation-1"]);
+    expect(ambiguous.sites.putCalls).toBe(2);
+  });
+
+  test("reconciles a reserve that stays ambiguous without attempting R2", async () => {
+    const ambiguous = fixture({ reserveFailures: 2 });
+    const response = await handleRequest(
+      new Request(`https://computer.test/ws/${WSID}/publish`, {
+        method: "POST",
+        body: JSON.stringify({ files: [{ path: "index.html", content: "ok" }] }),
+      }),
+      ambiguous.env,
+      ambiguous.dependencies,
+    );
+
+    expect(response.status).toBe(502);
+    expect(ambiguous.quotaCalls.reserve).toEqual(["reservation-1", "reservation-1"]);
+    expect(ambiguous.quotaCalls.release).toEqual(["reservation-1"]);
+    expect(ambiguous.sites.getCalls).toBe(0);
+    expect(ambiguous.sites.putCalls).toBe(0);
+  });
+
   test("charges one workspace rate token per mutating batch request", async () => {
     const { env, dependencies, rateCalls, workspace } = fixture();
     const response = await handleRequest(fsRequest([
@@ -465,7 +841,7 @@ describe("computer worker", () => {
   });
 
   test("publishes validated text with retention, unique slugs, and content types", async () => {
-    const { env, dependencies, sites } = fixture({ slugs: ["aaaaaaaa", "aaaaaaaa", "bbbbbbbb"] });
+    const { env, dependencies, quotaCalls, sites } = fixture({ slugs: ["aaaaaaaa", "aaaaaaaa", "bbbbbbbb"] });
     const publish = async (content: string) => await handleRequest(new Request(`https://computer.test/ws/${WSID}/publish`, {
       method: "POST",
       body: JSON.stringify({ files: [
@@ -485,6 +861,12 @@ describe("computer worker", () => {
     });
     expect(sites.values.get("sites/aaaaaaaa/index.html")?.contentType).toBe("text/html; charset=utf-8");
     expect(sites.values.get("sites/aaaaaaaa/assets/app.js")?.contentType).toBe("text/javascript; charset=utf-8");
+    expect(quotaCalls).toEqual({
+      reserve: ["reservation-1", "reservation-2"],
+      begin: ["reservation-1", "reservation-2"],
+      commit: ["reservation-1", "reservation-2"],
+      release: [],
+    });
     const publicPublish = await handleRequest(new Request("https://computer.test/publish", {
       method: "POST",
       body: JSON.stringify({ files: [{ path: "index.html", content: "anonymous" }] }),
@@ -510,6 +892,26 @@ describe("computer worker", () => {
     const reserved = await publish([{ path: ".webmcp-computer-site", content: "reserved" }]);
     expect(reserved.status).toBe(400);
     expect(await reserved.json() as unknown).toEqual(expect.objectContaining({ code: "EINVAL" }));
+
+    const declaredOversize = await handleRequest(
+      new Request(`https://computer.test/ws/${WSID}/publish`, {
+        method: "POST",
+        headers: { "Content-Length": String(4 * 1_024 * 1_024) },
+        body: "{}",
+      }),
+      env,
+      dependencies,
+    );
+    expect(declaredOversize.status).toBe(413);
+    const streamedOversize = await handleRequest(
+      new Request(`https://computer.test/ws/${WSID}/publish`, {
+        method: "POST",
+        body: "x".repeat(3 * 1_024 * 1_024 + 1),
+      }),
+      env,
+      dependencies,
+    );
+    expect(streamedOversize.status).toBe(413);
   });
 
   test("serves immutable site bytes, preflight, 404, and top-level failures with CORS", async () => {
@@ -587,6 +989,24 @@ describe("computer worker", () => {
     expect(MAX_FS_BATCH_OPERATIONS).toBe(128);
   });
 
+  test("bounds streamed exec JSON before parsing regardless of Content-Length", async () => {
+    const value = fixture();
+    const oversizedBody = JSON.stringify({ command: "x".repeat(MAX_EXEC_REQUEST_BYTES) });
+    const response = await handleRequest(new Request(`https://computer.test/ws/${WSID}/exec`, {
+      method: "POST",
+      headers: {
+        "Content-Length": "1",
+        "Content-Type": "application/json",
+      },
+      body: stream(encoder.encode(oversizedBody)),
+    }), value.env, value.dependencies);
+
+    expect(response.status).toBe(413);
+    expect(await response.json() as unknown).toEqual(expect.objectContaining({ code: "EFBIG" }));
+    expect(value.rateCalls.exec).toBe(0);
+    expect(value.workspace.disposeCount).toBe(0);
+  });
+
   test("validates capability-scoped exec input and clamps timeout", async () => {
     const { env, dependencies, execCalls } = fixture();
     expect((await handleRequest(execRequest({ command: "pwd" }, "bad"), env, dependencies)).status)
@@ -631,12 +1051,15 @@ describe("computer worker", () => {
       "event: stdout\ndata: \"one\\n\"\n\n" +
       "event: stderr\ndata: \"warning\\n\"\n\n" +
       "event: stdout\ndata: \"two\\n\"\n\n" +
-      "event: exit\ndata: {\"code\":7,\"pushed\":2,\"pulled\":1,\"applied\":4,\"syncStatus\":\"complete\"}\n\n",
+      "event: exit\ndata: {\"code\":7,\"pushed\":2,\"pulled\":1,\"applied\":4,\"syncStatus\":\"complete\"," +
+      "\"budget\":{\"remainingMs\":7000000,\"usedMs\":200000,\"windowResetsAt\":9000000}}\n\n",
     );
     expect(value.execCalls).toEqual([{
       command: "printf one",
       options: { encoding: "utf8", timeoutMs: 300_000 },
     }]);
+    // Lease stays busy for the command timeout plus start/sync grace, then releases once.
+    expect(value.leaseCalls).toEqual(["acquire:360000", "started", "release"]);
     expect(value.getExecCalls).toEqual([{
       id: "run-1",
       options: { encoding: "utf8", resume: "tail" },
@@ -671,66 +1094,259 @@ describe("computer worker", () => {
     expect(frames[2]?.data).toEqual({ message: "webmcp-computer: cloud output truncated after 2 MB" });
   });
 
-  test("continues the bounded remote run after the SSE client disconnects", async () => {
-    const value = fixture();
-    let release = () => {};
-    const remoteOutput = new Promise<void>((resolve) => { release = resolve; });
-    let resultCalls = 0;
-    let markFinished = () => {};
-    const remoteFinished = new Promise<void>((resolve) => { markFinished = resolve; });
-    let runDisposeCount = 0;
-    const run: WorkspaceExecHandle = Object.assign(new ReadableStream<WorkspaceExecEvent>({
-      async start(controller) {
-        await remoteOutput;
-        controller.enqueue({ name: "stdout", value: "finished\n" });
-        controller.close();
-      },
-    }), {
-      id: "run-disconnect",
-      async result() { throw new Error("result-after-stream must not be called"); },
-      [Symbol.dispose]() {
-        runDisposeCount += 1;
-        markFinished();
-      },
-    });
-    const resultRun = claimingExecHandle("run-disconnect", [], {
-      exitCode: 0,
-      pushed: 0,
-      pulled: 0,
-      sync: { status: "complete", applied: 0 },
-    }, () => {});
-    const resultMethod = resultRun.result;
-    Object.defineProperty(resultRun, "result", {
-      value: async () => {
-        resultCalls += 1;
-        return await resultMethod();
-      },
-    });
-    Object.assign(value.workspace.client, {
-      runtime: {
-        async exec() { return run; },
-        async getExec() { return resultRun; },
-      },
-    });
+  for (const cancellation of ["response stream", "request signal"] as const) {
+    test(`best-effort kills, drains, syncs, and releases once on ${cancellation} cancellation`, async () => {
+      const value = fixture();
+      let finishRemote = () => {};
+      const remoteOutput = new Promise<void>((resolve) => { finishRemote = resolve; });
+      let resultCalls = 0;
+      let markFinished = () => {};
+      const remoteFinished = new Promise<void>((resolve) => { markFinished = resolve; });
+      let runDisposeCount = 0;
+      const killCalls: string[] = [];
+      const run: WorkspaceExecHandle = Object.assign(new ReadableStream<WorkspaceExecEvent>({
+        async start(controller) {
+          await remoteOutput;
+          controller.enqueue({ name: "stdout", value: "interrupted\n" });
+          controller.close();
+        },
+      }), {
+        id: "run-cancel",
+        async result() { throw new Error("result-after-stream must not be called"); },
+        async kill(signal: "SIGINT" = "SIGINT") {
+          killCalls.push(signal);
+          finishRemote();
+        },
+        [Symbol.dispose]() {
+          runDisposeCount += 1;
+          markFinished();
+        },
+      });
+      const resultRun = claimingExecHandle("run-cancel", [], {
+        exitCode: 130,
+        pushed: 0,
+        pulled: 1,
+        sync: { status: "complete", applied: 1 },
+      }, () => {});
+      const resultMethod = resultRun.result;
+      Object.defineProperty(resultRun, "result", {
+        value: async () => {
+          resultCalls += 1;
+          return await resultMethod();
+        },
+      });
+      Object.assign(value.workspace.client, {
+        runtime: {
+          async exec() { return run; },
+          async getExec() { return resultRun; },
+        },
+      });
+      const abort = new AbortController();
 
-    const response = await handleRequest(execRequest({ command: "sleep 60" }), value.env, value.dependencies);
-    const canceling = response.body?.cancel();
-    release();
-    await canceling;
-    await remoteFinished;
+      const response = await handleRequest(
+        execRequest({ command: "sleep 60" }, WSID, abort.signal),
+        value.env,
+        value.dependencies,
+      );
+      if (cancellation === "response stream") await response.body?.cancel("client disconnected");
+      else abort.abort("ownership lost");
+      await remoteFinished;
 
-    expect(resultCalls).toBe(1);
-    expect(runDisposeCount).toBe(1);
-    expect(value.workspace.disposeCount).toBe(1);
-  });
+      expect(killCalls).toEqual(["SIGINT"]);
+      expect(resultCalls).toBe(1);
+      expect(runDisposeCount).toBe(1);
+      expect(value.leaseCalls).toEqual(["acquire:360000", "started", "release"]);
+      expect(value.workspace.disposeCount).toBe(1);
+    });
+  }
 
   test("turns upstream exec failures into one SSE error event", async () => {
-    const value = fixture({ execError: new Error("container unavailable\nretry later") });
+    const value = fixture({ execError: new Error("computerd exited with code 137\nretry later") });
     const response = await handleRequest(execRequest({ command: "pwd" }), value.env, value.dependencies);
     expect(response.status).toBe(200);
     expect(await response.text()).toBe(
-      "event: error\ndata: {\"error\":\"container unavailable retry later\"}\n\n",
+      "event: error\ndata: {\"error\":\"computerd exited with code 137 retry later\"}\n\n",
     );
     expect(value.workspace.disposeCount).toBe(1);
+    // The run never started, so the lease must stop charging immediately.
+    expect(value.leaseCalls).toEqual(["acquire:360000", "abandon"]);
+  });
+
+  test("names container placement failures ECAPACITY and abandons the lease", async () => {
+    const value = fixture({
+      execError: new Error("CloudflareContainerBackend(container): connect failed at stage=start attempt=3/3"),
+    });
+    const response = await handleRequest(execRequest({ command: "pwd" }), value.env, value.dependencies);
+    expect(response.status).toBe(200);
+    const frame = JSON.parse((await response.text()).replace(/^event: error\ndata: /, "").trim()) as Record<string, unknown>;
+    expect(frame).toEqual({
+      error: "cloud is at capacity: every container slot is busy right now",
+      code: "ECAPACITY",
+      retryAfterMs: 60_000,
+    });
+    expect(value.leaseCalls).toEqual(["acquire:360000", "abandon"]);
+  });
+
+  test("refuses exec with a plain 429 EBUDGET before any stream opens when the budget is spent", async () => {
+    const value = fixture({ lease: "exhausted" });
+    const response = await handleRequest(execRequest({ command: "pwd" }), value.env, value.dependencies);
+    expect(response.status).toBe(429);
+    expect(response.headers.get("Content-Type")).toBe("application/json");
+    expect(response.headers.get("Retry-After")).toBe("61");
+    expect(await response.json() as unknown).toEqual({
+      error: "resource budget for this machine is exhausted for now",
+      code: "EBUDGET",
+      retryAfterMs: 61_000,
+    });
+    expect(value.execCalls).toEqual([]);
+    expect(value.workspace.disposeCount).toBe(1);
+  });
+
+  test("rate limits every paid action per IP as well as per subject", async () => {
+    const exec = fixture({ execRateIp: false });
+    expect((await handleRequest(execRequest({ command: "pwd" }), exec.env, exec.dependencies)).status).toBe(429);
+    expect(exec.execCalls).toEqual([]);
+    expect(exec.rateCalls.execIp).toBe(1);
+
+    const publish = fixture({ publishRateIp: false });
+    const published = await handleRequest(
+      new Request(`https://computer.test/ws/${WSID}/publish`, {
+        method: "POST",
+        body: JSON.stringify({ files: [{ path: "index.html", content: "x" }] }),
+      }),
+      publish.env,
+      publish.dependencies,
+    );
+    expect(published.status).toBe(429);
+    expect(publish.sites.values.size).toBe(0);
+    expect(publish.quotaCalls.reserve).toEqual([]);
+
+    const write = fixture({ writeRateIp: false });
+    const written = await handleRequest(fsRequest({ op: "mkdir", path: "/x" }), write.env, write.dependencies);
+    expect(written.status).toBe(429);
+    expect(write.workspace.directories.has("/workspace/x")).toBe(false);
+  });
+
+  test("caps a single write and the whole fs request so storage cannot be flooded", async () => {
+    const { env, dependencies, workspace } = fixture();
+    const tooBig = base64("x".repeat(MAX_FS_WRITE_BYTES + 1));
+    const single = await handleRequest(fsRequest({ op: "write", path: "/big.bin", data: tooBig }), env, dependencies);
+    expect(single.status).toBe(413);
+    expect(await single.json() as unknown).toEqual({ error: "write exceeds 2 MB", code: "EFBIG" });
+    expect(workspace.files.size).toBe(0);
+
+    const chunk = base64("y".repeat(MAX_FS_WRITE_BYTES - 1_024));
+    const batch = Array.from({ length: 6 }, (_, index) => ({ op: "write", path: `/part${index}.bin`, data: chunk }));
+    const flood = await handleRequest(fsRequest(batch, "/batch"), env, dependencies);
+    expect(flood.status).toBe(413);
+    expect(workspace.files.size).toBe(0);
+  });
+
+  test("records a pseudonymous publisher on an isolated workers.dev origin", async () => {
+    const publicOrigin = "https://webmcp-computer-cloud.account.workers.dev";
+    const { env, dependencies, sites } = fixture({ publicSiteOrigin: publicOrigin });
+    const response = await handleRequest(
+      new Request(`https://computer.test/ws/${WSID}/publish`, {
+        method: "POST",
+        headers: { "CF-Connecting-IP": "192.0.2.10" },
+        body: JSON.stringify({ files: [{ path: "index.html", content: "<h1>hi</h1>" }] }),
+      }),
+      env,
+      dependencies,
+    );
+    expect(await response.json() as unknown).toEqual({
+      expiresInDays: PUBLISHED_SITE_RETENTION_DAYS,
+      id: "aaaaaaaa",
+      url: `${publicOrigin}/s/aaaaaaaa/`,
+    });
+    const manifest = JSON.parse(decoder.decode(sites.values.get("sites/aaaaaaaa/.webmcp-computer-site")?.bytes)) as Record<string, unknown>;
+    expect(manifest).toEqual({
+      id: "aaaaaaaa",
+      publishedAt: expect.any(String),
+      subject: "subject-1",
+      ipHash: expect.stringMatching(/^[0-9a-f]{32}$/),
+      files: 1,
+      bytes: 11,
+    });
+    expect(manifest.ipHash).not.toContain("192.0.2.10");
+
+    const trustedOrigin = await handleRequest(
+      new Request("https://computer.test/s/aaaaaaaa/"),
+      env,
+      dependencies,
+    );
+    expect(trustedOrigin.status).toBe(404);
+    const servedFromPublicOrigin = await handleRequest(
+      new Request(`${publicOrigin}/s/aaaaaaaa/`),
+      env,
+      dependencies,
+    );
+    expect(servedFromPublicOrigin.status).toBe(200);
+  });
+
+  test("fails closed before uploading for non-workers.dev publishing origins", async () => {
+    for (const configured of [
+      "https://cloud.webmcp.com",
+      "https://workers.dev.evil.example",
+      "http://sites.account.workers.dev",
+      "https://sites.account.workers.dev/",
+      "https://sites.account.workers.dev:8443",
+      "https://sites.account.workers.dev/path",
+      "https://sites.account.workers.dev?query=yes",
+      "https://sites.account.workers.dev#fragment",
+    ]) {
+      const { env, dependencies, sites } = fixture({ publicSiteOrigin: configured });
+      const response = await handleRequest(
+        new Request(`https://computer.test/ws/${WSID}/publish`, {
+          method: "POST",
+          body: JSON.stringify({ files: [{ path: "index.html", content: "x" }] }),
+        }),
+        env,
+        dependencies,
+      );
+      expect(response.status).toBe(502);
+      expect(await response.json() as unknown).toEqual({
+        error: "PUBLIC_SITE_ORIGIN must be an isolated workers.dev HTTPS origin",
+        code: "EIO",
+      });
+      expect(sites.values.size).toBe(0);
+    }
+  });
+
+  test("requires PUBLIC_SITE_ORIGIN outside explicit local and test hosts", async () => {
+    const { env, dependencies, sites } = fixture();
+    const response = await handleRequest(
+      new Request(`https://cloud.example/ws/${WSID}/publish`, {
+        method: "POST",
+        body: JSON.stringify({ files: [{ path: "index.html", content: "x" }] }),
+      }),
+      env,
+      dependencies,
+    );
+    expect(response.status).toBe(502);
+    expect(await response.json() as unknown).toEqual({
+      error: "PUBLIC_SITE_ORIGIN is required outside localhost and .test hosts",
+      code: "EIO",
+    });
+    expect(sites.values.size).toBe(0);
+  });
+
+  test("serves published sites sandboxed and unindexed", async () => {
+    const { env, dependencies, sites } = fixture();
+    await sites.put("sites/aaaaaaaa/index.html", "<h1>hi</h1>", { httpMetadata: { contentType: "text/html; charset=utf-8" } });
+    const response = await handleRequest(new Request("https://computer.test/s/aaaaaaaa/"), env, dependencies);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("X-Robots-Tag")).toBe("noindex, nofollow, noarchive");
+    expect(response.headers.get("Content-Security-Policy")).toBe("sandbox allow-scripts allow-forms allow-popups allow-modals");
+    expect(response.headers.get("Referrer-Policy")).toBe("no-referrer");
+
+    await sites.put("sites/aaaaaaaa/.webmcp-computer-site", JSON.stringify({ subject: "private", ipHash: "private" }));
+    const manifest = await handleRequest(
+      new Request("https://computer.test/s/aaaaaaaa/.webmcp-computer-site"),
+      env,
+      dependencies,
+    );
+    expect(manifest.status).toBe(404);
+    expect(await manifest.text()).toBe("not found");
   });
 });

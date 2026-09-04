@@ -24,6 +24,7 @@ import {
   siteToolInvocationScope,
 } from "./registry";
 import { appCloseTool, appListTool, sysStatusTool } from "./systemTools";
+import { abortInFlightAgentActions, MACHINE_OWNERSHIP_LOST_ERROR } from "./agentAction";
 
 type CapturedRegistration = {
   tool: SpecTool;
@@ -204,6 +205,7 @@ describe("system tool registry", () => {
       "window_move",
       "window_resize",
       "sys_status",
+      "machine_take_over",
       "screensaver_wake",
       "os_manual",
       "os_search",
@@ -587,6 +589,37 @@ describe("system tool registry", () => {
     expect(getInFlightToolInvocationCount()).toBe(0);
     expect(hasInFlightSiteToolInvocation(siteToolInvocationScope(process.pid))).toBe(false);
     expect(reachedQuiescence).toBe(true);
+    scope.dispose();
+  });
+
+  test("ownership loss aborts an in-flight proxied site tool and rejects stale success", async () => {
+    const process = useKernelStore.getState().spawn("preview", { path: "~/site" });
+    const captured: CapturedRegistration[] = [];
+    const scope = createSiteToolRegistryScope(process.pid, "webmcp-computer://site/", {
+      modelContext: createModelContext(captured),
+      telemetry: false,
+    });
+    let proxySignal: AbortSignal | undefined;
+    await scope.register({
+      name: "site_old_owner",
+      description: "Waits for ownership loss.",
+    }, async (_input, signal) => {
+      proxySignal = signal;
+      return await new Promise<string>(() => {});
+    });
+
+    const invocation = captured[0]!.tool.execute({});
+    const outcome = invocation.then(
+      (value) => ({ value }),
+      (error: unknown) => ({ error }),
+    );
+    await Promise.resolve();
+    abortInFlightAgentActions();
+    const settled = await outcome;
+    if ("error" in settled) throw settled.error;
+    expectToolErrorResult(settled.value, MACHINE_OWNERSHIP_LOST_ERROR);
+    expect(proxySignal?.aborted).toBe(true);
+    expect(useKernelStore.getState().events.at(-1)?.ok).toBe(false);
     scope.dispose();
   });
 

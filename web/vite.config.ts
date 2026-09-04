@@ -1,4 +1,4 @@
-import { defineConfig } from "vite";
+import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
 import { sites } from "@openai/sites-vite-plugin";
 import { access, mkdir, rm } from "node:fs/promises";
@@ -31,7 +31,8 @@ const sitesArtifactLayout = {
   },
 };
 
-function sitesLocalApi() {
+function sitesLocalApi(fileEnv: Record<string, string>) {
+  const setting = (name: string) => process.env[name] ?? fileEnv[name];
   const workspaceId = "6c6f63616c5f73656564795f76657262";
   const userStore = { async getOrCreate() { return workspaceId; } };
   return {
@@ -62,9 +63,9 @@ function sitesLocalApi() {
             new Request(url, { method: request.method, headers }),
             {
               ASSETS: { fetch: () => new Response("not found", { status: 404 }) },
-              GATEWAY_SIGNING_SECRET: process.env.WEBMCP_COMPUTER_DEV_GATEWAY_SIGNING_SECRET ?? LOCAL_GATEWAY_SECRET,
-              BROWSER_WORKER_URL: process.env.VITE_BROWSER_WORKER_URL ?? "http://127.0.0.1:8787",
-              COMPUTER_WORKER_URL: process.env.VITE_COMPUTER_WORKER_URL ?? "http://127.0.0.1:8788",
+              GATEWAY_SIGNING_SECRET: setting("WEBMCP_COMPUTER_DEV_GATEWAY_SIGNING_SECRET") ?? LOCAL_GATEWAY_SECRET,
+              BROWSER_WORKER_URL: setting("VITE_BROWSER_WORKER_URL") ?? "http://127.0.0.1:8787",
+              COMPUTER_WORKER_URL: setting("VITE_COMPUTER_WORKER_URL") ?? "http://127.0.0.1:8788",
             },
             { userStore },
           );
@@ -79,8 +80,9 @@ function sitesLocalApi() {
   };
 }
 
-export default defineConfig({
-  plugins: [sitesArtifactLayout, sites(), sitesLocalApi(), react()],
+export default defineConfig(({ mode }) => ({
+  // `.env` is read here so the dev session broker sees it; Vite only exposes VITE_* to the client.
+  plugins: [sitesArtifactLayout, sites(), sitesLocalApi(loadEnv(mode, projectRoot, "")), react()],
   optimizeDeps: {
     exclude: ["@opentelemetry/api-logs"],
   },
@@ -114,4 +116,4 @@ export default defineConfig({
     // use this app's dependency graph during dev and production builds.
     preserveSymlinks: true,
   },
-});
+}));

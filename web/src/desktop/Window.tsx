@@ -112,13 +112,19 @@ export const Window = memo(function Window({ process, app, minimized }: WindowPr
               <span className="window-control window-control--inert" aria-hidden="true" />
             </span>
             <VerbHint verb="window_move" arg={`PID ${process.pid}`}>
-              <span className="window-title">
+              <span
+                className="window-title"
+                data-analytics-block={app.id === "terminal" || app.id === "ui" ? "" : undefined}
+              >
                 {title}
               </span>
             </VerbHint>
             <span className="window-pid mono">PID {process.pid}</span>
           </header>
-          <div className="window-body">
+          <div
+            className="window-body"
+            data-analytics-block={app.id === "settings" ? undefined : ""}
+          >
             <Suspense
               fallback={<div className="app-loading mono" role="status">Opening {app.name}…</div>}
             >

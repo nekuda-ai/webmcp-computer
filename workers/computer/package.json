@@ -6,7 +6,8 @@
     "check": "bun test src && tsc --noEmit",
     "test": "bun test src",
     "deploy": "bunx wrangler@4.128.0 deploy",
-    "smoke": "bun smoke.ts"
+    "smoke": "bun smoke.ts",
+    "smoke:live": "bun smoke-live.ts"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260901.1",

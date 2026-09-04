@@ -1,6 +1,7 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
+import { initializeAnalytics } from "./analytics";
 import "./styles/base.css";
 import "./styles/desktop.css";
 import "./styles/screensaver.css";
@@ -16,4 +17,5 @@ function start(): void {
   );
 }
 
+void initializeAnalytics();
 start();

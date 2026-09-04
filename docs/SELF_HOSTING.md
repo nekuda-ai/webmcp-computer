@@ -46,8 +46,21 @@ Never use a `VITE_` variable for this secret. `VITE_` values ship to browser.
 ## 2. Deploy Cloudflare resources
 
 Prerequisites: Cloudflare account with Workers, Browser Rendering, R2, Durable
-Objects, and Containers access; Wrangler authenticated for that account; Docker
-available for Computer image build.
+Objects, and Containers access; Wrangler authenticated for that account; a Docker-
+compatible daemon for the Computer image build (Docker Desktop or Colima both work;
+wrangler builds for `linux/amd64`).
+
+Both Wrangler configs carry a top-level (production) target and an `env.staging`
+target with its own Worker name (`-staging` suffix), custom domain, Durable Object
+namespace, R2 bucket, and rate-limit namespaces. Add `--env staging` to every
+`wrangler secret put` and `wrangler deploy` below to provision staging instead. Change
+the `routes` patterns to hostnames on a zone in your account, or delete them to use
+`workers.dev` only. Set `PUBLIC_SITE_ORIGIN` to that environment's exact `workers.dev`
+HTTPS origin (for example, `https://<worker>.<account-subdomain>.workers.dev`, with no
+path, query, fragment, or trailing slash). The Worker rejects custom domains here so
+anonymous user content can never inherit your trusted app domain. Only local development
+requests on localhost/loopback and automated requests on `.test` hosts may omit the value
+and deliberately use their request origin.
 
 Create Browser Rendering API token with only Browser Rendering Edit permission.
 This runtime token is separate from Wrangler deployment authentication.
@@ -69,15 +82,49 @@ bunx wrangler r2 bucket lifecycle add webmcp-computer-sites webmcp-computer-publ
 cd workers/computer
 bun install
 bunx wrangler secret put GATEWAY_SIGNING_SECRET
+bunx wrangler secret put PUBLIC_SITE_ORIGIN # this environment's https://<worker>.<subdomain>.workers.dev origin
 bunx wrangler deploy
 ```
 
 Wrangler configs declare required secrets, stable `ratelimits` bindings, logs,
-SQLite Durable Object migration, Container, and R2 binding. Change Worker names,
+SQLite Durable Object migrations, Container, and R2 binding. Change Worker names,
 rate-limit namespace IDs, R2 bucket, or container capacity before deploy when
-sharing a Cloudflare account with another installation. R2 lifecycle rule is
+sharing a Cloudflare account with another installation. The workspace Durable Object
+also enforces 20 successful publishes per machine per fixed 24-hour accounting window.
+R2 lifecycle rule is
 required for product's advertised 30-day public-site deletion contract; verify it
 with `bunx wrangler r2 bucket lifecycle list webmcp-computer-sites`.
+
+After deploying, run the live smoke against the Computer Worker (one container start,
+a few KB of R2):
+
+```sh
+cd workers/computer
+COMPUTER_WORKER_URL=https://cloud-staging.example GATEWAY_SIGNING_SECRET=... bun smoke-live.ts
+```
+
+### Visitor budgets and idle stops
+
+Every paid resource is leased per machine by a Durable Object, with the numbers in
+`shared/session-limits.ts` (change them there; site, Workers, and client all import it):
+
+- Remote Chrome: at most one per machine; 2 h per 24-hour accounting window; deleted server-side after
+  5 min without a client heartbeat (the client only heartbeats after recent trusted human
+  input while the owning tab remains visible and focused; agent calls do not count).
+  Cross-origin Live View input is checked through bounded CDP-installed isolated-world
+  listeners rather than indefinite iframe focus. This assumes Live View continues to use
+  Chromium's trusted input path; query failures fail closed. Browser Run's own `keep_alive`
+  is set to its 10-minute maximum as a backstop.
+- Cloud container: 2 h of running time per 24-hour accounting window; destroyed 5 min after the last
+  exec finishes, restarted transparently by the next exec (the filesystem lives in the
+  Durable Object). Idle cleanup waits for pending container-to-DO filesystem sync, including
+  repeated bounded retry cycles, and failed destroys are durably retried while runtime continues
+  charging. The hard 2 h budget takes precedence after one final sync retry; if that fails, the
+  diagnostic intent remains but container-only unsynced files are unavoidably lost on destruction.
+- Every action is rate-limited per signed subject + IP and per IP alone.
+
+Refusals are JSON `{ error, code, retryAfterMs? }` with `code` in `EBUDGET`, `EIDLE`,
+`EOWNER`, `ECAPACITY`; the client turns them into plain-language messages.
 
 For custom domains, add each Worker hostname through Cloudflare dashboard or a
 Wrangler `routes` entry with `custom_domain: true`. Example hosted-demo names:
@@ -108,10 +155,26 @@ Configure these backend secrets in OpenAI Sites:
 | `BROWSER_WORKER_URL` | Browser Worker HTTPS origin |
 | `COMPUTER_WORKER_URL` | Computer Worker HTTPS origin |
 
-Build locally with `cd web && bun install && bun run build`. Local Vite uses the
-same anonymous session response; local Worker testing should run both Workers
-with the same development gateway secret and URLs `127.0.0.1:8787` and
-`127.0.0.1:8788`.
+For a restricted staging deployment, keep the OpenAI Site private and invite only the
+accounts that should test it. Access control remains the hosting platform's responsibility;
+the application does not interpret identity headers.
+
+Build locally with `cd web && bun install && bun run build`. `bun run dev` serves the
+same `/api/session` broker and reads `web/.env` (see `web/.env.example`): point
+`VITE_BROWSER_WORKER_URL` / `VITE_COMPUTER_WORKER_URL` at deployed staging Workers and
+set `WEBMCP_COMPUTER_DEV_GATEWAY_SIGNING_SECRET` to their gateway secret, or run both
+Workers locally on `127.0.0.1:8787` / `127.0.0.1:8788` with the development secret.
+
+### Optional PostHog analytics
+
+Set both `VITE_POSTHOG_KEY` and `VITE_POSTHOG_HOST` in the frontend build environment to
+enable pseudonymous typed usage analytics and privacy-masked session replay. If either is
+empty, PostHog is not initialized. The project key is intentionally public browser
+configuration; never put a personal or administrative PostHog token in a `VITE_` value.
+The SDK is bundled (including replay), so no PostHog script origin is needed in CSP; allow
+the configured ingestion host in `connect-src`. The integration honors DNT/GPC and does
+not expose an application consent setting. See the repository README network disclosure
+for the captured/excluded categories.
 
 ### Another host
 
@@ -130,12 +193,18 @@ Only Browser Worker needs `BROWSER_RENDERING_API_TOKEN`; Computer uses native bi
 ## 4. Operations
 
 - Demo capabilities expire after fifteen minutes; browser refreshes through same-origin
-  broker before expiry.
-- Rate limits key by pseudonymous signed subject plus client IP. Cloudflare rate
-  limits are permissive and location-local; use them for abuse control, not exact
-  billing quotas.
+  broker before expiry. That is a token lifetime, not a session limit; the resource
+  limits are the per-machine budgets above.
+- Rate limits key by pseudonymous signed subject plus client IP, and by client IP
+  alone. Cloudflare rate limits are permissive and location-local; use them for abuse
+  control, not exact billing quotas.
+- See `docs/OPERATIONS.md` for the runbook: deploys, cutover, secrets rotation,
+  capacity, cost model, alerts, and published-site takedown.
 - Computer filesystem is authoritative in Durable Object SQLite. Container sync
-  failures persist retry intent and schedule DO alarm with bounded backoff.
+  failures persist retry intent and schedule DO alarms in bounded cycles. Idle cleanup is
+  deferred while an intent remains. At the hard 2 h runtime budget, one final pull runs before
+  cleanup; failure is logged explicitly and intent is retained for diagnosis, but cannot extend
+  paid runtime indefinitely.
 - Worker observability is enabled. Alert on 401 spikes, 429 spikes, Browser API
   failures, Container startup failures, and exhausted/lost sync retries.
 - Rotate gateway secret across site and both Workers together. Existing

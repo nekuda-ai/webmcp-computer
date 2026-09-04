@@ -3,6 +3,7 @@ import {
   resolveComputerWorkerUrl,
 } from "./cloudFs";
 import { hostedAuthorization } from "./hostedSession";
+import { describeLimitError, limitErrorFromPayload } from "./activity";
 
 export type CloudExecRequest = {
   command: string;
@@ -134,14 +135,24 @@ function parseFrame(frame: string): { event: string; data: unknown } | undefined
   }
 }
 
+/** Worker limit bodies (`{ error, code, retryAfterMs }`) become explanations a human can act on. */
+function workerError(payload: unknown, fallback: string): Error {
+  const limit = limitErrorFromPayload(payload);
+  if (limit) return failure(describeLimitError(limit, "cloud"));
+  const reason = payload !== null && typeof payload === "object"
+    ? (payload as { error?: unknown }).error
+    : undefined;
+  return failure(typeof reason === "string" ? reason : fallback);
+}
+
 async function responseError(response: Response): Promise<Error> {
+  let payload: unknown;
   try {
-    const value = await response.json() as { error?: unknown };
-    if (typeof value.error === "string") return failure(value.error);
+    payload = await response.json();
   } catch {
-    // Status fallback below.
+    payload = undefined;
   }
-  return failure(`computer Worker returned ${response.status}`);
+  return workerError(payload, `computer Worker returned ${response.status}`);
 }
 
 export async function executeCloudCommand(
@@ -204,11 +215,7 @@ export async function executeCloudCommand(
       return;
     }
     if (frame.event === "error") {
-      const message = frame.data !== null && typeof frame.data === "object" &&
-        typeof (frame.data as { error?: unknown }).error === "string"
-        ? (frame.data as { error: string }).error
-        : "computer Worker reported an unknown error";
-      throw failure(message);
+      throw workerError(frame.data, "computer Worker reported an unknown error");
     }
   };
 

@@ -67,9 +67,13 @@ export function MenuBar() {
     <header className="menu-bar" data-fs-status={fileSystemStatus}>
       <div className="menu-bar__identity">
         <span className="wordmark">WebMCP Computer</span>
-        <span className="menu-bar__user mono">~/{identity.user.toUpperCase()}</span>
+        <span className="menu-bar__user mono" data-analytics-block="">
+          ~/{identity.user.toUpperCase()}
+        </span>
         {machineId ? (
-          <span className="menu-bar__machine mono">MACHINE {friendlyMachineId(machineId)}</span>
+          <span className="menu-bar__machine mono" data-analytics-block="">
+            MACHINE {friendlyMachineId(machineId)}
+          </span>
         ) : null}
       </div>
       <div className="menu-bar__status">

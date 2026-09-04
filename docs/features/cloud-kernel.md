@@ -1,5 +1,17 @@
 # Cloud kernel + os_publish — cloudflare/computer
 
+> Historical implementation spec. Current deployment, protection, and operations contracts
+> live in `docs/SELF_HOSTING.md` and `docs/OPERATIONS.md`.
+>
+> **Scale-readiness amendment:** protected workspace routes require a short-lived capability.
+> A per-workspace runtime lease allows one exec at a time, stops the container after 5 idle
+> minutes, and enforces a 2-hour budget per 24-hour accounting window. Durable Object alarm
+> slots coordinate runtime cleanup with persisted filesystem-sync retries. Paid actions are
+> rate-limited per signed subject + IP and per IP alone; writes are capped at 2 MB each and
+> 8 MB per request. Published sites retain the existing 64-file/2 MB caps, add a pseudonymous
+> abuse manifest, and are served `noindex` under CSP sandboxing from an untrusted
+> `workers.dev` origin.
+
 ## Goal
 
 Two independent capabilities behind one Worker:
@@ -62,8 +74,12 @@ Endpoints:
   Batched variant `POST /ws/{wsid}/fs/batch` accepting an array of ops, executed in
   order, responses positional — the boot/seed path uses this to keep latency sane.
 - `POST /ws/{wsid}/publish` with `{ files: [{ path, content }] }` (text only; ≤ 64 files,
-  ≤ 256KB/file, ≤ 2MB total; paths relative, normalized, no `..`) → writes to R2 under
-  `sites/{id}/…` (id = 8-char random slug) → returns `{ url, id, expiresInDays: 30 }`
+  ≤ 256KB/file, ≤ 2MB total; paths relative, normalized, no `..`) → reserves one of 20
+  successful publishes per workspace per fixed 24-hour accounting window in the workspace
+  Durable Object. Caller-ID reservation retries are idempotent; pre-upload reservations
+  expire after 5 minutes, while active uploads never expire within their accounting window.
+  It then writes to R2 under `sites/{id}/…` (id = 8-char random slug) → returns
+  `{ url, id, expiresInDays: 30 }`
   where url is `https://<worker-host>/s/{id}/`. Published objects have a 30-day
   retention window enforced by the R2 bucket lifecycle, not application deletion.
 - `GET /s/{id}/{path...}` → serve from R2 with a small extension→content-type map,

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { VerbHint } from "../../desktop/VerbHint";
+import { isLiveViewFocusInteraction } from "../../kernel/activity";
 import { useKernelStore } from "../../kernel/store";
 import { browserTools } from "../../tools/browserTools";
 import { useAppTools } from "../../tools/useAppTools";
@@ -19,6 +20,7 @@ export function BrowserApp({ process }: AppComponentProps) {
   useAppTools(process.pid, browserTools);
   const [state, setState] = useState<BrowserSessionState>(browserSessionState);
   const liveViewContainerRef = useRef<HTMLElement>(null);
+  const liveViewFrameRef = useRef<HTMLIFrameElement>(null);
 
   useEffect(() => {
     const unsubscribe = subscribeBrowserSession(setState);
@@ -34,6 +36,33 @@ export function BrowserApp({ process }: AppComponentProps) {
       });
     };
   }, [process.pid]);
+
+  useEffect(() => {
+    if (state.status !== "live") return;
+    let check: ReturnType<typeof setTimeout> | undefined;
+    const focusEnteredFrame = (event: FocusEvent) => {
+      if (!event.isTrusted) return;
+      // The parent cannot observe input inside a cross-origin live viewer. Count its
+      // initial trusted focus transition as local activity; the session's CDP probe
+      // separately detects continued trusted input in the remote page.
+      check = setTimeout(() => {
+        const iframe = liveViewFrameRef.current;
+        if (iframe && isLiveViewFocusInteraction(iframe, {
+          activeElement: document.activeElement,
+          visibility: document.visibilityState,
+          focused: document.hasFocus(),
+          trusted: event.isTrusted,
+        })) {
+          useKernelStore.getState().recordHumanActivity();
+        }
+      }, 0);
+    };
+    window.addEventListener("blur", focusEnteredFrame);
+    return () => {
+      window.removeEventListener("blur", focusEnteredFrame);
+      if (check !== undefined) clearTimeout(check);
+    };
+  }, [state.status]);
 
   useEffect(() => {
     if (state.status !== "live") return;
@@ -100,6 +129,7 @@ export function BrowserApp({ process }: AppComponentProps) {
       ref={liveViewContainerRef}
     >
       <iframe
+        ref={liveViewFrameRef}
         className="browser-app__live-view"
         src={state.liveViewUrl}
         title="Shared Cloudflare browser"

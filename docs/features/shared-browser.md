@@ -3,6 +3,21 @@
 > Historical implementation spec. Current protected demo deployment and
 > self-host contract live in `docs/SELF_HOSTING.md` and supersede old open-CORS,
 > embedded-account, and unauthenticated endpoint notes below.
+>
+> **Scale-readiness amendment:** one `BrowserLeaseObject` Durable Object per machine owns
+> the upstream Chrome and its budget. Protected routes require a short-lived capability.
+> `POST /session/{id}/heartbeat` keeps the lease alive only while the client reports a
+> visible, focused, recently active human; agent calls never qualify. Cross-origin Live View
+> input is checked through CDP-installed isolated-world listeners in the current frames.
+> They accept only trusted pointer, keyboard, wheel, and touch events and return a bounded
+> monotonic age; every query safely reinstalls them after navigation and does not itself
+> count as activity. This assumes Live
+> View continues to forward controls through Chromium's trusted input path; failures skip
+> the heartbeat. Silence deletes Chrome after 5 minutes. Each machine has a 2-hour budget
+> per 24-hour accounting window, Browser Run `keep_alive` is 10 minutes,
+> and the client remembers the last http(s) URL for transparent restart. Creation and
+> action limits apply per signed subject + IP and per IP alone. Responses may include
+> `idleTimeoutMs`, `budget`, and `EBUDGET`/`EIDLE`/`EOWNER`/`ECAPACITY` errors.
 
 ## Goal
 
@@ -40,8 +55,9 @@ WebMCP driving WebMCP. Nothing else in the challenge field will look like this.
   `executeTool(name, jsonString)`, `ontoolchange`. `listTools()` returns an array of
   tool descriptors. (`navigator.modelContext` is the page-author side; absent on
   opaque origins like `data:` URLs.)
-- No account-level session-list or limits REST endpoint exists — cost control must be
-  rate limiting + short keep_alive, not concurrency queries.
+- No account-level session-list or limits REST endpoint exists. Current cost control is
+  therefore owned by per-machine Durable Object leases, per-subject/IP rates, and the
+  Browser Run inactivity timeout rather than account-wide concurrency queries.
 
 ## Design
 
@@ -56,23 +72,21 @@ and mint capability-bearing session handles for tabs.
   `bun run check` = `tsc --noEmit`. Not wired into `web/` build.
 - Secrets `CF_ACCOUNT_ID`, `BROWSER_RENDERING_API_TOKEN` (Browser Rendering Edit), and
   shared `GATEWAY_SIGNING_SECRET`. Never logged, never returned.
-- Endpoints (JSON; CORS `Access-Control-Allow-Origin: *`, `OPTIONS` preflight handled —
-  capability URLs are per-session and rate-limited, so open CORS is acceptable and keeps
-  the static-host story simple):
-  - `POST /session` with optional `{ url }` → create Browser Run session
-    (`keep_alive=900000`, `lab=true`), open one tab (`url` validated http/https, default
-    `about:blank`), respond
-    `{ sessionId, liveViewUrl, tabWsUrl, targetId, keepAliveMs }` where `liveViewUrl` /
-    `tabWsUrl` come from the target JSON.
-  - `POST /session/{id}/refresh` → `json/list`, respond the same shape for the first
-    page target (re-mints fresh JWT URLs after expiry/disconnect).
-  - `DELETE /session/{id}` → close upstream, pass through `{ status }`.
+- Endpoints are JSON with origin-reflecting CORS after capability verification and an
+  `OPTIONS` preflight:
+  - `POST /session` with optional `{ url }` → the machine's Durable Object replaces its
+    existing Chrome, creates Browser Run with `keep_alive=600000` and `lab=true`, opens one
+    validated http(s) tab, and returns `{ sessionId, liveViewUrl, tabWsUrl, targetId,
+    keepAliveMs, idleTimeoutMs, budget }`.
+  - `POST /session/{id}/heartbeat` touches the server lease and returns budget state.
+  - `POST /session/{id}/refresh` → `json/list`, respond with a fresh descriptor for the
+    held page target after expiry/disconnect.
+  - `DELETE /session/{id}` requests close and returns `{ status, budget }`.
   - Anything else → 404 `{ error }`.
-- Cost control: Workers **Rate Limiting binding** — per-IP `{ limit: 4, period: 60 }` on
-  `POST /session`; on trip respond 429 `{ error: "rate limited" }`. Combined with
-  `keep_alive=900000` (15 min idle timeout) and explicit close-on-window-close this bounds
-  worst-case concurrent sessions at demo scale. Refresh/delete use a second coarser
-  per-IP limit of `{ limit: 30, period: 60 }`.
+- Cost control: the machine lease enforces one Chrome, a 2-hour budget per 24-hour window,
+  and deletion after 5 minutes without an active-visible client heartbeat. Create and
+  action Rate Limiting bindings apply both per signed subject + IP and per IP alone.
+  Browser Run's 10-minute inactivity timeout is the final cleanup backstop.
 - Upstream non-2xx → pass status + a one-line `{ error }` through (client renders it).
 - Session ids in paths validated as UUIDs before touching upstream.
 
@@ -97,11 +111,18 @@ and mint capability-bearing session handles for tabs.
     an injected WebSocket factory, then immediately
     `Cloudflare.getLiveView { mode: "tab", expiresInMs: 3600000 }` and use **that** URL
     for the iframe (1h ≫ session life, so no refresh loop needed).
+  - On each heartbeat cadence while this tab is visible, focused, and owns the machine,
+    `Page.getFrameTree` plus `Page.createIsolatedWorld` bounds the current frame set, then
+    `Runtime.evaluate` idempotently installs/queries each randomized, non-writable
+    trusted-input tracker. Isolated worlds prevent page scripts from forging the signal.
+    A recent remote age or recent trusted local input authorizes the Worker heartbeat; the
+    query alone never does. Navigation gets fresh worlds on the next query, and
+    evaluation/CSP/navigation failures fail closed.
   - On ws close/error: one `refresh` attempt (Worker `POST /session/{id}/refresh`,
     reconnect); if that fails → state `ended`. Idle keep_alive expiry lands here too.
   - Window close (`app_close`, dock, chrome ✕) → best-effort `DELETE /session/{id}` +
     ws close. Page `beforeunload`/`pagehide` also best-effort-DELETEs (keepalive fetch) —
-    don't rely on it, keep_alive is the backstop.
+    don't rely on it; the server lease and Browser Run timeout are the backstops.
   - A restored Browser window starts in `ended`; reload never creates a billable session
     until a human or agent explicitly starts one again.
   - Worker base URL resolution (in order): URL query `?browser_worker=<origin>` →
@@ -113,7 +134,7 @@ and mint capability-bearing session handles for tabs.
   over an injected WebSocket, event listeners, connection-state callbacks, 10s
   per-command timeout. Every `Runtime.evaluate` expression the client sends **starts
   with a marker comment** `/*webmcp-computer:<op>*/` (`identity`, `read`, `click`, `type`,
-  `site_tools`, `site_call`) — this makes the e2e fake honest (it dispatches on the
+  `site_tools`, `site_call`, `heartbeat`) — this makes the e2e fake honest (it dispatches on the
   marker, not on fragile expression matching) and aids debugging in the remote console.
 
 ### Part 3 — tools
@@ -158,8 +179,8 @@ human's hands, the tools are the agent's.
 ### Manual + docs
 
 - New agent-skill `docs/agent-skills/browser.md` (seeded like the others): the shared-
-  session model, the tool list, the site-tools passthrough, session lifetime (15 min
-  idle), the honest limits (no dmesg for human clicks in the remote page; selectors are
+  session model, the tool list, the site-tools passthrough, server-owned 5-minute idle
+  lease and 2-hour budget, the honest limits (no dmesg for human clicks; selectors are
   DOM-not-trusted-events).
 - Manual topic `browser` in `osManualTool` enum + `manual.ts` + `manualContent.ts`.
 - `docs/BRIEF.md` hard rule 2 gains the second documented exception: the Browser app
@@ -180,8 +201,10 @@ Unit (`bun test src`):
 - `cdp.test.ts`: request/response id matching, command timeout, marker prefixes on
   every evaluate the client emits, event dispatch, close settles pending calls.
 - `session.test.ts`: create → live URL comes from `getLiveView` not the 5-min REST URL;
-  ws drop → one refresh attempt → ended; window close fires DELETE; worker URL
-  resolution order (query > localStorage > env > default).
+  remote trusted-input recent/stale/absent validation, synthetic-event exclusion,
+  visibility/ownership gating, navigation reinstallation; ws drop → one refresh attempt
+  → ended; window close fires DELETE; Worker URL resolution order (query > localStorage
+  > env > default).
 - `browserTools.test.ts`: schema validation (http/https only, selector required, text
   cap), singleton `browser_open` second-call behavior, screenshot cap retry logic (fake
   transport returning oversized then small), `browser_site_tools` no-WebMCP error,

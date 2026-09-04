@@ -11,6 +11,16 @@ const MACHINE_IDENTITY_TTL_SECONDS = 30 * 24 * 60 * 60;
 const MACHINE_IDENTITY_COOKIE = "webmcp_computer_machine";
 const MACHINE_IDENTITY_TOKEN = /^v1\.([0-9a-f]{32})\.(\d+)\.(\d+)\.([A-Za-z0-9_-]{32,64})$/;
 
+// Applied to every response, including static assets. No frame-ancestors/CSP here on
+// purpose: the OS runs agent code in sandboxed frames and we have not yet verified how
+// ChatGPT's browser embeds the site.
+const SECURITY_HEADERS = {
+  "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+  "X-Content-Type-Options": "nosniff",
+  "Referrer-Policy": "strict-origin-when-cross-origin",
+  "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=()",
+};
+
 function json(body, status = 200, headers = {}) {
   return Response.json(body, {
     status,
@@ -25,6 +35,14 @@ function json(body, status = 200, headers = {}) {
 function randomWorkspaceId() {
   const bytes = crypto.getRandomValues(new Uint8Array(16));
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function withSecurityHeaders(response) {
+  const wrapped = new Response(response.body, response);
+  for (const [name, value] of Object.entries(SECURITY_HEADERS)) {
+    if (!wrapped.headers.has(name)) wrapped.headers.set(name, value);
+  }
+  return wrapped;
 }
 
 function endpoint(value, label) {
@@ -217,9 +235,9 @@ async function sessionResponse(request, env, dependencies) {
 
 export async function handleRequest(request, env, dependencies = {}) {
   const { pathname } = new URL(request.url);
-  if (pathname !== "/api/session") return env.ASSETS.fetch(request);
-  if (request.method !== "GET") return json({ error: "method not allowed" }, 405);
-  return await sessionResponse(request, env, dependencies);
+  if (pathname !== "/api/session") return withSecurityHeaders(await env.ASSETS.fetch(request));
+  if (request.method !== "GET") return withSecurityHeaders(json({ error: "method not allowed" }, 405));
+  return withSecurityHeaders(await sessionResponse(request, env, dependencies));
 }
 
 export default {

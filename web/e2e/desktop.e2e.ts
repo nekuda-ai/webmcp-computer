@@ -106,6 +106,9 @@ export async function multiTabProtectionScenario(page: Page): Promise<void> {
     await secondPage.setViewport({ width: 1280, height: 720 });
     await secondPage.goto(page.url(), { waitUntil: "domcontentloaded" });
     await waitForText(secondPage, ".machine-banner", "machine already running in another tab");
+    expect(await secondPage.$eval(".desktop__interactive", (element) => (element as HTMLElement).inert)).toBe(true);
+    await secondPage.keyboard.press("Tab");
+    expect(await secondPage.evaluate(() => document.activeElement?.textContent?.trim())).toBe("Take over");
   } finally {
     await secondPage.close();
   }

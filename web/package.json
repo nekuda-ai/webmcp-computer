@@ -18,6 +18,7 @@
     "@zenfs/dom": "^1.2.11",
     "fflate": "^0.8.3",
     "just-bash": "3.4.2",
+    "posthog-js": "1.426.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-rnd": "^10.5.2",
@@ -28,10 +29,10 @@
     "@types/bun": "^1.2.0",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
-    "@vitejs/plugin-react": "^4.3.4",
-    "esbuild": "^0.21.5",
+    "@vitejs/plugin-react": "6.1.1",
+    "esbuild": "0.28.2",
     "puppeteer-core": "^25.8.0",
     "typescript": "^5.7.2",
-    "vite": "^5.4.14"
+    "vite": "8.2.2"
   }
 }

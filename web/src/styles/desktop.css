@@ -51,6 +51,10 @@
   opacity: 0.05;
 }
 
+.desktop__interactive {
+  display: contents;
+}
+
 .desktop__workarea {
   position: absolute;
   z-index: 50;
@@ -284,9 +288,16 @@
   gap: 17px;
 }
 
+.machine-blocker {
+  position: absolute;
+  z-index: 1000;
+  inset: 0;
+  cursor: not-allowed;
+}
+
 .machine-banner {
   position: absolute;
-  z-index: 110;
+  z-index: 1001;
   top: 44px;
   left: 50%;
   max-width: min(720px, calc(100% - 32px));
@@ -304,6 +315,17 @@
 
 .machine-banner--error {
   color: var(--coral);
+}
+
+.machine-banner__action {
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: none;
+  font: inherit;
+  text-decoration: underline;
+  text-transform: inherit;
+  cursor: pointer;
 }
 
 .agent-status {

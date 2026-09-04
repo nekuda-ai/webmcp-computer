@@ -7,7 +7,8 @@ export type CdpEvaluateOperation =
   | "click"
   | "type"
   | "site_tools"
-  | "site_call";
+  | "site_call"
+  | "heartbeat";
 
 type CdpError = {
   code?: number;
@@ -26,6 +27,8 @@ type PendingCommand = {
   reject(error: Error): void;
   resolve(value: unknown): void;
   timeout: ReturnType<typeof setTimeout>;
+  signal?: AbortSignal;
+  abort?: () => void;
 };
 
 export type CdpClientOptions = {
@@ -34,7 +37,7 @@ export type CdpClientOptions = {
 };
 
 const DEFAULT_COMMAND_TIMEOUT_MS = 10_000;
-const EVALUATE_MARKER = /^\/\*webmcp-computer:(identity|read|click|type|site_tools|site_call)\*\//;
+const EVALUATE_MARKER = /^\/\*webmcp-computer:(identity|read|click|type|site_tools|site_call|heartbeat)\*\//;
 
 function errorMessage(value: unknown): string {
   return value instanceof Error ? value.message : String(value);
@@ -76,6 +79,7 @@ export class CdpClient {
       if (!pending) return;
       this.#pending.delete(message.id);
       clearTimeout(pending.timeout);
+      if (pending.signal && pending.abort) pending.signal.removeEventListener("abort", pending.abort);
       if (message.error) {
         pending.reject(new Error(`webmcp-computer: browser command failed: ${message.error.message ?? message.error.code ?? "unknown error"}`));
       } else {
@@ -103,13 +107,21 @@ export class CdpClient {
     const error = new Error(`webmcp-computer: ${reason}`);
     for (const pending of this.#pending.values()) {
       clearTimeout(pending.timeout);
+      if (pending.signal && pending.abort) pending.signal.removeEventListener("abort", pending.abort);
       pending.reject(error);
     }
     this.#pending.clear();
     this.#onConnectionState?.(state, reason);
   }
 
-  send<T = unknown>(method: string, params: Record<string, unknown> = {}): Promise<T> {
+  send<T = unknown>(
+    method: string,
+    params: Record<string, unknown> = {},
+    signal?: AbortSignal,
+  ): Promise<T> {
+    if (signal?.aborted) {
+      return Promise.reject(signal.reason instanceof Error ? signal.reason : new Error("webmcp-computer: browser command aborted"));
+    }
     if (this.#settled || this.#socket.readyState !== WebSocket.OPEN) {
       return Promise.reject(new Error("webmcp-computer: browser connection is not open"));
     }
@@ -122,25 +134,47 @@ export class CdpClient {
     const id = this.#nextId++;
     return new Promise<T>((resolve, reject) => {
       const timeout = setTimeout(() => {
+        const pending = this.#pending.get(id);
         this.#pending.delete(id);
+        if (pending?.signal && pending.abort) pending.signal.removeEventListener("abort", pending.abort);
         reject(new Error(`webmcp-computer: browser command timed out: ${method}`));
       }, this.#commandTimeoutMs);
-      this.#pending.set(id, {
+      const pending: PendingCommand = {
         resolve: (value) => resolve(value as T),
         reject,
         timeout,
-      });
+      };
+      if (signal) {
+        const abort = () => {
+          if (!this.#pending.has(id)) return;
+          this.#pending.delete(id);
+          clearTimeout(timeout);
+          reject(signal.reason instanceof Error ? signal.reason : new Error("webmcp-computer: browser command aborted"));
+        };
+        pending.signal = signal;
+        pending.abort = abort;
+      }
+      this.#pending.set(id, pending);
+      if (pending.signal && pending.abort) {
+        pending.signal.addEventListener("abort", pending.abort, { once: true });
+      }
       try {
         this.#socket.send(JSON.stringify({ id, method, params }));
       } catch (error) {
         clearTimeout(timeout);
         this.#pending.delete(id);
+        if (pending.signal && pending.abort) pending.signal.removeEventListener("abort", pending.abort);
         reject(new Error(`webmcp-computer: browser command failed: ${errorMessage(error)}`));
       }
     });
   }
 
-  async evaluate<T>(operation: CdpEvaluateOperation, expression: string): Promise<T> {
+  async evaluate<T>(
+    operation: CdpEvaluateOperation,
+    expression: string,
+    signal?: AbortSignal,
+    contextId?: number,
+  ): Promise<T> {
     const result = await this.send<{
       exceptionDetails?: { text?: string; exception?: { description?: string } };
       result?: { value?: T };
@@ -148,7 +182,8 @@ export class CdpClient {
       expression: `/*webmcp-computer:${operation}*/${expression}`,
       awaitPromise: true,
       returnByValue: true,
-    });
+      ...(contextId === undefined ? {} : { contextId }),
+    }, signal);
     if (result.exceptionDetails) {
       throw new Error(
         `webmcp-computer: browser page evaluation failed: ${result.exceptionDetails.exception?.description ?? result.exceptionDetails.text ?? "unknown error"}`,
@@ -161,13 +196,13 @@ export class CdpClient {
     return value;
   }
 
-  async setViewport(width: number, height: number): Promise<void> {
+  async setViewport(width: number, height: number, signal?: AbortSignal): Promise<void> {
     await this.send("Emulation.setDeviceMetricsOverride", {
       width,
       height,
       deviceScaleFactor: 0,
       mobile: false,
-    });
+    }, signal);
   }
 
   on(method: string, listener: (params: unknown) => void): () => void {
@@ -180,17 +215,33 @@ export class CdpClient {
     };
   }
 
-  waitForEvent(method: string, timeoutMs = this.#commandTimeoutMs): Promise<unknown> {
+  waitForEvent(
+    method: string,
+    timeoutMs = this.#commandTimeoutMs,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
+    if (signal?.aborted) {
+      return Promise.reject(signal.reason instanceof Error ? signal.reason : new Error("webmcp-computer: browser event aborted"));
+    }
     return new Promise((resolve, reject) => {
-      const off = this.on(method, (params) => {
+      const cleanup = () => {
         clearTimeout(timeout);
         off();
+        signal?.removeEventListener("abort", abort);
+      };
+      const off = this.on(method, (params) => {
+        cleanup();
         resolve(params);
       });
       const timeout = setTimeout(() => {
-        off();
+        cleanup();
         reject(new Error(`webmcp-computer: browser event timed out: ${method}`));
       }, timeoutMs);
+      const abort = () => {
+        cleanup();
+        reject(signal?.reason instanceof Error ? signal.reason : new Error("webmcp-computer: browser event aborted"));
+      };
+      signal?.addEventListener("abort", abort, { once: true });
     });
   }
 
@@ -210,7 +261,9 @@ export class CdpClient {
 export async function waitForWebSocketOpen(
   socket: BrowserWebSocket,
   timeoutMs = DEFAULT_COMMAND_TIMEOUT_MS,
+  signal?: AbortSignal,
 ): Promise<void> {
+  if (signal?.aborted) throw signal.reason;
   if (socket.readyState === WebSocket.OPEN) return;
   await new Promise<void>((resolve, reject) => {
     const cleanup = () => {
@@ -218,6 +271,7 @@ export async function waitForWebSocketOpen(
       socket.removeEventListener("open", handleOpen);
       socket.removeEventListener("close", handleClose);
       socket.removeEventListener("error", handleError);
+      signal?.removeEventListener("abort", handleAbort);
     };
     const handleOpen = () => {
       cleanup();
@@ -231,6 +285,15 @@ export async function waitForWebSocketOpen(
       cleanup();
       reject(new Error("webmcp-computer: browser connection failed"));
     };
+    const handleAbort = () => {
+      cleanup();
+      try {
+        socket.close();
+      } catch {
+        // The rejected open owns no live session.
+      }
+      reject(signal?.reason instanceof Error ? signal.reason : new Error("webmcp-computer: browser connection aborted"));
+    };
     const timeout = setTimeout(() => {
       cleanup();
       reject(new Error("webmcp-computer: browser connection timed out"));
@@ -238,5 +301,6 @@ export async function waitForWebSocketOpen(
     socket.addEventListener("open", handleOpen);
     socket.addEventListener("close", handleClose);
     socket.addEventListener("error", handleError);
+    signal?.addEventListener("abort", handleAbort, { once: true });
   });
 }

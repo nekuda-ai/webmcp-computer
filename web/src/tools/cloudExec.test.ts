@@ -10,6 +10,7 @@ import {
 } from "../kernel/terminalSessions";
 import type { CloudExecDependencies, CloudExecResult } from "../kernel/cloudExec";
 import { createCloudExecTool } from "./cloudExec";
+import { abortInFlightAgentActions } from "./agentAction";
 
 const WSID = "0123456789abcdef0123456789abcdef";
 
@@ -95,6 +96,23 @@ describe("cloud_exec", () => {
     ]);
   });
 
+  test("ownership loss aborts an in-flight cloud request and rejects stale success", async () => {
+    let requestSignal: AbortSignal | undefined;
+    const tool = createCloudExecTool(dependencies(async (_input, init) => {
+      requestSignal = init?.signal ?? undefined;
+      return await new Promise<Response>((_resolve, reject) => {
+        requestSignal?.addEventListener("abort", () => reject(requestSignal?.reason), { once: true });
+      });
+    }));
+    const invocation = tool.execute({ command: "sleep 60" });
+    for (let i = 0; i < 100 && !requestSignal; i += 1) await Bun.sleep(1);
+    expect(requestSignal?.aborted).toBe(false);
+
+    abortInFlightAgentActions();
+    await expect(invocation).rejects.toThrow("machine ownership was lost to another tab");
+    expect(requestSignal?.aborted).toBe(true);
+  });
+
   test("caps stdout and stderr independently at 256 KB", async () => {
     const chunk = "x".repeat(100 * 1_024);
     const tool = createCloudExecTool(dependencies(async () => streamResponse([
@@ -167,6 +185,23 @@ describe("cloud_exec", () => {
       "webmcp-computer: cloud exec failed: input contains unknown field: unexpected",
     );
     expect(fetches).toBe(0);
+  });
+
+  test("surfaces Worker limit codes as explanations the agent can relay", async () => {
+    const tool = createCloudExecTool(dependencies(async () => Response.json(
+      { error: "budget exhausted", code: "EBUDGET", retryAfterMs: 90 * 60_000 },
+      { status: 429 },
+    )));
+    await expect(tool.execute({ command: "pwd" })).rejects.toThrow(
+      "webmcp-computer: cloud exec failed: cloud time budget (2 h per 24 h) is used up; resets in 1 h 30 min",
+    );
+
+    const busy = createCloudExecTool(dependencies(async () => streamResponse([
+      sse("error", { error: "no slot", code: "ECAPACITY" }),
+    ])));
+    await expect(busy.execute({ command: "pwd" })).rejects.toThrow(
+      "webmcp-computer: cloud exec failed: cloud is busy or at capacity right now; try again in a minute or keep working locally",
+    );
   });
 
   test("requires cloud kernel and preserves cloud failure voice", async () => {

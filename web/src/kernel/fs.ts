@@ -11,6 +11,11 @@ import {
   setCloudKernelPreference,
 } from "./cloudFs";
 import { hostedAuthorization, hostedSessionActive } from "./hostedSession";
+import {
+  assertMachineMutationAdmission,
+  captureMachineMutationAdmission,
+  type MachineMutationAdmission,
+} from "./ownershipAdmission";
 
 export const AURORA_BRIEF = `# Aurora Trails — landing page brief
 
@@ -83,6 +88,7 @@ const AGENT_SKILL_SEED_MARKER_PREFIX = "/.webmcp-computer-skills-";
 // content is a visitor edit and is left alone. When the manual changes, append the outgoing
 // AGENT_SKILL_SHA256 values here.
 export const LEGACY_AGENT_SKILL_SHA256: ReadonlySet<string> = new Set([
+  "103b28b4cfa1f62d259880f445c6269df13f8a7fec448d5d1f3ff50f36836dbd",
   "1071643cd3d990922650e56b08609c07fead0c362e3376a236b714e457650763",
   "10f945744725d80df55511a912268c16de86a11e07f0cfef05c47502f48bf90a",
   "1259e1fd4526eae32db91b0c3affb562cd3d108daf65f253a1fa34c1d921be0b",
@@ -92,12 +98,14 @@ export const LEGACY_AGENT_SKILL_SHA256: ReadonlySet<string> = new Set([
   "30ddbeaaf6023653f0b6819b808b3ecef7e4b73d7893d76918aa18b291449427",
   "424b03b439db115aa2182718b3dc1e8268f768806f42865e4341edba5d6ede92",
   "4bc26504589cc14b3330ecaa9d1b90ae9ee11a69274c3ad33199ce1af307a30d",
+  "4cbb848863f3aa0c997cfc1d42fde34c9cbed8fbdc9bc27cbc9d5e610257ad61",
   "59c11bf05bac00ab193fcaff85dfe9b6d5df9e35b2ed3c7479cbe8a195f67bb6",
   "5f083b9b1018ea3545dc1701f3189151fcfb48fe8c6bfab56338a0818e0728a1",
   "6dc336a39b8b7ed36123b71087054250d1b1f9495b1f8364de3f53ed55e78657",
   "7202b7b8bdf3e75376bce40f6408d428fd425ae8c4b32650f40af2802e4951b6",
   "7ba030736a76531f87e290d826d99bc70152b63b66116c9157b44e5abb46f28b",
   "807500a99d0011503ffd2394d0d9a7bc19548b2aa62d4d6835faf38d637fd95f",
+  "855acb0600becc65721caade0b5e0ba2d58641c9d58c53f2aad9f370964439ed",
   "912a53344e613a2e4dfa405bef916083342e264d54d8fff0f7d725dd1c6cfe14",
   "a58d9bbaa633bb673c0d5b5d7f15a62550ec3d5d9774f9e458eee62545206981",
   "a97add3b56113335c03d69c6b8a07461864dad7613f42dbb1f9eb0fcb56a9939",
@@ -106,13 +114,22 @@ export const LEGACY_AGENT_SKILL_SHA256: ReadonlySet<string> = new Set([
   "c0fdf102caffb42fc4070fcddb2d6cd8518ff95164f4b071c2148da53d32b0af",
   "d2bef8d10d3e51f2e652b2a0756f0ab0d4c2f193f6d65df21364f0825ff40625",
   "d4b4c50272f60ff68b2b9862c7e53d180717ac1a1c55aaba119a89b5395a2bbe",
+  "de156320fe83ca3d718799d3a7bbd618d06a615b5e182c935c1e612ddb9efd3a",
+  "e0604e5076e4217b34f5f5a718ef52ab915050af5432431aef83100625dac8a5",
   "e95623ba3711cc70379bf69f0cbb4eb894c1b0e5c0600894df47d71a3f6ae798",
   "eff251ae9e80dee5988116161838d6bf97ffa9e9f16861614bb7249803eb0d60",
   "eff2c30a8aabdfe5661d457085526acbabce4bf15d4c621cc7210eef27330c3d",
+  "f1d2d527da48110c55041e892dca9590dd88bfd7d446deab074ca626a5edc14c",
+  "f49f9d6e14113ba2be2ac358f23404cc360c18c10e3425d8f61539929f38cdac",
+  "f4f15d1fe6b5b00ee1cf85de8612e9aecc3274771252a49649daba435fd28147",
   "f5512a38e082e98611a53af47912ebf5fc362e06b38d4d6426e390bc27f49e0f",
   "f61a81f66b7e41285cc652a120c59961325ebceb771c3edc6207bc7c28703ad2",
   "fdbc019861e6129beaa15c5a52d1411e50f47ffd33174d809fbd5f9573c05cd9",
   "ffb37ad856c26cebf506fb26911933f33a90dcc36b53795e357c9e12063c4d67",
+  "1ac6b36339bf88ba2fffd3ecd8e0be0ab4e0c59b78b163b53487137ecc92e857",
+  "bd81b91abd1039d42a9e6ae95287b5ced0ac26b873c275b92018a8082950d9f8",
+  "671c006d533b9bd0c9f2524f3f719bb3d47382ef74c39ea8b27e5b3eb1e9160e",
+  "2cc23e3df80db8e22afcd2b751ae94dd7b7f409477c3eff88e10fd2eb259fcfe",
 ]);
 
 export type FileKind = "file" | "directory";
@@ -133,6 +150,10 @@ export type FileSystemChange = {
   from?: string;
   source: "agent" | "human" | "system";
 };
+
+export type FileSystemMutationAdmission =
+  | FileSystemChange["source"]
+  | MachineMutationAdmission;
 
 type ChangeListener = (change: FileSystemChange) => void;
 
@@ -356,8 +377,17 @@ function fsError(error: unknown, path: string): Error {
   return new FileSystemError(`webmcp-computer: filesystem error: ${String(error)}`, code);
 }
 
+function mutationAdmission(
+  admission: FileSystemMutationAdmission,
+): MachineMutationAdmission {
+  return typeof admission === "string"
+    ? captureMachineMutationAdmission(admission)
+    : admission;
+}
+
 async function serializeMutation<T>(
   paths: readonly string[],
+  admission: MachineMutationAdmission,
   mutation: () => Promise<T>,
 ): Promise<T> {
   const keys = [...new Set(paths)].sort();
@@ -371,7 +401,10 @@ async function serializeMutation<T>(
 
   await previous;
   try {
-    return await withFileSystemWriteLock(mutation);
+    return await withFileSystemWriteLock(async () => {
+      assertMachineMutationAdmission(admission);
+      return await mutation();
+    });
   } finally {
     release();
     for (const key of keys) {
@@ -735,8 +768,10 @@ function temporaryWritePath(path: string): string {
 async function replaceFileAtomically(
   normalized: string,
   content: string | Uint8Array,
+  admission: MachineMutationAdmission,
 ): Promise<void> {
   await assertWritableFileTarget(normalized);
+  assertMachineMutationAdmission(admission);
   const target = realPath(normalized);
   const temporary = temporaryWritePath(normalized);
   try {
@@ -749,6 +784,7 @@ async function replaceFileAtomically(
     } else {
       await zenfs.promises.writeFile(temporary, content, typeof content === "string" ? "utf8" : undefined);
     }
+    assertMachineMutationAdmission(admission);
     await zenfs.promises.rename(temporary, target);
   } catch (error) {
     try {
@@ -775,11 +811,11 @@ async function assertDirectoryParent(path: string): Promise<void> {
 async function writeFileUnlocked(
   normalized: string,
   content: string,
-  source: FileSystemChange["source"],
+  admission: MachineMutationAdmission,
 ): Promise<void> {
   try {
-    await replaceFileAtomically(normalized, content);
-    emitChange({ operation: "write", path: normalized, source });
+    await replaceFileAtomically(normalized, content, admission);
+    emitChange({ operation: "write", path: normalized, source: admission.source });
   } catch (error) {
     throw fsError(error, normalized);
   }
@@ -788,26 +824,32 @@ async function writeFileUnlocked(
 export async function writeFile(
   path: string,
   content: string,
-  source: FileSystemChange["source"],
+  source: FileSystemMutationAdmission,
 ): Promise<void> {
+  const admission = mutationAdmission(source);
   ensureReady();
   const normalized = normalizePath(path);
-  await serializeMutation([normalized], () => writeFileUnlocked(normalized, content, source));
+  await serializeMutation(
+    [normalized],
+    admission,
+    () => writeFileUnlocked(normalized, content, admission),
+  );
 }
 
 export async function createFile(
   path: string,
   content: string,
-  source: FileSystemChange["source"],
+  source: FileSystemMutationAdmission,
 ): Promise<void> {
+  const admission = mutationAdmission(source);
   ensureReady();
   const normalized = normalizePath(path);
-  await serializeMutation([normalized], async () => {
+  await serializeMutation([normalized], admission, async () => {
     try {
       await zenfs.promises.stat(realPath(normalized));
     } catch (error) {
       if (!isMissing(error)) throw fsError(error, normalized);
-      await writeFileUnlocked(normalized, content, source);
+      await writeFileUnlocked(normalized, content, admission);
       return;
     }
     throw new FileSystemError(`webmcp-computer: file exists: ${normalized}`, "EEXIST");
@@ -817,14 +859,15 @@ export async function createFile(
 export async function writeFileBytes(
   path: string,
   content: Uint8Array,
-  source: FileSystemChange["source"],
+  source: FileSystemMutationAdmission,
 ): Promise<void> {
+  const admission = mutationAdmission(source);
   ensureReady();
   const normalized = normalizePath(path);
-  await serializeMutation([normalized], async () => {
+  await serializeMutation([normalized], admission, async () => {
     try {
-      await replaceFileAtomically(normalized, content);
-      emitChange({ operation: "write", path: normalized, source });
+      await replaceFileAtomically(normalized, content, admission);
+      emitChange({ operation: "write", path: normalized, source: admission.source });
     } catch (error) {
       throw fsError(error, normalized);
     }
@@ -833,24 +876,26 @@ export async function writeFileBytes(
 
 export async function touchFile(
   path: string,
-  source: FileSystemChange["source"],
+  source: FileSystemMutationAdmission,
   modifiedAt = new Date(),
 ): Promise<void> {
+  const admission = mutationAdmission(source);
   ensureReady();
   const normalized = normalizePath(path);
-  await serializeMutation([normalized], async () => {
+  await serializeMutation([normalized], admission, async () => {
     let target;
     try {
       target = await zenfs.promises.stat(realPath(normalized));
     } catch (error) {
       if (!isMissing(error)) throw fsError(error, normalized);
-      await writeFileUnlocked(normalized, "", source);
+      await writeFileUnlocked(normalized, "", admission);
       return;
     }
     if (target.isDirectory()) throw new Error(`webmcp-computer: is a directory: ${normalized}`);
     try {
+      assertMachineMutationAdmission(admission);
       await zenfs.promises.utimes(realPath(normalized), modifiedAt, modifiedAt);
-      emitChange({ operation: "write", path: normalized, source });
+      emitChange({ operation: "write", path: normalized, source: admission.source });
     } catch (error) {
       throw fsError(error, normalized);
     }
@@ -860,12 +905,13 @@ export async function touchFile(
 export async function updateFile(
   path: string,
   update: (current: string) => string | Promise<string>,
-  source: FileSystemChange["source"],
+  source: FileSystemMutationAdmission,
   createIfMissing = false,
 ): Promise<string> {
+  const admission = mutationAdmission(source);
   ensureReady();
   const normalized = normalizePath(path);
-  return serializeMutation([normalized], async () => {
+  return serializeMutation([normalized], admission, async () => {
     let current: string;
     try {
       current = await readFile(normalized);
@@ -874,7 +920,7 @@ export async function updateFile(
       current = "";
     }
     const next = await update(current);
-    await writeFileUnlocked(normalized, next, source);
+    await writeFileUnlocked(normalized, next, admission);
     return next;
   });
 }
@@ -923,11 +969,12 @@ export async function ls(path: string): Promise<FileEntry[]> {
 
 export async function mkdir(
   path: string,
-  source: FileSystemChange["source"],
+  source: FileSystemMutationAdmission,
 ): Promise<void> {
+  const admission = mutationAdmission(source);
   ensureReady();
   const normalized = normalizePath(path);
-  await serializeMutation([normalized], async () => {
+  await serializeMutation([normalized], admission, async () => {
     try {
       const target = await zenfs.promises.stat(realPath(normalized));
       if (!target.isDirectory()) throw new Error(`webmcp-computer: is a file: ${normalized}`);
@@ -936,8 +983,9 @@ export async function mkdir(
       if (!isMissing(error)) throw fsError(error, normalized);
       await assertDirectoryParent(normalized);
       try {
+        assertMachineMutationAdmission(admission);
         await zenfs.promises.mkdir(realPath(normalized));
-        emitChange({ operation: "mkdir", path: normalized, source });
+        emitChange({ operation: "mkdir", path: normalized, source: admission.source });
         return;
       } catch (mkdirError) {
         throw fsError(mkdirError, normalized);
@@ -949,15 +997,17 @@ export async function mkdir(
 
 export async function rm(
   path: string,
-  source: FileSystemChange["source"],
+  source: FileSystemMutationAdmission,
 ): Promise<void> {
+  const admission = mutationAdmission(source);
   ensureReady();
   const normalized = normalizePath(path);
   if (normalized === "~") throw new Error("webmcp-computer: cannot delete home directory: ~");
-  await serializeMutation([normalized], async () => {
+  await serializeMutation([normalized], admission, async () => {
     try {
+      assertMachineMutationAdmission(admission);
       await zenfs.promises.rm(realPath(normalized), { recursive: true });
-      emitChange({ operation: "delete", path: normalized, source });
+      emitChange({ operation: "delete", path: normalized, source: admission.source });
     } catch (error) {
       throw fsError(error, normalized);
     }
@@ -967,9 +1017,10 @@ export async function rm(
 export async function mv(
   from: string,
   to: string,
-  source: FileSystemChange["source"],
+  source: FileSystemMutationAdmission,
   overwrite = false,
 ): Promise<void> {
+  const admission = mutationAdmission(source);
   ensureReady();
   const normalizedFrom = normalizePath(from);
   const normalizedTo = normalizePath(to);
@@ -977,7 +1028,7 @@ export async function mv(
   if (normalizedTo === normalizedFrom || normalizedTo.startsWith(`${normalizedFrom}/`)) {
     throw new Error(`webmcp-computer: cannot move ${normalizedFrom} into itself: ${normalizedTo}`);
   }
-  await serializeMutation([normalizedFrom, normalizedTo], async () => {
+  await serializeMutation([normalizedFrom, normalizedTo], admission, async () => {
     try {
       await zenfs.promises.stat(realPath(normalizedFrom));
     } catch (error) {
@@ -995,8 +1046,14 @@ export async function mv(
     }
     await assertDirectoryParent(normalizedTo);
     try {
+      assertMachineMutationAdmission(admission);
       await zenfs.promises.rename(realPath(normalizedFrom), realPath(normalizedTo));
-      emitChange({ operation: "move", path: normalizedTo, from: normalizedFrom, source });
+      emitChange({
+        operation: "move",
+        path: normalizedTo,
+        from: normalizedFrom,
+        source: admission.source,
+      });
     } catch (error) {
       throw fsError(error, normalizedTo);
     }

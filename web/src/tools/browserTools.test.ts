@@ -8,6 +8,7 @@ import type {
 import type { CdpEvaluateOperation } from "../apps/browser/cdp";
 import { resetKernelStore, useKernelStore } from "../kernel/store";
 import { registerAppTools } from "./registry";
+import { abortInFlightAgentActions } from "./agentAction";
 import {
   browserTools,
   createBrowserOpenTool,
@@ -114,6 +115,29 @@ describe("browser tools", () => {
     ]);
     expect(useKernelStore.getState().processes).toHaveLength(1);
     expect(useKernelStore.getState().processes[0]?.focused).toBe(true);
+  });
+
+  test("ownership loss aborts the signal passed to an in-flight browser command", async () => {
+    let commandSignal: AbortSignal | undefined;
+    const transport = {
+      async send<T>(_method: string, _params?: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
+        commandSignal = signal;
+        return await new Promise<T>(() => {});
+      },
+      async evaluate<T>(): Promise<T> {
+        return await new Promise<T>(() => {});
+      },
+      async waitForEvent(): Promise<unknown> {
+        return await new Promise(() => {});
+      },
+    };
+    const tools = createBrowserTools({ getTransport: () => transport });
+    const invocation = toolByName(tools, "browser_goto").execute({ url: "https://old-owner.test" });
+    await Promise.resolve();
+
+    abortInFlightAgentActions();
+    await expect(invocation).rejects.toThrow("machine ownership was lost to another tab");
+    expect(commandSignal?.aborted).toBe(true);
   });
 
   test("browser_open gives Worker failures the required unavailable error voice", async () => {

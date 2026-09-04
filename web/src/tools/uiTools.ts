@@ -8,6 +8,10 @@ import {
   writeFile,
 } from "../kernel/fs";
 import { useKernelStore } from "../kernel/store";
+import {
+  assertMachineMutationAdmission,
+  type MachineMutationAdmission,
+} from "../kernel/ownershipAdmission";
 import type { WindowRect } from "../kernel/types";
 import { currentViewport } from "../kernel/windowGeometry";
 import { setUiToolGrant } from "../apps/ui/runtime";
@@ -74,9 +78,9 @@ function grantedToolNames(requested: readonly string[]): string[] {
   });
 }
 
-async function ensureAppsDirectory(): Promise<void> {
+async function ensureAppsDirectory(admission: MachineMutationAdmission): Promise<void> {
   if (!await exists("~/apps")) {
-    await mkdir("~/apps", "agent");
+    await mkdir("~/apps", admission);
     return;
   }
   const target = await stat("~/apps");
@@ -146,7 +150,7 @@ export const uiOpenTool = defineTool<UiOpenInput>({
         ...(rawPath === undefined ? {} : { path: rawPath }),
         ...(rawAllowTools === undefined ? {} : { allowTools: rawAllowTools }),
       },
-      async () => {
+      async (_signal, mutationAdmission) => {
         const name = requireName(rawName);
         const hasHtml = rawHtml !== undefined;
         const hasPath = rawPath !== undefined;
@@ -176,9 +180,9 @@ export const uiOpenTool = defineTool<UiOpenInput>({
               `webmcp-computer: html too large for '${name}': ${bytes} bytes exceeds ${MAX_UI_HTML_BYTES}`,
             );
           }
-          await ensureAppsDirectory();
+          await ensureAppsDirectory(mutationAdmission);
           path = joinPath("~/apps", `${name}.html`);
-          await writeFile(path, rawHtml, "agent");
+          await writeFile(path, rawHtml, mutationAdmission);
         } else {
           if (typeof rawPath !== "string") {
             throw new Error(`webmcp-computer: path for '${name}' must be a string`);
@@ -191,6 +195,7 @@ export const uiOpenTool = defineTool<UiOpenInput>({
           if (target.kind !== "file") throw new Error(`webmcp-computer: is a directory: ${path}`);
         }
 
+        assertMachineMutationAdmission(mutationAdmission);
         const process = useKernelStore.getState().spawn("ui", {
           path,
           ...(Object.keys(placement).length === 0 ? {} : { placement }),

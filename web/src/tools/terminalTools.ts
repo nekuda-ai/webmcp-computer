@@ -1,6 +1,7 @@
 import { defineTool } from "@nekuda/webmcp-sdk";
 import { killKernelProcess, listKernelProcesses } from "../kernel/processContext";
 import { useKernelStore } from "../kernel/store";
+import { assertMachineMutationAdmission } from "../kernel/ownershipAdmission";
 import { releaseTerminalSession, terminalSession } from "../kernel/terminalSessions";
 import { runAgentAction } from "./agentAction";
 import { ACT_ANNOTATIONS, ASK_ANNOTATIONS, TRANSACT_ANNOTATIONS } from "./taxonomy";
@@ -120,15 +121,20 @@ export const termExecTool = defineTool<TermExecInput>({
         ...(rawTimeout === undefined ? {} : { timeout_ms: rawTimeout }),
         appId: "terminal",
       },
-      async () => {
+      async (signal, mutationAdmission) => {
         const command = requireString(rawCommand, "command");
         const timeoutMs = rawTimeout === undefined ? DEFAULT_TIMEOUT_MS : requireTimeout(rawTimeout);
+        assertMachineMutationAdmission(mutationAdmission);
         const pid = resolveTermExecPid(rawPid);
         terminalProcess(pid);
         useKernelStore.getState().focus(pid);
         const session = terminalSession(pid);
         await session.waitForView();
-        const result = await session.run(command, "agent", { timeoutMs });
+        const result = await session.run(command, "agent", {
+          timeoutMs,
+          signal,
+          ownershipAdmission: mutationAdmission,
+        });
         const stdout = truncateTerminalOutput(result.stdout);
         const stderr = truncateTerminalOutput(result.stderr);
         return {
@@ -271,8 +277,9 @@ export const killTool = defineTool<PidInput>({
           rect: window.windowRect,
         }),
       },
-      () => {
+      (_signal, mutationAdmission) => {
         const pid = requirePid(rawPid);
+        assertMachineMutationAdmission(mutationAdmission);
         const killed = killKernelProcess(pid);
         if (!killed) throw new Error(`webmcp-computer: process PID ${pid} not found`);
         if (killed.appId === "terminal") releaseTerminalSession(pid);

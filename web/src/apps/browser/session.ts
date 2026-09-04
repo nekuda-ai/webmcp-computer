@@ -5,8 +5,22 @@ import {
   hostedSessionSnapshot,
   hostedWorkerUrl,
 } from "../../kernel/hostedSession";
+import {
+  describeLimitError,
+  isHumanActive,
+  isHumanActivityContext,
+  limitErrorFromPayload,
+  subscribeHumanActivity,
+} from "../../kernel/activity";
+import {
+  BROWSER_HEARTBEAT_MS,
+  BROWSER_IDLE_MS,
+  type BudgetSnapshot,
+  type LimitError,
+} from "../../../../shared/session-limits";
 
 export const BROWSER_HOME_URL = "https://webmcp.com/";
+export const BROWSER_LAST_URL_KEY = "webmcp_computer.browser.last_url";
 
 export type BrowserSessionDescriptor = {
   sessionId: string;
@@ -14,7 +28,12 @@ export type BrowserSessionDescriptor = {
   tabWsUrl: string;
   targetId: string;
   keepAliveMs: number;
+  /** Server releases the session after this long without a heartbeat. */
+  idleTimeoutMs?: number;
+  budget?: BudgetSnapshot;
 };
+
+export type BrowserUrlStorage = Pick<Storage, "getItem" | "setItem">;
 
 export type BrowserSessionState =
   | { status: "connecting" }
@@ -33,11 +52,25 @@ export type BrowserSessionDependencies = {
   workerBaseUrl: string;
   authorization?: () => Promise<{ Authorization: string }>;
   commandTimeoutMs?: number;
+  /** Heartbeat cadence; defaults to BROWSER_HEARTBEAT_MS. */
+  heartbeatMs?: number;
+  /** Whether recent trusted local activity exists. Defaults to isHumanActive(). */
+  isActive?: () => boolean;
+  /** Whether this visible, focused tab owns the machine. Defaults to isHumanActivityContext(). */
+  isEligible?: () => boolean;
+  now?: () => number;
+  subscribeActivity?: (callback: () => void) => () => void;
+  setInterval?: (callback: () => void, ms: number) => unknown;
+  clearInterval?: (handle: unknown) => void;
+  /** Where the last remote URL is remembered; defaults to localStorage. */
+  storage?: BrowserUrlStorage;
 };
 
 export type BrowserSession = {
   readonly cdp: CdpClient;
   readonly keepAliveMs: number;
+  readonly idleTimeoutMs: number | undefined;
+  readonly budget: BudgetSnapshot | undefined;
   readonly sessionId: string;
   readonly state: BrowserSessionState;
   close(options?: { keepalive?: boolean; reason?: string }): Promise<void>;
@@ -55,7 +88,117 @@ export type BrowserWorkerResolutionOptions = {
 
 type WorkerErrorBody = { error?: unknown };
 
+export class BrowserWorkerError extends Error {
+  readonly status: number;
+  readonly limit: LimitError | undefined;
+
+  constructor(message: string, status: number, limit?: LimitError) {
+    super(message);
+    this.name = "BrowserWorkerError";
+    this.status = status;
+    this.limit = limit;
+  }
+}
+
 const VIEWPORT_DEBOUNCE_MS = 300;
+const REMOTE_ACTIVITY_EVENTS = [
+  "pointerdown",
+  "pointermove",
+  "keydown",
+  "wheel",
+  "touchstart",
+  "touchmove",
+] as const;
+const REMOTE_ACTIVITY_SLOT_PREFIX = "__webmcpComputerTrustedActivity_";
+const MAX_REMOTE_ACTIVITY_FRAMES = 32;
+
+type CdpFrameTree = {
+  frame?: { id?: unknown };
+  childFrames?: CdpFrameTree[];
+};
+
+export type RemotePageActivitySnapshot = {
+  url?: string;
+  trustedActivityAgeMs?: number | null;
+};
+
+function createRemoteActivitySlot(): string {
+  const suffix = typeof globalThis.crypto?.randomUUID === "function"
+    ? globalThis.crypto.randomUUID().replaceAll("-", "")
+    : `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
+  return `${REMOTE_ACTIVITY_SLOT_PREFIX}${suffix}`;
+}
+
+/**
+ * Install a read-only monotonic activity tracker in the current isolated page world and
+ * return its age. Re-evaluating is idempotent; navigation clears the world so the same
+ * expression installs a fresh listener. Runtime.evaluate is not subject to page CSP.
+ */
+export function remoteActivityProbeExpression(slot: string): string {
+  if (!slot.startsWith(REMOTE_ACTIVITY_SLOT_PREFIX) || slot.length > 128) {
+    throw new Error("webmcp-computer: invalid remote activity slot");
+  }
+  return `(() => {
+  const root = globalThis;
+  const key = ${JSON.stringify(slot)};
+  const href = typeof root.location?.href === "string" ? root.location.href : "";
+  try {
+    let tracker = Object.getOwnPropertyDescriptor(root, key)?.value;
+    if (!tracker) {
+      const clock = root.performance;
+      const monotonicNow = clock.now.bind(clock);
+      let lastTrustedAt;
+      const record = (event) => {
+        if (event?.isTrusted === true) lastTrustedAt = monotonicNow();
+      };
+      for (const type of ${JSON.stringify(REMOTE_ACTIVITY_EVENTS)}) {
+        root.addEventListener(type, record, { capture: true, passive: true });
+      }
+      tracker = Object.freeze({
+        age: () => lastTrustedAt === undefined ? null : monotonicNow() - lastTrustedAt,
+      });
+      Object.defineProperty(root, key, {
+        configurable: false,
+        enumerable: false,
+        writable: false,
+        value: tracker,
+      });
+    }
+    return { url: href, trustedActivityAgeMs: tracker.age() };
+  } catch {
+    return { url: href, trustedActivityAgeMs: null };
+  }
+})()`;
+}
+
+function remoteFrameIds(value: unknown): string[] {
+  if (value === null || typeof value !== "object") return [];
+  const root = (value as { frameTree?: unknown }).frameTree;
+  if (root === null || typeof root !== "object") return [];
+  const ids: string[] = [];
+  const pending = [root as CdpFrameTree];
+  while (pending.length > 0 && ids.length < MAX_REMOTE_ACTIVITY_FRAMES) {
+    const node = pending.shift();
+    if (!node) break;
+    if (typeof node.frame?.id === "string" && node.frame.id.length > 0) {
+      ids.push(node.frame.id);
+    }
+    if (Array.isArray(node.childFrames)) pending.push(...node.childFrames);
+  }
+  return ids;
+}
+
+/** Accept only a finite, non-future activity age inside the idle window. */
+export function isRecentRemoteActivity(
+  value: unknown,
+  idleMs = BROWSER_IDLE_MS,
+): boolean {
+  if (value === null || typeof value !== "object" || !Number.isFinite(idleMs) || idleMs <= 0) {
+    return false;
+  }
+  const age = (value as RemotePageActivitySnapshot).trustedActivityAgeMs;
+  return typeof age === "number" && Number.isFinite(age) && age >= 0 && age < idleMs;
+}
 
 // The live viewer draws its own URL bar inside our iframe, so its screencast
 // canvas is shorter than the container; match the canvas aspect or the stream
@@ -99,25 +242,87 @@ export function resolveBrowserWorkerUrl(
   options: BrowserWorkerResolutionOptions = {},
 ): string {
   if (hostedSessionSnapshot().status === "active") return hostedWorkerUrl("browser");
+  const envUrl = options.envUrl ?? import.meta.env.VITE_BROWSER_WORKER_URL;
   return resolveWorkerUrl({
     queryKey: "browser_worker",
     storageKey: "webmcp_computer.browser_worker",
     label: "browser",
     ...(options.defaultUrl === undefined ? {} : { defaultUrl: options.defaultUrl }),
-    envUrl: options.envUrl ?? import.meta.env.VITE_BROWSER_WORKER_URL,
+    ...(envUrl === undefined ? {} : { envUrl }),
     ...(options.search === undefined ? {} : { search: options.search }),
     ...(options.storage === undefined ? {} : { storage: options.storage }),
     ...(options.production === undefined ? {} : { production: options.production }),
   });
 }
 
+function defaultStorage(): BrowserUrlStorage | undefined {
+  try {
+    return typeof localStorage === "undefined" ? undefined : localStorage;
+  } catch {
+    return undefined;
+  }
+}
+
 function defaultDependencies(): BrowserSessionDependencies {
+  const storage = defaultStorage();
   return {
     fetch: globalThis.fetch.bind(globalThis),
     createWebSocket: (url) => new WebSocket(url),
     workerBaseUrl: resolveBrowserWorkerUrl(),
     authorization: () => hostedAuthorization("browser"),
+    ...(storage === undefined ? {} : { storage }),
   };
+}
+
+function httpUrlOrUndefined(value: unknown): string | undefined {
+  try {
+    return requireHttpUrl(value, "invalid");
+  } catch {
+    return undefined;
+  }
+}
+
+/** Keep useful navigation state without persisting query, fragment, or URL credentials. */
+function restorableBrowserUrl(value: unknown): string | undefined {
+  const valid = httpUrlOrUndefined(value);
+  if (valid === undefined) return undefined;
+  const url = new URL(valid);
+  url.username = "";
+  url.password = "";
+  url.search = "";
+  url.hash = "";
+  return url.href;
+}
+
+/** Remember a sanitized URL so a later session can resume without retaining URL secrets. */
+export function rememberBrowserUrl(url: unknown, storage: BrowserUrlStorage | undefined = defaultStorage()): void {
+  const valid = restorableBrowserUrl(url);
+  if (valid === undefined || !storage) return;
+  try {
+    storage.setItem(BROWSER_LAST_URL_KEY, valid);
+  } catch {
+    // Storage quota or privacy mode; resuming at the last URL is best-effort.
+  }
+}
+
+export function rememberedBrowserUrl(storage: BrowserUrlStorage | undefined = defaultStorage()): string | undefined {
+  if (!storage) return undefined;
+  try {
+    return restorableBrowserUrl(storage.getItem(BROWSER_LAST_URL_KEY));
+  } catch {
+    return undefined;
+  }
+}
+
+function budgetSnapshot(value: unknown): BudgetSnapshot | undefined {
+  if (value === null || typeof value !== "object") return undefined;
+  const { remainingMs, usedMs, windowResetsAt } = value as Partial<BudgetSnapshot>;
+  if (
+    typeof remainingMs !== "number" || typeof usedMs !== "number" || typeof windowResetsAt !== "number"
+  ) {
+    return undefined;
+  }
+  return { remainingMs, usedMs, windowResetsAt };
 }
 
 function validateDescriptor(value: unknown): BrowserSessionDescriptor {
@@ -134,23 +339,30 @@ function validateDescriptor(value: unknown): BrowserSessionDescriptor {
   ) {
     throw new Error("browser Worker returned an invalid session");
   }
+  const budget = budgetSnapshot(descriptor.budget);
   return {
-    ...(descriptor as BrowserSessionDescriptor),
+    sessionId: descriptor.sessionId,
     liveViewUrl: requireHttpUrl(
       descriptor.liveViewUrl,
       "webmcp-computer: browser Worker returned an invalid live view URL",
     ),
+    tabWsUrl: descriptor.tabWsUrl,
+    targetId: descriptor.targetId,
+    keepAliveMs: descriptor.keepAliveMs,
+    ...(typeof descriptor.idleTimeoutMs === "number" ? { idleTimeoutMs: descriptor.idleTimeoutMs } : {}),
+    ...(budget === undefined ? {} : { budget }),
   };
 }
 
-async function workerRequest(
+async function workerFetch(
   dependencies: BrowserSessionDependencies,
   path: string,
   init: RequestInit,
-): Promise<BrowserSessionDescriptor> {
+): Promise<unknown> {
   const headers = new Headers(init.headers);
   if (dependencies.authorization) {
     const authorization = await dependencies.authorization();
+    if (init.signal?.aborted) throw init.signal.reason;
     headers.set("Authorization", authorization.Authorization);
   }
   const response = await dependencies.fetch(`${dependencies.workerBaseUrl}${path}`, { ...init, headers });
@@ -161,12 +373,34 @@ async function workerRequest(
     payload = undefined;
   }
   if (!response.ok) {
+    const limit = limitErrorFromPayload(payload);
+    if (limit) throw new BrowserWorkerError(describeLimitError(limit, "browser"), response.status, limit);
     const reason = payload && typeof payload === "object"
       ? (payload as WorkerErrorBody).error
       : undefined;
-    throw new Error(typeof reason === "string" ? reason : `Worker returned ${response.status}`);
+    throw new BrowserWorkerError(
+      typeof reason === "string" ? reason : `Worker returned ${response.status}`,
+      response.status,
+    );
   }
-  return validateDescriptor(payload);
+  return payload;
+}
+
+async function workerRequest(
+  dependencies: BrowserSessionDependencies,
+  path: string,
+  init: RequestInit,
+): Promise<BrowserSessionDescriptor> {
+  return validateDescriptor(await workerFetch(dependencies, path, init));
+}
+
+/** Whether a heartbeat failure means the server no longer holds our session. */
+function heartbeatEndsSession(error: unknown): string | undefined {
+  if (!(error instanceof BrowserWorkerError)) return undefined;
+  const code = error.limit?.code;
+  if (code === "EIDLE" || code === "EBUDGET" || code === "EOWNER") return error.message;
+  if (error.status === 404 || error.status === 403) return error.message;
+  return undefined;
 }
 
 class BrowserSessionImpl implements BrowserSession {
@@ -182,10 +416,24 @@ class BrowserSessionImpl implements BrowserSession {
   #viewportTimeout: ReturnType<typeof setTimeout> | undefined;
   #lastViewport: string | undefined;
   #viewportWarned = false;
+  #heartbeat: unknown;
+  #heartbeatInFlight = false;
+  #heartbeatController: AbortController | undefined;
+  #lastHeartbeatAt = 0;
+  #unsubscribeActivity: (() => void) | undefined;
+  readonly #remoteActivitySlot = createRemoteActivitySlot();
 
   constructor(descriptor: BrowserSessionDescriptor, dependencies: BrowserSessionDependencies) {
     this.#descriptor = descriptor;
     this.#dependencies = dependencies;
+  }
+
+  get budget(): BudgetSnapshot | undefined {
+    return this.#descriptor.budget;
+  }
+
+  get idleTimeoutMs(): number | undefined {
+    return this.#descriptor.idleTimeoutMs;
   }
 
   get cdp(): CdpClient {
@@ -249,19 +497,145 @@ class BrowserSessionImpl implements BrowserSession {
     this.#viewportTimeout = undefined;
   }
 
+  #startHeartbeat(): void {
+    this.#stopHeartbeat();
+    const cadence = this.#dependencies.heartbeatMs ?? BROWSER_HEARTBEAT_MS;
+    const now = this.#dependencies.now ?? Date.now;
+    this.#lastHeartbeatAt = now();
+    const schedule = this.#dependencies.setInterval ?? ((callback, ms) => setInterval(callback, ms));
+    this.#heartbeat = schedule(() => void this.#beat(), cadence);
+    const subscribe = this.#dependencies.subscribeActivity ?? subscribeHumanActivity;
+    this.#unsubscribeActivity = subscribe(() => {
+      const isEligible = this.#dependencies.isEligible ?? isHumanActivityContext;
+      if (!isEligible()) {
+        this.#heartbeatController?.abort();
+        return;
+      }
+      const isActive = this.#dependencies.isActive ?? isHumanActive;
+      // Returning to a visible tab near the idle deadline cannot wait for the next fixed
+      // interval. Throttle ordinary clicks so they do not consume the action rate limit.
+      if (isActive() && now() - this.#lastHeartbeatAt >= cadence) void this.#beat();
+    });
+  }
+
+  #stopHeartbeat(): void {
+    if (this.#heartbeat !== undefined) {
+      const cancel = this.#dependencies.clearInterval ??
+        ((handle) => clearInterval(handle as ReturnType<typeof setInterval>));
+      cancel(this.#heartbeat);
+      this.#heartbeat = undefined;
+    }
+    this.#unsubscribeActivity?.();
+    this.#unsubscribeActivity = undefined;
+    this.#heartbeatController?.abort();
+    this.#heartbeatController = undefined;
+  }
+
+  async #readRemoteActivity(
+    cdp: CdpClient,
+    signal: AbortSignal,
+  ): Promise<RemotePageActivitySnapshot[]> {
+    const tree = await cdp.send("Page.getFrameTree", {}, signal);
+    const frameIds = remoteFrameIds(tree);
+    const expression = remoteActivityProbeExpression(this.#remoteActivitySlot);
+    const snapshots = await Promise.all(frameIds.map(async (frameId) => {
+      try {
+        // Isolated worlds keep page scripts from forging or replacing the tracker while
+        // still receiving the frame's DOM events. Recreating by world name is idempotent.
+        const world = await cdp.send<{ executionContextId?: unknown }>(
+          "Page.createIsolatedWorld",
+          { frameId, worldName: this.#remoteActivitySlot },
+          signal,
+        );
+        const contextId = world.executionContextId;
+        if (!Number.isInteger(contextId) || (contextId as number) <= 0) return undefined;
+        return await cdp.evaluate<RemotePageActivitySnapshot>(
+          "heartbeat",
+          expression,
+          signal,
+          contextId as number,
+        );
+      } catch {
+        // A frame can detach or navigate while the tree is being queried.
+        return undefined;
+      }
+    }));
+    return snapshots.filter(
+      (snapshot): snapshot is RemotePageActivitySnapshot => snapshot !== undefined,
+    );
+  }
+
+  // Every tick in the visible, focused owner: install/query the bounded current frame set's
+  // trusted-input trackers. Tell the Worker we are still here only when a bounded remote age
+  // or the kernel's trusted local timestamp is recent. Evaluation does not count as input.
+  async #beat(): Promise<void> {
+    if (this.#heartbeatInFlight || this.#closed || this.#state.status !== "live") return;
+    const isEligible = this.#dependencies.isEligible ?? isHumanActivityContext;
+    if (!isEligible()) return;
+    this.#heartbeatInFlight = true;
+    const controller = new AbortController();
+    this.#heartbeatController = controller;
+    const generation = this.#generation;
+    try {
+      let remote: RemotePageActivitySnapshot[] = [];
+      const cdp = this.#cdp;
+      if (cdp) {
+        try {
+          remote = await this.#readRemoteActivity(cdp, controller.signal);
+        } catch {
+          // Navigation can destroy the frame tree between ticks. Local trusted activity
+          // may still authorize this beat; the next tick retries installation.
+        }
+      }
+      if (
+        controller.signal.aborted || generation !== this.#generation || this.#closed ||
+        !isEligible()
+      ) {
+        return;
+      }
+      const mainFrame = remote[0];
+      if (typeof mainFrame?.url === "string") {
+        rememberBrowserUrl(mainFrame.url, this.#dependencies.storage);
+      }
+      const isActive = this.#dependencies.isActive ?? isHumanActive;
+      const idleMs = this.#descriptor.idleTimeoutMs ?? BROWSER_IDLE_MS;
+      if (!isActive() && !remote.some((value) => isRecentRemoteActivity(value, idleMs))) return;
+
+      const now = this.#dependencies.now ?? Date.now;
+      this.#lastHeartbeatAt = now();
+      const payload = await workerFetch(
+        this.#dependencies,
+        `/session/${encodeURIComponent(this.sessionId)}/heartbeat`,
+        { method: "POST", signal: controller.signal },
+      );
+      if (generation !== this.#generation || this.#closed) return;
+      const budget = payload && typeof payload === "object"
+        ? budgetSnapshot((payload as { budget?: unknown }).budget)
+        : undefined;
+      if (budget) this.#descriptor = { ...this.#descriptor, budget };
+    } catch (error) {
+      if (generation !== this.#generation || this.#closed) return;
+      const reason = heartbeatEndsSession(error);
+      if (reason !== undefined) this.#end(reason);
+    } finally {
+      if (this.#heartbeatController === controller) this.#heartbeatController = undefined;
+      this.#heartbeatInFlight = false;
+    }
+  }
+
   #publish(state: BrowserSessionState): void {
     this.#state = state;
     for (const listener of this.#listeners) listener(state);
   }
 
-  async initialize(): Promise<void> {
-    await this.#connect(this.#descriptor);
+  async initialize(signal?: AbortSignal): Promise<void> {
+    await this.#connect(this.#descriptor, signal);
   }
 
-  async #connect(descriptor: BrowserSessionDescriptor): Promise<void> {
+  async #connect(descriptor: BrowserSessionDescriptor, signal?: AbortSignal): Promise<void> {
     const generation = ++this.#generation;
     const socket = this.#dependencies.createWebSocket(descriptor.tabWsUrl);
-    await waitForWebSocketOpen(socket, this.#dependencies.commandTimeoutMs);
+    await waitForWebSocketOpen(socket, this.#dependencies.commandTimeoutMs, signal);
     if (this.#closed || generation !== this.#generation) {
       socket.close();
       return;
@@ -281,6 +655,7 @@ class BrowserSessionImpl implements BrowserSession {
     const liveView = await cdp.send<{ devtoolsFrontendUrl?: unknown }>(
       "Cloudflare.getLiveView",
       { mode: "tab", expiresInMs: 3_600_000 },
+      signal,
     );
     const liveViewUrl = requireHttpUrl(
       liveView.devtoolsFrontendUrl,
@@ -294,6 +669,7 @@ class BrowserSessionImpl implements BrowserSession {
       targetId: descriptor.targetId,
       keepAliveMs: descriptor.keepAliveMs,
     });
+    this.#startHeartbeat();
   }
 
   async #recover(reason: string): Promise<void> {
@@ -305,6 +681,7 @@ class BrowserSessionImpl implements BrowserSession {
     this.#refreshAttempted = true;
     this.#recovering = true;
     this.#cancelViewportResize();
+    this.#stopHeartbeat();
     this.#publish({ status: "connecting" });
     try {
       const descriptor = await workerRequest(
@@ -325,6 +702,7 @@ class BrowserSessionImpl implements BrowserSession {
   #end(reason: string): void {
     if (this.#state.status === "ended") return;
     this.#cancelViewportResize();
+    this.#stopHeartbeat();
     this.#generation += 1;
     this.#cdp?.close();
     this.#cdp = undefined;
@@ -335,6 +713,7 @@ class BrowserSessionImpl implements BrowserSession {
     if (this.#closed) return;
     this.#closed = true;
     this.#cancelViewportResize();
+    this.#stopHeartbeat();
     this.#generation += 1;
     this.#cdp?.close();
     this.#cdp = undefined;
@@ -358,15 +737,17 @@ class BrowserSessionImpl implements BrowserSession {
 export async function createBrowserSession(
   dependencies: BrowserSessionDependencies,
   url?: string,
+  signal?: AbortSignal,
 ): Promise<BrowserSession> {
   const descriptor = await workerRequest(dependencies, "/session", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ url: url ?? BROWSER_HOME_URL }),
+    ...(signal === undefined ? {} : { signal }),
   });
   const session = new BrowserSessionImpl(descriptor, dependencies);
   try {
-    await session.initialize();
+    await session.initialize(signal);
     return session;
   } catch (error) {
     await session.close({ reason: message(error) });
@@ -401,6 +782,7 @@ export function subscribeBrowserSession(
 export async function ensureBrowserSession(
   url?: string,
   dependencies: BrowserSessionDependencies = defaultDependencies(),
+  signal?: AbortSignal,
 ): Promise<BrowserSession> {
   if (activeSession?.state.status === "live") return activeSession;
   if (pendingSession) return await pendingSession;
@@ -412,8 +794,11 @@ export async function ensureBrowserSession(
     await stale.close({ reason: "replaced by a new session" });
   }
   publishRuntime({ status: "connecting" });
-  pendingSession = createBrowserSession(dependencies, url)
-    .then((session) => {
+  pendingSession = createBrowserSession(
+    dependencies,
+    url ?? rememberedBrowserUrl(dependencies.storage),
+    signal,
+  ).then((session) => {
       activeUnsubscribe?.();
       activeSession = session;
       activeUnsubscribe = session.subscribe(publishRuntime);

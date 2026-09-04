@@ -18,6 +18,8 @@ import {
   verifyGatewayCapability,
   type GatewayCapabilityClaims,
 } from "../../../shared/gateway-capability";
+import { CLOUD_BUDGET_MS, CLOUD_IDLE_MS } from "../../../shared/session-limits";
+import { AlarmSlots } from "./alarms";
 import {
   handleRequest,
   type HandlerEnv,
@@ -25,9 +27,13 @@ import {
   type WorkspaceExecHandle,
   type WorkspaceFileSystem,
   type WorkspaceHandle,
+  type WorkspaceLease,
 } from "./handler";
+import { PublishQuota } from "./publishQuota";
+import { RuntimeLease } from "./runtimeLease";
 import { randomSlug } from "./slug";
 import { DurableSyncRetryScheduler } from "./syncRetry";
+import { coordinateWorkspaceAlarm } from "./workspaceAlarm";
 
 export { WorkspaceProxy } from "@cloudflare/computer";
 
@@ -44,7 +50,10 @@ class ContainerBase extends withWorkspaceContainer(class extends DurableObject<E
   });
 }
 
-function workspaceOptions(self: InstanceType<typeof ContainerBase>): WorkspaceOptions {
+function workspaceOptions(
+  self: InstanceType<typeof ContainerBase>,
+  syncRetries: DurableSyncRetryScheduler,
+): WorkspaceOptions {
   // @cloudflare/computer 0.2.1 and current workers-types carry structurally
   // equivalent SQL generics that TypeScript cannot unify across package copies.
   const { ctx } = self as unknown as { ctx: DurableObjectState };
@@ -54,7 +63,7 @@ function workspaceOptions(self: InstanceType<typeof ContainerBase>): WorkspaceOp
     storage: ctx.storage as unknown as DurableObjectStorageLike,
     backends: [self.backend],
     observer: createCloudflareObserver({ tracing }),
-    retryScheduler: new DurableSyncRetryScheduler(ctx.storage),
+    retryScheduler: syncRetries,
     retry: {
       initialDelayMs: 2_000,
       maxDelayMs: 60_000,
@@ -64,29 +73,119 @@ function workspaceOptions(self: InstanceType<typeof ContainerBase>): WorkspaceOp
 }
 
 export class WebMCPComputerWorkspace extends ContainerBase {
-  readonly workspace = new Workspace(workspaceOptions(this));
+  readonly alarms = new AlarmSlots(this.ctx.storage);
+  readonly lease = new RuntimeLease(this.ctx.storage, this.alarms, {
+    backend: this.backend.id,
+    budgetMs: CLOUD_BUDGET_MS,
+    idleMs: CLOUD_IDLE_MS,
+  });
+  readonly publishQuota = new PublishQuota(this.ctx.storage);
+  readonly syncRetries = new DurableSyncRetryScheduler(this.ctx.storage, this.alarms);
+  readonly workspace = new Workspace(workspaceOptions(this, this.syncRetries));
+  #leaseOperation: Promise<void> = Promise.resolve();
+
+  #withLease<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.#leaseOperation.then(operation, operation);
+    this.#leaseOperation = result.then(() => undefined, () => undefined);
+    return result;
+  }
 
   async __getWorkspaceStub(): Promise<WorkspaceStub> {
     await this.workspace.ready();
     return this.workspace.stub();
   }
 
+  // Lease RPC surface used by the Worker before/after every exec.
+  acquireRuntimeLease(busyForMs: number): ReturnType<WorkspaceLease["acquire"]> {
+    return this.#withLease(() => this.lease.acquire(busyForMs));
+  }
+
+  runtimeLeaseStarted(): ReturnType<WorkspaceLease["started"]> {
+    return this.#withLease(() => this.lease.started());
+  }
+
+  releaseRuntimeLease(): ReturnType<WorkspaceLease["release"]> {
+    return this.#withLease(() => this.lease.release());
+  }
+
+  abandonRuntimeLease(): ReturnType<WorkspaceLease["abandon"]> {
+    return this.#withLease(() => this.lease.abandon());
+  }
+
+  runtimeBudget(): ReturnType<RuntimeLease["budget"]> {
+    return this.#withLease(() => this.lease.budget());
+  }
+
+  // Publish quota RPCs use only this DO's durable storage. They never access the Workspace
+  // runtime or container backend, so publishing cannot start a container.
+  reservePublish(reservationId: string): ReturnType<PublishQuota["reserve"]> {
+    return this.publishQuota.reserve(reservationId);
+  }
+
+  beginPublish(reservationId: string): ReturnType<PublishQuota["begin"]> {
+    return this.publishQuota.begin(reservationId);
+  }
+
+  commitPublish(reservationId: string): ReturnType<PublishQuota["commit"]> {
+    return this.publishQuota.commit(reservationId);
+  }
+
+  releasePublish(reservationId: string): ReturnType<PublishQuota["release"]> {
+    return this.publishQuota.release(reservationId);
+  }
+
   override async fetch(request: Request): Promise<Response> {
     return await this.backend.handleFetch(request);
   }
 
-  override async alarm(alarmInfo?: { retryCount: number; isRetry: boolean }): Promise<void> {
-    try {
-      const result = await this.workspace.retryPendingSync(this.backend.id);
-      console.log("WebMCP Computer workspace sync retry", JSON.stringify(result));
-    } catch (error) {
-      if ((alarmInfo?.retryCount ?? 0) >= 5) {
-        await this.ctx.storage.setAlarm(Date.now() + 30_000);
-        console.error("WebMCP Computer workspace sync retry rescheduled", error);
-        return;
-      }
-      throw error;
-    }
+  // SIGKILL rather than SIGTERM: the platform otherwise waits up to 15 minutes for the
+  // process to exit, and we would pay for every one of them. The next exec relaunches;
+  // the DO filesystem is normally authoritative because cleanup waits for sync. The hard
+  // budget's explicitly logged terminal-sync path is the unavoidable exception.
+  async #stopContainer(): Promise<void> {
+    const container = this.ctx.container;
+    if (!container?.running) return;
+    await container.destroy();
+  }
+
+  override async alarm(): Promise<void> {
+    await coordinateWorkspaceAlarm({
+      alarms: this.alarms,
+      backend: this.backend.id,
+      now: Date.now(),
+      // These callbacks share the lease record with exec admission. Queue each operation
+      // at this adapter boundary; RuntimeLease itself never re-enters #withLease.
+      terminalSyncAttempts: {
+        attempted: (backend) => this.#withLease(() => this.lease.terminalSyncAttempted(backend)),
+        mark: (backend) => this.#withLease(() => this.lease.markTerminalSyncAttempt(backend)),
+        clear: (backend) => this.#withLease(() => this.lease.clearTerminalSyncAttempt(backend)),
+      },
+      getPendingSync: () => this.syncRetries.get(this.backend.id),
+      retryPendingSync: () => this.workspace.retryPendingSync(this.backend.id),
+      runtimeCleanupReason: () => this.#withLease(() => this.lease.cleanupReason()),
+      runtimeHardBudgetDeadline: () => this.#withLease(() => this.lease.hardBudgetDeadline()),
+      handleRuntimeLease: async () => {
+        const outcome = await this.#withLease(() => this.lease.onAlarm(() => this.#stopContainer()));
+        if (outcome !== "kept") console.log("WebMCP Computer runtime lease", JSON.stringify({ outcome }));
+        return outcome;
+      },
+      onSyncResult(result) {
+        console.log("WebMCP Computer workspace sync retry", JSON.stringify(result));
+      },
+      onSyncError(error) {
+        console.error("WebMCP Computer workspace sync retry failure", error);
+      },
+      onTerminalMarkerError(error) {
+        console.error("WebMCP Computer terminal sync marker storage failure; cleanup still takes precedence", error);
+      },
+      onTerminalSyncFailure(failure) {
+        console.error(
+          "WebMCP Computer workspace sync terminal failure: runtime budget takes precedence; " +
+          "destroying container after terminal sync decision while retaining diagnostic intent",
+          failure,
+        );
+      },
+    });
   }
 }
 
@@ -108,7 +207,7 @@ function handlerWorkspace(client: WorkspaceClient): WorkspaceHandle {
     exists: (path) => workspaceFs(client).exists(path),
     stat: (path) => workspaceFs(client).stat(path),
     statOrNull: (path) => workspaceFs(client).statOrNull(path),
-    readdir: (path) => workspaceFs(client).readdir(path),
+    readdir: (path, options) => workspaceFs(client).readdir(path, options),
     mkdir: (path, options) => workspaceFs(client).mkdir(path, options),
     rm: (path, options) => workspaceFs(client).rm(path, options),
   };
@@ -133,14 +232,31 @@ const dependencies: WorkerDependencies = {
   async openWorkspace(wsid, env) {
     const workerEnv = env as Env;
     const id = workerEnv.WORKSPACES.idFromName(wsid);
+    const stub = workerEnv.WORKSPACES.get(id);
     // Match Computer's container example exactly: getWorkspace calls the
     // withWorkspace-installed accessor on this DO stub, so fs and runtime share
     // the single Workspace configured with ContainerBase.backend.
-    const client = await getWorkspace(
-      workerEnv.WORKSPACES.get(id) as unknown as Parameters<typeof getWorkspace>[0],
-    );
-    return handlerWorkspace(client);
+    const client = await getWorkspace(stub as unknown as Parameters<typeof getWorkspace>[0]);
+    const handle = handlerWorkspace(client);
+    handle.lease = {
+      acquire: (busyForMs) => stub.acquireRuntimeLease(busyForMs),
+      started: () => stub.runtimeLeaseStarted(),
+      release: () => stub.releaseRuntimeLease(),
+      abandon: () => stub.abandonRuntimeLease(),
+    };
+    return handle;
   },
+  openPublishQuota(wsid, env) {
+    const workerEnv = env as Env;
+    const stub = workerEnv.WORKSPACES.get(workerEnv.WORKSPACES.idFromName(wsid));
+    return {
+      reserve: (reservationId) => stub.reservePublish(reservationId),
+      begin: (reservationId) => stub.beginPublish(reservationId),
+      commit: (reservationId) => stub.commitPublish(reservationId),
+      release: (reservationId) => stub.releasePublish(reservationId),
+    };
+  },
+  randomReservationId: () => crypto.randomUUID(),
   randomSlug,
 };
 

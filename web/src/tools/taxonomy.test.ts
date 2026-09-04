@@ -46,6 +46,7 @@ const EXPECTED_CLASS = {
   fs_search: "ask",
   fs_write: "act",
   kill: "transact",
+  machine_take_over: "transact",
   notes_append: "act",
   notes_preview: "act",
   notes_stick: "act",
@@ -122,7 +123,7 @@ describe("tool invocation taxonomy", () => {
     await registration.ready;
     try {
       expect(captured.filter(({ annotations }) => annotations?.consequentialHint).map(({ name }) => name))
-        .toEqual(["os_publish", "cloud_exec", "fs_delete", "kill"]);
+        .toEqual(["machine_take_over", "os_publish", "cloud_exec", "fs_delete", "kill"]);
     } finally {
       registration.unregister();
     }

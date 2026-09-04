@@ -8,6 +8,7 @@ import {
 } from "../fs";
 import { kernelProcessContext } from "../processContext";
 import { resetKernelStore, useKernelStore } from "../store";
+import { captureMachineMutationAdmission } from "../ownershipAdmission";
 import { setTerminalShellExecutor, TerminalSessionController } from "../terminalSessions";
 import { executeShell } from "./engine";
 import { getShellCommand } from "./registry";
@@ -453,6 +454,7 @@ describe("M8 just-bash shell engine", () => {
       session,
       stdin: "",
       source: "human",
+      ownershipAdmission: captureMachineMutationAdmission("human"),
       processes: kernelProcessContext,
       cloudExecDependencies: {
         async fetch() {

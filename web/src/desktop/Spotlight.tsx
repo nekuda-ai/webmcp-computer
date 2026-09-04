@@ -113,6 +113,7 @@ export function Spotlight() {
     <div className="spotlight-backdrop" role="presentation" onMouseDown={() => setOpen(false)}>
       <section
         className="spotlight"
+        data-analytics-block=""
         role="dialog"
         aria-modal={mode === "human"}
         aria-label="Spotlight"

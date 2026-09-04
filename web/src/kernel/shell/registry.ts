@@ -11,6 +11,7 @@ import {
 } from "../cloudExec";
 import { notifyFileSystemChange } from "../fs";
 import { useKernelStore } from "../store";
+import { assertMachineMutationAdmission } from "../ownershipAdmission";
 
 function flagSyntax(flag: CommandFlag): string {
   const value = flag.value === undefined ? "" : ` ${flag.value}`;
@@ -82,6 +83,7 @@ const commands: ShellCommand[] = [...createSystemCommands(), {
       onStdout: context.writeStdout,
       onStderr: context.writeStderr,
     });
+    assertMachineMutationAdmission(context.ownershipAdmission);
     // SDK 0.2.1 cannot report per-exec sync counts through resumed handles
     // (the exit frame's pushed/pulled/applied are zeros even when files
     // synced), so refresh once per completed command — deliberately coarse,

@@ -126,8 +126,8 @@ export function Screensaver() {
     return () => cancelAnimationFrame(frame);
   }, []);
 
-  const wake = () => {
-    useKernelStore.getState().recordActivity();
+  const wake = (event: { isTrusted: boolean }) => {
+    if (event.isTrusted) useKernelStore.getState().recordHumanActivity();
     const wasActive = wakeScreensaver();
     if (wasActive) osEvent("human", "screensaver_wake", { via: "pointer" });
   };

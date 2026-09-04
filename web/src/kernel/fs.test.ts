@@ -23,6 +23,7 @@ import {
   seedFileSystem,
   selectFileSystemBackend,
   stat,
+  updateFile,
   withFileSystemWriteLock,
   watch,
   writeFile,
@@ -130,6 +131,40 @@ describe("WebMCP Computer filesystem", () => {
     await rm("~/site/assets", "system");
     await rm("~/site/home.html", "system");
     expect(await ls("~/site")).toEqual([]);
+  });
+
+  test("rejects a delayed human update after takeover even if ownership is reacquired", async () => {
+    const path = "~/desktop/ownership.txt";
+    await writeFile(path, "new owner", "system");
+    let continueUpdate = () => {};
+    let markUpdating = () => {};
+    const updating = new Promise<void>((resolve) => { markUpdating = resolve; });
+    const gate = new Promise<void>((resolve) => { continueUpdate = resolve; });
+
+    const staleWrite = updateFile(path, async () => {
+      markUpdating();
+      await gate;
+      return "stale human";
+    }, "human");
+    await updating;
+    useKernelStore.getState().setMachineOwnership("conflict");
+    useKernelStore.getState().setMachineOwnership("owned");
+    continueUpdate();
+
+    await expect(staleWrite).rejects.toThrow("machine ownership changed while action was pending");
+    expect(await readFile(path)).toBe("new owner");
+  });
+
+  test("keeps agent mutations compatible while owned and permits system boot writes while pending", async () => {
+    await writeFile("~/site/agent.txt", "agent", "agent");
+    useKernelStore.getState().setMachineOwnership("pending");
+    await writeFile("~/site/system.txt", "system", "system");
+
+    expect(await readFile("~/site/agent.txt")).toBe("agent");
+    expect(await readFile("~/site/system.txt")).toBe("system");
+    await expect(writeFile("~/site/human.txt", "human", "human")).rejects.toThrow(
+      "machine ownership is still being acquired",
+    );
   });
 
   test("creates files without clobbering existing content", async () => {

@@ -22,6 +22,7 @@ import {
 } from "./windowGeometry";
 import type { SessionSnapshot } from "./sessionSnapshot";
 import { clampStickyPosition, defaultStickyPosition } from "./stickyNotes";
+import type { MachineOwnership } from "./machineOwnership";
 
 export const MAX_OS_EVENTS = 2_000;
 
@@ -47,8 +48,13 @@ type KernelData = {
   settings: WebMCPComputerSettings;
   settingsLoaded: boolean;
   toolRegistryGroups: ToolRegistryGroup[];
+  /** Screensaver/general activity, including agent calls. */
   lastActivityAt: number;
-  machineConflict: boolean;
+  /** Trusted human interaction only; paid-resource presence must use this timestamp. */
+  lastHumanActivityAt: number;
+  machineOwnership: MachineOwnership;
+  /** Monotonic locally; changes whenever an owner loses mutation authority. */
+  machineOwnershipEpoch: number;
 };
 
 type KernelActions = {
@@ -88,8 +94,9 @@ type KernelActions = {
   setToolRegistryGroup: (group: ToolRegistryGroup) => void;
   removeToolRegistryGroup: (id: string) => void;
   recordActivity: () => void;
+  recordHumanActivity: () => void;
   activateScreensaver: () => void;
-  setMachineConflict: (conflict: boolean) => void;
+  setMachineOwnership: (ownership: MachineOwnership) => void;
   restoreSession: (snapshot: SessionSnapshot) => void;
 };
 
@@ -118,7 +125,9 @@ const createInitialData = (): KernelData => ({
   settingsLoaded: false,
   toolRegistryGroups: [],
   lastActivityAt: Date.now(),
-  machineConflict: false,
+  lastHumanActivityAt: 0,
+  machineOwnership: "pending",
+  machineOwnershipEpoch: 0,
 });
 
 const APP_SIZES: Record<AppId, Pick<WindowRect, "width" | "height">> = {
@@ -574,12 +583,22 @@ export const useKernelStore = create<KernelState>()((set, get) => ({
     set({ lastActivityAt: Date.now() });
   },
 
+  recordHumanActivity() {
+    const now = Date.now();
+    set({ lastActivityAt: now, lastHumanActivityAt: now });
+  },
+
   activateScreensaver() {
     set({ screensaverActive: true });
   },
 
-  setMachineConflict(conflict) {
-    set({ machineConflict: conflict });
+  setMachineOwnership(ownership) {
+    set((state) => ({
+      machineOwnership: ownership,
+      machineOwnershipEpoch: state.machineOwnership === "owned" && ownership !== "owned"
+        ? state.machineOwnershipEpoch + 1
+        : state.machineOwnershipEpoch,
+    }));
   },
 
   restoreSession(snapshot) {
@@ -702,7 +721,14 @@ export function resetKernelStore(): void {
   for (const controller of commandControllers.values()) controller.abort();
   commandControllers.clear();
   appliedSessionSnapshots.clear();
-  useKernelStore.setState(createInitialData());
+  // Unit tests historically start from an admitted machine; ownership tests call
+  // startMachineOwnership(), which synchronously returns this to pending.
+  const machineOwnershipEpoch = useKernelStore.getState().machineOwnershipEpoch + 1;
+  useKernelStore.setState({
+    ...createInitialData(),
+    machineOwnership: "owned",
+    machineOwnershipEpoch,
+  });
 }
 
 export function latestAgentEvent(events: readonly OSEvent[]): OSEvent | undefined {

@@ -27,7 +27,7 @@ Names are `snake_case` verbs, dot-namespaced `stableKey`s (`webmcp-computer.<dom
 - **fs**: `fs_read`, `fs_write`, `fs_list`, `fs_mkdir`, `fs_delete`, `fs_move`
 - **terminal**: `term_exec`, `term_read`, `term_state`, `term_history`, `ps`, `kill`
 - **system**: `sys_status`, `os_manual`, `os_search`, `settings_get`, `settings_set`,
-  `screensaver_wake`
+  `screensaver_wake`, `machine_take_over`
 - Per-app dynamic tools: registered when the app's window opens, unregistered when it closes — e.g. `notes_append`, `editor_open_file`, `preview_get_console`. This dynamism is the differentiating ace; the architecture must make it trivial.
 
 Every tool: precise `description` written for an agent (what it does, what it returns), tight `inputSchema`, and returns either a string or a small JSON-serializable object. Implementations throw `Error` with a human-readable message (`webmcp-computer: <what went wrong>`); the registry transports it as MCP's `{content, isError: true}` tool-error result.

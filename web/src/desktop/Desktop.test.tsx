@@ -2,9 +2,47 @@ import { describe, expect, spyOn, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { initializeMemoryFileSystem, ls } from "../kernel/fs";
 import { resetKernelStore, useKernelStore } from "../kernel/store";
-import { createUntitledEntry, DesktopWindows } from "./Desktop";
+import { createUntitledEntry, Desktop, DesktopWindows, machineSurfaceState } from "./Desktop";
 
 describe("Desktop window lifecycle", () => {
+  test("keeps the human surface inert throughout ownership acquisition", () => {
+    expect(machineSurfaceState("pending")).toEqual({
+      blocked: true,
+      showOwnershipNotice: true,
+      showTakeOver: false,
+    });
+    expect(machineSurfaceState("conflict")).toEqual({
+      blocked: true,
+      showOwnershipNotice: true,
+      showTakeOver: true,
+    });
+    expect(machineSurfaceState("owned")).toEqual({
+      blocked: false,
+      showOwnershipNotice: false,
+      showTakeOver: false,
+    });
+    expect(machineSurfaceState("unsupported")).toEqual({
+      blocked: false,
+      showOwnershipNotice: true,
+      showTakeOver: false,
+    });
+  });
+
+  test("renders the pending desktop inert without the confirmed-conflict action", () => {
+    resetKernelStore();
+    useKernelStore.setState({ machineOwnership: "pending" });
+    const consoleError = spyOn(console, "error").mockImplementation(() => undefined);
+
+    try {
+      const markup = renderToStaticMarkup(<Desktop />);
+      expect(markup).toContain("machine-blocker");
+      expect(markup).toContain('class="desktop__interactive" inert="" aria-hidden="true"');
+      expect(markup).not.toContain(">Take over</button>");
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
   test("keeps a minimized window mounted so tools and buffer state survive", () => {
     resetKernelStore();
     const process = useKernelStore.getState().spawn("editor", {

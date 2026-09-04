@@ -33,7 +33,7 @@ export function ActivityLog() {
 
   const latest = events.slice(-50).reverse();
   return (
-    <section className="activity-log" aria-label="Activity">
+    <section className="activity-log" data-analytics-block="" aria-label="Activity">
       <span className="micro">ACTIVITY — LAST 50 EVENTS</span>
       {latest.length === 0 ? <p className="activity-log__empty mono">NO ACTIVITY YET</p> : (
         <ol>

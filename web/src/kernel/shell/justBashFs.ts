@@ -19,8 +19,11 @@ import {
   stat as kernelStat,
   touchFile,
   writeFileBytes,
-  type FileSystemChange,
 } from "../fs";
+import {
+  captureMachineMutationAdmission,
+  type MachineMutationAdmission,
+} from "../ownershipAdmission";
 import type { ShellExecutionSource } from "./types";
 
 export const JUST_BASH_HOME = "/";
@@ -117,10 +120,13 @@ async function missing(path: string): Promise<boolean> {
 }
 
 export class JustBashFileSystem implements IFileSystem {
-  constructor(private readonly executionSource: () => ShellExecutionSource) {}
+  constructor(
+    private readonly executionAdmission: () => MachineMutationAdmission | ShellExecutionSource,
+  ) {}
 
-  private source(): FileSystemChange["source"] {
-    return this.executionSource();
+  private admission(): MachineMutationAdmission {
+    const admission = this.executionAdmission();
+    return typeof admission === "string" ? captureMachineMutationAdmission(admission) : admission;
   }
 
   async readFile(
@@ -146,10 +152,11 @@ export class JustBashFileSystem implements IFileSystem {
     content: FileContent,
     options?: EncodingOptions | BufferEncoding,
   ): Promise<void> {
+    const admission = this.admission();
     await writeFileBytes(
       kernelPathFromJustBash(path),
       contentBytes(content, options),
-      this.source(),
+      admission,
     );
   }
 
@@ -158,6 +165,7 @@ export class JustBashFileSystem implements IFileSystem {
     content: FileContent,
     options?: EncodingOptions | BufferEncoding,
   ): Promise<void> {
+    const admission = this.admission();
     const target = kernelPathFromJustBash(path);
     const addition = contentBytes(content, options);
     let current: Uint8Array<ArrayBufferLike> = new Uint8Array();
@@ -169,7 +177,7 @@ export class JustBashFileSystem implements IFileSystem {
     const combined = new Uint8Array(current.byteLength + addition.byteLength);
     combined.set(current);
     combined.set(addition, current.byteLength);
-    await writeFileBytes(target, combined, this.source());
+    await writeFileBytes(target, combined, admission);
   }
 
   async exists(path: string): Promise<boolean> {
@@ -190,16 +198,17 @@ export class JustBashFileSystem implements IFileSystem {
   }
 
   async mkdir(path: string, options?: MkdirOptions): Promise<void> {
+    const admission = this.admission();
     const target = kernelPathFromJustBash(path);
     if (!options?.recursive) {
-      await kernelMkdir(target, this.source());
+      await kernelMkdir(target, admission);
       return;
     }
     const segments = target === "~" ? [] : target.slice(2).split("/");
     let current = "~";
     for (const segment of segments) {
       current = normalizePath(`${current}/${segment}`);
-      if (await missing(current)) await kernelMkdir(current, this.source());
+      if (await missing(current)) await kernelMkdir(current, admission);
       else if ((await kernelStat(current)).kind !== "directory") {
         throw new Error(`webmcp-computer: not a directory: ${current}`);
       }
@@ -220,6 +229,7 @@ export class JustBashFileSystem implements IFileSystem {
   }
 
   async rm(path: string, options?: RmOptions): Promise<void> {
+    const admission = this.admission();
     const target = kernelPathFromJustBash(path);
     let targetStat;
     try {
@@ -231,15 +241,24 @@ export class JustBashFileSystem implements IFileSystem {
     if (targetStat.kind === "directory" && !options?.recursive && (await ls(target)).length > 0) {
       throw new FileSystemError(`webmcp-computer: directory not empty: ${target}`, "ENOTEMPTY");
     }
-    await kernelRemove(target, this.source());
+    await kernelRemove(target, admission);
   }
 
   async cp(source: string, destination: string, options?: CpOptions): Promise<void> {
+    await this.copy(source, destination, options, this.admission());
+  }
+
+  private async copy(
+    source: string,
+    destination: string,
+    options: CpOptions | undefined,
+    admission: MachineMutationAdmission,
+  ): Promise<void> {
     const from = kernelPathFromJustBash(source);
     const to = kernelPathFromJustBash(destination);
     const sourceStat = await kernelStat(from);
     if (sourceStat.kind === "file") {
-      await writeFileBytes(to, await readFileBytes(from), this.source());
+      await writeFileBytes(to, await readFileBytes(from), admission);
       return;
     }
     if (!options?.recursive) {
@@ -248,21 +267,23 @@ export class JustBashFileSystem implements IFileSystem {
     if (to === from || to.startsWith(`${from}/`)) {
       throw new Error(`webmcp-computer: cannot copy ${from} into itself: ${to}`);
     }
-    if (await missing(to)) await kernelMkdir(to, this.source());
+    if (await missing(to)) await kernelMkdir(to, admission);
     for (const entry of await ls(from)) {
-      await this.cp(
+      await this.copy(
         justBashPathFromKernel(entry.path),
         justBashPathFromKernel(normalizePath(`${to}/${entry.name}`)),
         options,
+        admission,
       );
     }
   }
 
   async mv(source: string, destination: string): Promise<void> {
+    const admission = this.admission();
     await kernelMove(
       kernelPathFromJustBash(source),
       kernelPathFromJustBash(destination),
-      this.source(),
+      admission,
       true,
     );
   }
@@ -285,6 +306,7 @@ export class JustBashFileSystem implements IFileSystem {
   }
 
   async link(existingPath: string, newPath: string): Promise<void> {
+    const admission = this.admission();
     const destination = kernelPathFromJustBash(newPath);
     if (await kernelExists(destination)) {
       throw new FileSystemError(`webmcp-computer: file exists: ${destination}`, "EEXIST");
@@ -292,7 +314,7 @@ export class JustBashFileSystem implements IFileSystem {
     await writeFileBytes(
       destination,
       await readFileBytes(kernelPathFromJustBash(existingPath)),
-      this.source(),
+      admission,
     );
   }
 
@@ -311,6 +333,7 @@ export class JustBashFileSystem implements IFileSystem {
   }
 
   async utimes(path: string, _atime: Date, mtime: Date): Promise<void> {
-    await touchFile(kernelPathFromJustBash(path), this.source(), mtime);
+    const admission = this.admission();
+    await touchFile(kernelPathFromJustBash(path), admission, mtime);
   }
 }
